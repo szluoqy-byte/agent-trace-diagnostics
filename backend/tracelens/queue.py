@@ -1,0 +1,100 @@
+import asyncio
+import logging
+from .demo import demo_report
+from .engine import diagnose
+from .feedback import generate_feedback, feedback_availability
+from .execution import job_settings
+from .models import Trajectory
+
+logger = logging.getLogger(__name__)
+
+
+class JobQueue:
+    def __init__(self, store, settings):
+        self.store, self.settings = store, settings
+        self.tasks = []
+
+    async def start(self):
+        self.store.recover()
+        self.schedule_feedback()
+        self.tasks = [asyncio.create_task(self.worker()) for _ in range(self.settings.concurrency)]
+
+    async def stop(self):
+        for task in self.tasks:
+            task.cancel()
+        await asyncio.gather(*self.tasks, return_exceptions=True)
+
+    async def worker(self):
+        while True:
+            job = self.store.claim()
+            if not job:
+                feedback = self.store.claim_feedback()
+                if feedback:
+                    await self.feedback(feedback)
+                    continue
+                await asyncio.sleep(0.3)
+                continue
+            async def progress(stage, value, partial):
+                self.store.update(job["id"], stage=stage, progress=value, result=partial)
+            execution = self.settings
+            try:
+                trace = Trajectory.model_validate(self.store.trace(job["trace_id"])["data"])
+                if job["mode"] == "demo":
+                    if not self.settings.enable_validation_data:
+                        raise ValueError("该历史诊断不可执行")
+                    if trace.kind != "demo":
+                        raise ValueError("演示模式仅适用于内置合成样例")
+                    for stage, value in [("加载演示轨迹", 10), ("展示触发证据", 40), ("展示错误实例", 70), ("展示归因结果", 90)]:
+                        await progress(stage, value, {})
+                        await asyncio.sleep(0.25)
+                    report = demo_report()
+                else:
+                    execution = job_settings(self.store,self.settings,job['id'])
+                    report = await diagnose(trace, execution, progress)
+                self.store.update(job["id"], status="completed", stage="诊断完成", progress=100, result=report)
+                self.schedule_feedback()
+            except asyncio.CancelledError:
+                self.store.update(job["id"], status="failed", stage="运行中断", error="服务停止，任务可重试")
+                raise
+            except Exception as exc:
+                # Never persist provider payloads, authorization headers, or unknown exception text.
+                from .llm import ModelError
+                message = str(exc) if isinstance(exc, (ModelError, ValueError)) else "诊断运行失败，请检查服务日志后重试"
+                if execution.api_key:
+                    message = message.replace(execution.api_key, "[redacted]")
+                fields = {}
+                if isinstance(exc, ModelError) and exc.issues:
+                    partial = self.store.job(job['id']).get('result') or {}
+                    fields['result'] = {**partial, 'contract_issues': exc.issues,
+                                        'usage': exc.usage or partial.get('usage'),
+                                        'model_validation': exc.validation_events or partial.get('model_validation', [])}
+                self.store.update(job["id"], status="failed", stage="诊断失败", error=message, **fields)
+                logger.warning("Diagnosis job %s failed (%s)", job["id"], type(exc).__name__)
+
+    async def feedback(self, feedback):
+        execution = self.settings
+        try:
+            execution = job_settings(self.store,self.settings,feedback['job_id'])
+            result = await generate_feedback(self.store.job(feedback['job_id']), execution, feedback['id'])
+            self.store.update_feedback(feedback['id'], status='completed', result=result)
+        except asyncio.CancelledError:
+            self.store.update_feedback(feedback['id'], status='failed', error='服务停止，建议生成已中断，可重试')
+            raise
+        except Exception as exc:
+            from .llm import ModelError
+            message = str(exc) if isinstance(exc, (ModelError, ValueError)) else '建议生成失败，请检查模型配置后重试'
+            if execution.api_key:
+                message = message.replace(execution.api_key, '[redacted]')
+            self.store.update_feedback(feedback['id'], status='failed', error=message,
+                                       result={'usage': exc.usage} if isinstance(exc, ModelError) and exc.usage else None)
+            logger.warning('Feedback %s failed (%s)', feedback['id'], type(exc).__name__)
+
+    def schedule_feedback(self):
+        for job_id in self.store.auto_feedback_jobs():
+            execution = job_settings(self.store,self.settings,job_id)
+            if feedback_availability(self.store.job(job_id),execution)[0]:
+                try:
+                    self.store.enqueue_feedback(job_id)
+                except ValueError:
+                    pass  # A newer analysis may have started before scheduling.
+

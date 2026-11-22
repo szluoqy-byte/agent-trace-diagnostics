@@ -1,0 +1,38 @@
+"""Execution settings saved with each analysis; credentials stay in the environment."""
+from dataclasses import replace
+from .trajdebug import ENGINE_VERSION, UPSTREAM_COMMIT
+
+FIELDS = ('base_url', 'model', 'max_retries', 'timeout', 'llm_concurrency', 'max_tokens', 'cluster_json_mode')
+
+
+def active_execution(store, settings):
+    connection = store.model_connections.default()
+    if connection is None:
+        return settings, None
+    return replace(settings, base_url=connection['base_url'], model=connection['model'],
+                   api_key=connection['api_key']), connection['id']
+
+
+def snapshot(settings, connection_id=None):
+    config = {**{k: getattr(settings, k) for k in FIELDS}, 'concurrency': settings.concurrency,
+              'engine': ENGINE_VERSION, 'upstream_commit': UPSTREAM_COMMIT}
+    if connection_id is not None:
+        config['model_connection_id'] = connection_id
+    return config
+
+
+def job_settings(store, settings, job_id):
+    return run_settings(store, settings, store.job_config(job_id))
+
+
+def run_settings(store, settings, config):
+    if not config or 'base_url' not in config:
+        return settings
+    frozen = {k: config[k] for k in FIELDS if k in config}
+    if connection_id := config.get('model_connection_id'):
+        connection = store.model_connections.get(connection_id)
+        if connection and connection['base_url'] == frozen['base_url'] and connection['model'] == frozen.get('model'):
+            return replace(settings, **frozen, api_key=connection['api_key'])
+    elif frozen['base_url'].rstrip('/') == settings.base_url.rstrip('/'):
+        return replace(settings, **frozen)
+    return replace(settings, **{**frozen, 'base_url': '', 'api_key': ''})

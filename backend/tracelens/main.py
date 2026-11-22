@@ -1,0 +1,313 @@
+from contextlib import asynccontextmanager
+from typing import Literal
+from .engine import ENGINE_VERSION
+import json
+from pathlib import Path
+from urllib.parse import urlparse
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, Response, FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import Field, ValidationError
+from .config import Settings, ROOT
+from .models import Contract, Review
+from .normalize import parse_upload, normalize
+from .store import Store
+from .queue import JobQueue
+from .trajdebug import UPSTREAM_COMMIT, UPSTREAM_URL
+from .reporting import markdown_report
+from .official_samples import load_official_samples
+from .feedback import feedback_availability
+from .execution import active_execution, job_settings, snapshot
+from .model_settings_api import MODEL_SETTINGS_PATH, attach_model_settings_routes
+from .task_api import attach_task_routes
+from .pattern_api import attach_pattern_routes
+
+
+class BatchRequest(Contract):
+    trace_ids: list[str] = Field(min_length=1, max_length=50)
+    mode: str = "live"
+
+
+def create_app(settings=None, *, frontend_dir=None):
+    settings = settings or Settings()
+    store = Store(settings.data_dir)
+    store.freeze_legacy_runs(snapshot(settings))
+    queue = JobQueue(store, settings)
+
+    @asynccontextmanager
+    async def lifespan(app):
+        await queue.start()
+        yield
+        await queue.stop()
+
+    app = FastAPI(title="天罗智能轨迹诊断 API", version="0.2.0", lifespan=lifespan)
+    app.state.store = store
+    app.state.settings = settings
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(request: Request, exc: RequestValidationError):
+        if request.url.path.startswith(MODEL_SETTINGS_PATH):
+            return JSONResponse({'detail': '请检查配置名称、接口地址、模型标识和 API 密钥的格式'}, status_code=422)
+        return await request_validation_exception_handler(request, exc)
+
+    @app.middleware("http")
+    async def local_requests(request: Request, call_next):
+        origin = request.headers.get("origin")
+        if request.method not in {"GET", "HEAD", "OPTIONS"} and origin:
+            parsed = urlparse(origin)
+            if parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
+                return JSONResponse({"detail": "本地工作台仅接受本地页面的操作请求"}, status_code=403)
+        return await call_next(request)
+
+    @app.get("/api/config")
+    def config():
+        execution, _ = active_execution(store, settings)
+        return {"ready": execution.ready, "model": execution.model, "base_url": execution.base_url,
+                "has_key": bool(execution.api_key), "concurrency": settings.concurrency,
+                "max_retries": settings.max_retries, "engine": ENGINE_VERSION, "algorithm": "TrajDebug",
+                "upstream_commit": UPSTREAM_COMMIT, "upstream_url": UPSTREAM_URL,
+                "llm_concurrency": settings.llm_concurrency}
+
+    @app.get("/api/traces")
+    def traces():
+        return [{"id": t["id"], "title": t["title"], "created_at": t["created_at"],
+                 **{key: t["data"][key] for key in ("dataset", "task_id", "outcome", "kind", "source")},
+                 "input_format": "otel_genai" if t["data"].get("otel") else "messages",
+                 "steps": len(t["data"]["messages"])} for t in store.traces()]
+
+    def require_trace(trace_id):
+        trace = store.trace(trace_id)
+        if not trace:
+            raise HTTPException(404, "轨迹不存在")
+        return trace
+
+    def require_job(job_id):
+        job = store.job(job_id)
+        if not job:
+            raise HTTPException(404, "任务不存在")
+        return job
+
+    def write(call):
+        try:
+            return call()
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.get("/api/traces/{trace_id}")
+    def trace(trace_id: str):
+        return require_trace(trace_id)
+
+    @app.get('/api/trace-library')
+    def trace_library(
+        page: int = Query(1, ge=1), page_size: Literal['10', '20', '50'] = '10',
+        search: str = Query('', max_length=200),
+        diagnosis: Literal['all', 'pending', 'queued', 'running', 'completed', 'failed'] = 'all',
+        business: Literal['all', 'failed', 'succeeded', 'unknown'] = 'all',
+        input_format: Literal['all', 'messages', 'otel_genai'] = 'all',
+    ):
+        return store.trace_library(page, int(page_size), search.strip(), diagnosis, business, input_format)
+
+    @app.get('/api/trace-library/{trace_id}/history')
+    def trace_library_history(trace_id: str):
+        history = store.trace_library_history(trace_id)
+        if history is None:
+            raise HTTPException(404, '轨迹不存在')
+        return history
+
+    @app.get("/api/traces/{trace_id}/otel")
+    def otel_source(trace_id: str):
+        data = require_trace(trace_id)["data"]
+        provenance = data.get("otel")
+        if not provenance:
+            raise HTTPException(404, "该轨迹没有 OTel 来源")
+        bundle = {**provenance, "message_sources": [{"step": m["step"], "source_refs": m.get("source_refs", [])} for m in data["messages"]]}
+        return Response(json.dumps(bundle, ensure_ascii=False, indent=2), media_type="application/json",
+                        headers={"Content-Disposition": f'attachment; filename="otel-source-{trace_id}.json"'})
+
+    @app.post("/api/import")
+    async def import_files(files: list[UploadFile] = File(...), outcome: str = Form("")):
+        if outcome not in {"", "failed", "succeeded"}:
+            raise HTTPException(422, "运行结果必须为 failed 或 succeeded")
+        if len(files) > 50:
+            raise HTTPException(413, "每批最多导入 50 个文件")
+        parsed, total = [], 0
+        try:
+            for file in files:
+                content = await file.read(10 * 1024 * 1024 + 1)
+                total += len(content)
+                if total > 20 * 1024 * 1024 or len(content) > 10 * 1024 * 1024:
+                    raise HTTPException(413, "单文件最多 10MB，每批最多 20MB")
+                parsed.extend(parse_upload(content, file.filename or "trajectory.json"))
+                if len(parsed) > 50:
+                    raise HTTPException(413, "每批最多导入 50 条轨迹")
+        except (ValueError, UnicodeDecodeError, ValidationError) as e:
+            raise HTTPException(422, str(e)) from e
+        if not parsed:
+            raise HTTPException(422, "文件中没有轨迹")
+        for trajectory in parsed:
+            if trajectory.outcome == "unknown" and outcome:
+                trajectory.outcome = outcome
+        # Validate the entire batch before writing anything.
+        return {"trace_ids": [store.add_trace(t)["id"] for t in parsed]}
+
+    @app.post("/api/samples")
+    def samples():
+        if not settings.enable_validation_data:
+            raise HTTPException(404, "当前工作区未启用评测数据导入")
+        try:
+            parsed = load_official_samples(settings.data_dir / "sources")
+        except (ValueError, OSError, KeyError) as exc:
+            raise HTTPException(409, "官方测试集尚未下载或校验失败，请运行 .venv/bin/python scripts/fetch_samples.py") from exc
+        return {"trace_ids": [store.add_trace(t)["id"] for t in parsed]}
+
+    @app.get("/api/jobs")
+    def jobs():
+        rows = []
+        for job in store.jobs():
+            feedback = store.latest_feedback(job['id'])
+            rows.append({**{k: v for k, v in job.items() if k != 'result'},
+                         'engine_version': (job.get('result') or {}).get('engine_version'),
+                         'feedback': {k: v for k, v in feedback.items() if k != 'result'} if feedback else None})
+        return rows
+
+    @app.get("/api/jobs/{job_id}")
+    def job(job_id: str):
+        current = require_job(job_id)
+        eligible, reason = feedback_availability(current, job_settings(store, settings, job_id))
+        try:
+            store.assert_job_writable(job_id)
+            read_only = False
+        except ValueError:
+            read_only = True
+        return {**current, 'reviews': store.reviews(job_id), 'feedback': store.latest_feedback(job_id),
+                'feedback_eligible': eligible and not read_only, 'feedback_unavailable_reason': '历史分析记录只读' if read_only else reason,
+                'read_only': read_only}
+
+    @app.post('/api/jobs/{job_id}/feedback')
+    def enqueue_feedback(job_id: str):
+        current = require_job(job_id)
+        write(lambda:store.assert_job_writable(job_id))
+        latest = store.latest_feedback(job_id)
+        if latest and latest['status'] in {'queued', 'running', 'completed'}:
+            return latest
+        eligible, reason = feedback_availability(current, job_settings(store, settings, job_id))
+        if not eligible:
+            raise HTTPException(409, reason)
+        return write(lambda:store.enqueue_feedback(job_id))
+
+    @app.get('/api/jobs/{job_id}/feedback/export')
+    def export_feedback(job_id: str):
+        require_job(job_id)
+        feedback = store.latest_feedback(job_id)
+        if not feedback or feedback['status'] != 'completed':
+            raise HTTPException(409, '请等待改进建议生成完成后导出')
+        report = feedback['result']['official_report']
+        return Response(json.dumps(report, ensure_ascii=False, indent=2), media_type='application/json',
+                        headers={'Content-Disposition': f'attachment; filename="tianluo-diagnosis-feedback-{job_id[:8]}.json"'})
+
+    @app.post("/api/jobs")
+    def enqueue(body: BatchRequest):
+        if body.mode != "live" and not (settings.enable_validation_data and body.mode == "demo"):
+            raise HTTPException(422, "无效诊断模式")
+        execution, connection_id = active_execution(store, settings)
+        if body.mode == "live" and not execution.ready:
+            raise HTTPException(409, "尚未配置默认诊断模型，请前往系统设置")
+        for trace_id in body.trace_ids:
+            trace = require_trace(trace_id)
+            if trace["data"]["kind"] == "demo" and not settings.enable_validation_data:
+                raise HTTPException(422, "历史合成轨迹仅供查看，请选择待诊断的轨迹")
+            if body.mode == "demo" and trace["data"]["kind"] != "demo":
+                raise HTTPException(422, "公开和业务轨迹必须使用真实模型诊断")
+            if body.mode == "live" and trace["data"]["outcome"] == "unknown":
+                raise HTTPException(422, "轨迹缺少业务结果，请重新导入并标记为业务成功或业务失败")
+        frozen = snapshot(execution, connection_id) if body.mode == "live" else None
+        return {"jobs": [store.enqueue(t, body.mode, config=frozen) for t in dict.fromkeys(body.trace_ids)]}
+
+    @app.post("/api/jobs/{job_id}/retry")
+    def retry(job_id: str):
+        job = require_job(job_id)
+        write(lambda:store.assert_job_writable(job_id))
+        if job["status"] != "failed":
+            raise HTTPException(409, "仅失败任务可重试")
+        if job["mode"] == "demo" and not settings.enable_validation_data:
+            raise HTTPException(409, "该历史诊断不可重试")
+        execution = job_settings(store, settings, job_id)
+        if job["mode"] == "live" and not execution.ready:
+            raise HTTPException(409, "原诊断使用的模型配置不可用，请使用当前默认模型重新分析")
+        # New job preserves failed-stage artifacts and the audit trail.
+        with store.connect() as db:
+            mapping = db.execute('SELECT run_id FROM run_attempts WHERE job_id=?', (job_id,)).fetchone()
+        if mapping:
+            ids = write(lambda:store.enqueue_items(mapping['run_id'], [job['trace_id']], 'retry_failed'))
+            if not ids:
+                raise HTTPException(409, '该请求已被重试或已不再处于失败状态')
+            return store.job(ids[0])
+        frozen = (store.job_config(job_id) or snapshot(execution)) if job["mode"] == "live" else None
+        return store.enqueue(job["trace_id"], job["mode"], config=frozen)
+
+    @app.post("/api/jobs/{job_id}/reviews")
+    def review(job_id: str, body: Review):
+        job = require_job(job_id)
+        write(lambda:store.assert_job_writable(job_id))
+        if job["status"] != "completed":
+            raise HTTPException(409, "请等待诊断完成后复核")
+        if body.decision == "rejected" and body.critical_step is not None:
+            raise HTTPException(422, "驳回结论时关键步骤应留空")
+        trace = require_trace(job["trace_id"])["data"]
+        if body.critical_step is not None:
+            if (body.critical_step >= len(trace["messages"]) or trace["messages"][body.critical_step]["role"] == "user"
+                    or trace["messages"][body.critical_step].get("judgable") is False):
+                raise HTTPException(422, "关键步骤必须是轨迹中的可诊断消息")
+        original = job["result"]["attribution"]
+        if body.decision == "confirmed" and any(getattr(body, k) != original[k] for k in ("critical_step", "category", "summary")):
+            raise HTTPException(422, "结论有变动时请选择修改结论")
+        write(lambda:store.add_review(job_id, body.model_dump()))
+        return {"reviews": store.reviews(job_id)}
+
+    @app.get("/api/jobs/{job_id}/artifacts/{stage}")
+    def artifact(job_id: str, stage: str):
+        job = require_job(job_id)
+        result = job.get("result") or {}
+        run_id = result.get("provenance", {}).get("run_id", "")
+        names = {"stage_a": "input_stage_a.json", "stage_b": "input_stage_b.json", "phase1": "input_stage_c_phase1.json",
+                 "phase2": "input_stage_c_phase2.json", "final": "input_final.json"}
+        if stage not in names or len(run_id) != 32 or any(c not in "0123456789abcdef" for c in run_id):
+            raise HTTPException(404, "阶段产物不存在")
+        path = settings.data_dir / "trajdebug" / "runs" / run_id / names[stage]
+        if not path.is_file():
+            raise HTTPException(404, "该阶段尚未产出结果")
+        return FileResponse(path, media_type="application/json", filename=names[stage])
+
+    @app.get("/api/jobs/{job_id}/export")
+    def export(job_id: str, format: str = "json"):
+        job = require_job(job_id)
+        if job["status"] != "completed":
+            raise HTTPException(409, "请等待诊断完成后导出")
+        trace = require_trace(job["trace_id"])
+        reviews = store.reviews(job_id)
+        feedback = store.latest_feedback(job_id)
+        payload = {"trace": trace, "job": job, "reviews": reviews,
+                   "feedback": feedback, "feedback_history": store.feedback_history(job_id)}
+        headers = {"Content-Disposition": f'attachment; filename="tianluo-diagnosis-{job_id[:8]}.{format}"'}
+        if format == "json":
+            return Response(json.dumps(payload, ensure_ascii=False, indent=2), media_type="application/json", headers=headers)
+        if format != "md":
+            raise HTTPException(422, "format 仅支持 json 或 md")
+        return Response(markdown_report(trace, job, reviews, feedback), media_type="text/markdown", headers=headers)
+
+    attach_task_routes(app, store, settings, job)
+    attach_pattern_routes(app, store)
+    attach_model_settings_routes(app, store.model_connections, settings)
+
+    dist = Path(frontend_dir) if frontend_dir is not None else ROOT / "frontend" / "dist"
+    if (dist / 'index.html').is_file() and (dist / 'assets').is_dir():
+        app.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")
+        @app.get("/")
+        def index():
+            return FileResponse(dist / "index.html")
+    return app
+
+
+app = create_app()

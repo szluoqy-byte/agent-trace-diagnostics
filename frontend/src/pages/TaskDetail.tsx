@@ -1,0 +1,120 @@
+import {openPatternCreate} from '../patterns'
+import {useCallback,useEffect,useRef,useState} from 'react'
+import {Copy,Download,Play,RotateCcw} from 'lucide-react'
+import {uiText} from '../branding'
+import {dateLabel,post} from '../api'
+import {Dialog} from '../components/Dialogs'
+import Pagination from '../components/Pagination'
+import Tabs from '../components/Tabs'
+import {Badge,diagnosisStatus,filterQuery,formatLabel,listKey,listScroll,reviewStatus,taskPath,tracePath,useResource,useWorkspace} from '../workspace'
+import type {ActionResult,AnalysisRun,AnalysisTask,Counts,RunPage,TaskRow} from '../workspace'
+
+const selections=new Map<string,{filter:string;ids:string[]}>()
+const savedRunQueries=new Map<string,string>()
+
+export function TaskStats({counts}: {counts:Counts}) {
+  const c=(key:string)=>counts[key]??0
+  return <div className="ws-stats"><div><span>任务轨迹</span><strong>{c('total')}<small>条</small></strong><p>业务失败 {c('business_failed')} · 业务成功 {c('business_succeeded')}</p></div><div><span>诊断已完成</span><strong>{c('completed')}<small>/ {c('total')}</small></strong><p>待分析 {c('pending')} · 排队 / 运行 {c('queued')+c('running')}</p></div><div><span>分析失败</span><strong className={c('failed')?'ws-error':''}>{c('failed')}<small>条</small></strong><p>可只重试失败项</p></div><div><span>改进建议</span><strong>{c('feedback_completed')}<small>/ {c('feedback_applicable')}</small></strong><p>{c('feedback_failed')?`${c('feedback_failed')} 条生成失败`:'已定位有效关键错误的失败轨迹'}</p></div><div><span>待人工复核</span><strong>{c('review_pending')}<small>条</small></strong><p>已复核 {c('reviewed')} 条</p></div></div>
+}
+
+export default function TaskDetail({id,params}:{id:string;params:URLSearchParams}) {
+  const {version,busy,config,action,go,openSettings}=useWorkspace(),{data:task,error}=useResource<AnalysisTask>(`/tasks/${id}`,version,2000)
+  const [modal,setModal]=useState(false),[autoFeedback,setAutoFeedback]=useState(false),[startError,setStartError]=useState('')
+  const close=useCallback(()=>setModal(false),[])
+  const requestedRun=params.get('run')
+  const run=task?.runs.find(r=>r.id===requestedRun)??task?.runs[0]
+  const runId=run?.id
+  const requestedTab=params.get('tab')||''
+  const tab=['history','config'].includes(requestedTab)?requestedTab:'data'
+  function openStart(){setAutoFeedback(run?.auto_feedback??task?.draft_auto_feedback??false);setStartError('');setModal(true)}
+  const query=new URLSearchParams(params);if(runId)query.set('run',runId);else query.delete('run')
+  useEffect(()=>{if(runId)savedRunQueries.set(`${id}/${runId}`,params.toString())},[id,runId,params.toString()])
+  function switchRun(next:string){const q=new URLSearchParams(savedRunQueries.get(`${id}/${next}`)||'');q.set('run',next);q.set('tab','data');go(taskPath(id,q))}
+  function switchTab(next:string){const q=new URLSearchParams(query);q.set('tab',next);go(taskPath(id,q))}
+  async function start(){const result=await action(()=>post<{run_id:string}>(`/tasks/${id}/runs`,{auto_feedback:autoFeedback}),'新分析记录已创建，轨迹已加入队列',setStartError);if(result){close();const q=new URLSearchParams({run:result.run_id});go(taskPath(id,q))}}
+  if(error&&!task)return <div className="empty"><h1>无法读取任务</h1><p role="alert">{error}</p><a href="#/tasks">返回任务列表</a></div>
+  if(!task)return <div className="empty">正在读取任务…</div>
+  const active=task.counts.running>0||task.counts.queued>0||task.counts.feedback_active>0
+  return <><div className="ws-breadcrumb"><a href="#/tasks">分析任务</a><span>/</span><span>任务详情</span></div><div className="ws-heading"><div><div className="ws-heading-title"><h1>{task.name}</h1><Badge value={run?.status??task.status}/></div>{task.agent || task.version || task.goal ? <p>{[task.agent, task.version, task.goal].filter(Boolean).join(' · ')}</p> : null}</div><div className="ws-actions">{run?<button className="secondary" onClick={()=>openPatternCreate({task_id:id,run_id:run.id},'#'+taskPath(id,query))}>分析失败模式</button>:null}<a className="secondary" href={`#/tasks/new?source=${id}`}><Copy size={15}/>复制任务</a>{run?<a className="secondary" href={`/api/tasks/${id}/runs/${run.id}/export`} download><Download size={15}/>导出本次分析</a>:null}</div></div>
+  <div className="ws-run-row"><div><label>分析记录 <select aria-label="选择分析记录" disabled={task.runs.length<=1} value={run?.id??''} onChange={e=>switchRun(e.target.value)}>{task.runs.length?task.runs.map(r=><option key={r.id} value={r.id}>第 {r.number} 次分析{r.id===task.latest_run_id?' · 最新':''} · {dateLabel(r.created_at)}</option>):<option value="">暂无分析记录</option>}</select></label>{run?<span className="muted">{String(run.config.model||'历史配置')} · {run.config.concurrency?`轨迹并发上限 ${run.config.concurrency}`:'未记录并发上限'}</span>:null}</div>{run?<button className="secondary" disabled={busy||active} onClick={openStart} title={active?'请等待当前分析和建议生成结束':undefined}><RotateCcw size={14}/>重新分析</button>:null}</div>
+  {run?.read_only?<div className="ws-warning">第 {run.number} 次分析是历史记录，仅供查看。<button className="text-button" onClick={()=>switchRun(task.latest_run_id!)}>查看最新分析</button></div>:null}
+  <TaskStats counts={run?.counts??task.counts}/>
+  <Tabs id="task" label="任务内容" className="ws-tabs" items={[{id:'data',label:'轨迹列表'},{id:'history',label:`分析记录（${task.runs.length}）`},{id:'config',label:'数据与配置'}]} active={tab} onChange={switchTab}/>
+  <div role="tabpanel" id={`task-panel-${tab}`} aria-labelledby={`task-tab-${tab}`}>
+  {tab==='data'?<>
+    {!run?<div className="ws-surface ws-draft-banner"><div><h2>任务草稿</h2><p>首次启动前可核对轨迹和诊断模型。</p></div>
+      {config?.ready?<button className="primary" disabled={busy} onClick={openStart}><Play size={15}/>启动分析</button>:<button className="secondary" onClick={openSettings}>配置模型</button>}
+    </div>:null}
+    <TraceTable key={`${id}/${run?.id??'draft'}`} task={task} run={run} params={query}/>
+  </>:tab==='history'?<div className="ws-history">{task.runs.map(r=><section className="ws-surface ws-run-card" key={r.id}><div><h3>第 {r.number} 次分析 <Badge value={r.read_only?'historical':'current'}>{r.read_only?'历史只读':'最新'}</Badge></h3><p>{dateLabel(r.created_at)} · {String(r.config.model||'历史配置')} · {r.counts.total} 条轨迹</p><p>诊断完成 {r.counts.completed??0} · 分析失败 {r.counts.failed??0} · 建议已生成 {r.counts.feedback_completed??0} · 已复核 {r.counts.reviewed??0}</p></div><button className="secondary" onClick={()=>switchRun(r.id)}>查看这次分析</button></section>)}{!task.runs.length?<div className="empty">尚无分析记录</div>:null}<p className="muted">重新分析新建独立记录；失败项重试留在当前记录内，并保留每次请求与阶段产物。</p></div> :<TaskConfig task={task} run={run}/>}</div>
+  {modal?<Dialog title={run?'重新分析':'启动首次分析'} onClose={close} busy={busy}><div className="modal-body"><p>使用当前任务的 {task.input_count} 条轨迹。{run?'已有结论、建议与复核记录完整保留，完成后可切换查看。':''}</p><dl className="settings-list"><dt>诊断模型</dt><dd>{config?.model||'尚未配置'}</dd><dt>并发上限</dt><dd>{config?.concurrency}</dd></dl><label className="ws-check"><input type="checkbox" checked={autoFeedback} onChange={e=>setAutoFeedback(e.target.checked)}/><span>诊断后自动生成改进建议<small>对已定位关键失败步骤的轨迹逐条生成建议，会额外调用模型。</small></span></label><p className="ws-help">使用当前系统配置保存本次分析配置。如需重试失败项，请使用轨迹列表中的「重试失败诊断」。</p>{startError?<p role="alert" className="error-inline">{startError}</p>:null}</div><footer><button className="secondary" disabled={busy} onClick={close}>取消</button><button className="primary" disabled={busy||!config?.ready||active} onClick={()=>void start()}>{busy?'正在提交…':'创建记录并开始'}</button></footer></Dialog>:null}</>
+}
+
+function TraceTable({task,run,params}:{task:AnalysisTask;run:AnalysisRun|undefined;params:URLSearchParams}) {
+  const {version,busy,action,go,notify,openSettings,config,refresh}=useWorkspace()
+  const runId=run?.id??'draft',scope=`${task.id}/${runId}`,filters=filterQuery(params)
+  const [batch,setBatch]=useState<{kind:string;label:string;count:number;ids?:string[]}|null>(null)
+  const [batchError,setBatchError]=useState('')
+  const closeBatch=useCallback(()=>setBatch(null),[])
+  const requestedPage=Number(params.get('page'))
+  const page=Number.isSafeInteger(requestedPage)&&requestedPage>0?requestedPage:1,size=[10,20,50].includes(Number(params.get('page_size')))?Number(params.get('page_size')):10
+  const path=`/tasks/${task.id}/runs/${runId}/traces?page=${page}&page_size=${size}${filters?'&'+filters:''}`
+  const {data,error}=useResource<RunPage>(path,version,run?1800:0)
+  const [selected,setSelected]=useState<string[]>(()=>{const saved=selections.get(scope);return saved?.filter===filters?saved.ids:[]})
+  const urlSearch=params.get('search')||'',[searchValue,setSearchValue]=useState(urlSearch)
+  const composing=useRef(false)
+  useEffect(()=>setSearchValue(urlSearch),[urlSearch])
+  const previousFilter=useRef(filters),restored=useRef('')
+  const readonly=!run||data?.read_only||run.read_only,counts=data?.counts??run?.counts??task.counts
+  const checked=!!data?.items.length&&data.items.every(r=>selected.includes(r.id)),partly=!!data?.items.some(r=>selected.includes(r.id))&&!checked
+  function select(ids:string[]){selections.set(scope,{filter:filters,ids});setSelected(ids)}
+  useEffect(()=>{if(previousFilter.current!==filters){previousFilter.current=filters;selections.set(scope,{filter:filters,ids:[]});setSelected([])}},[scope,filters])
+  useEffect(()=>{if(data&&data.page!==page){const q=new URLSearchParams(params);q.set('page',String(data.page));go(taskPath(task.id,q),true)}},[data?.page,page,task.id])
+  useEffect(()=>{if(!data)return;const key=listKey(task.id,params);if(restored.current===key)return;restored.current=key;const scroll=listScroll.get(key);if(params.get('focus'))document.getElementById(`row-${params.get('focus')}`)?.scrollIntoView({block:'nearest'})
+    else if(scroll!==undefined)window.scrollTo(0,scroll)},[data?.page,data?.page_size,filters,task.id])
+  function query(patch:Record<string,string>,reset=false){const q=new URLSearchParams(params);q.delete('focus');Object.entries(patch).forEach(([k,v])=>v==='all'||v===''?q.delete(k):q.set(k,v));if(reset){q.set('page','1');select([])}go(taskPath(task.id,q),reset)}
+  function ask(kind:string,label:string,count:number,ids?:string[]){
+    setBatchError('')
+    setBatch({kind,label,count,ids})
+  }
+  async function perform(){
+    if(!batch||!run)return
+    const {kind,ids}=batch
+    const result=await action(()=>post<ActionResult>(`/tasks/${task.id}/runs/${run.id}/actions`,{action:kind,...(ids?{trace_ids:ids}:{})}),undefined,setBatchError)
+    if(!result)return
+    closeBatch()
+    if(result.enqueued&&ids)select([])
+    notify(result.enqueued
+      ? `已提交 ${result.enqueued} 条${kind==='feedback'?'建议生成':'诊断'}请求${result.skipped.length?`，跳过 ${result.skipped.length} 条不适用的轨迹`:''}`
+      : result.skipped[0]?.reason||'所选范围内没有需要处理的轨迹')
+  }
+  function open(row:TaskRow){listScroll.set(listKey(task.id,params),window.scrollY);go(tracePath(task.id,row.id,params))}
+  const exportSelected='/api/tasks/'+task.id+'/runs/'+runId+'/export?'+new URLSearchParams(selected.map(id=>['trace_id',id]))
+  const feedbackTodo=Math.max(0,(counts.feedback_applicable??0)-(counts.feedback_completed??0)-(counts.feedback_active??0))
+  const categories=data?.categories??run?.categories??[]
+  return <>{run?<div className="ws-toolbar"><div className="ws-actions"><button className="primary" disabled={busy||readonly||!counts.pending} onClick={()=>ask('pending','诊断待处理轨迹',counts.pending)}>诊断待处理轨迹（{counts.pending??0}）</button><button className="secondary" disabled={busy||readonly||!counts.failed} onClick={()=>ask('retry_failed','重试失败诊断',counts.failed)}>重试失败诊断（{counts.failed??0}）</button><button className="secondary" disabled={busy||readonly||!feedbackTodo} onClick={()=>ask('feedback','生成改进建议',feedbackTodo)}>生成改进建议（{feedbackTodo}）</button></div><span className="muted">{readonly?'历史记录只读':'批量操作覆盖本轮全部符合条件的轨迹'}</span></div>:null}
+  <div className="ws-filters"><input type="search" aria-label="搜索轨迹" placeholder="搜索标题、ID 或来源文件" value={searchValue}
+    onCompositionStart={()=>{composing.current=true}}
+    onCompositionEnd={event=>{composing.current=false;query({search:event.currentTarget.value},true)}}
+    onChange={event=>{setSearchValue(event.target.value);if(!composing.current)query({search:event.target.value},true)}}/><select aria-label="诊断状态" value={params.get('diagnosis')||'all'} onChange={e=>query({diagnosis:e.target.value},true)}><option value="all">全部诊断状态</option>{Object.entries(diagnosisStatus).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select><select aria-label="业务结果" value={params.get('business')||'all'} onChange={e=>query({business:e.target.value},true)}><option value="all">全部业务结果</option><option value="failed">业务失败</option><option value="succeeded">业务成功</option><option value="unknown">结果未知</option></select>{run?<select aria-label="复核状态" value={params.get('review')||'all'} onChange={e=>query({review:e.target.value},true)}><option value="all">全部复核状态</option><option value="pending">待复核</option>{Object.entries(reviewStatus).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select>:null}{filters?<button className="text-button" onClick={()=>{select([]);go(taskPath(task.id,new URLSearchParams({...(run?{run:runId}:{}),page_size:String(size)})),true)}}>清除筛选</button>:null}</div>
+  {params.get('category')?<div className="ws-info">根因类别：{params.get('category')} <button className="text-button" onClick={()=>query({category:''},true)}>取消类别筛选</button></div>:null}
+  {selected.length?<div className="ws-selection"><strong>已选 {selected.length} 条</strong><span>跨页保留选择 · 表头只选本页</span><div className="ws-actions"><button className="secondary small" disabled={busy||readonly} onClick={()=>ask('diagnose','诊断所选轨迹',selected.length,selected)}>诊断所选</button><button className="secondary small" disabled={busy||readonly} onClick={()=>ask('feedback','为所选轨迹生成建议',selected.length,selected)}>生成建议</button><button className="secondary small" disabled={!run||selected.length<2} onClick={()=>openPatternCreate({task_id:task.id,run_id:runId,trace_ids:selected},'#'+taskPath(task.id,params))}>分析所选失败模式</button><a className="secondary small" href={exportSelected} download>导出所选</a><button className="text-button" onClick={()=>select([])}>清空选择</button></div></div>:null}
+  {error?<p className="error-inline" role="alert">{error}</p>:null}
+  <p className="ws-table-scroll-hint muted">横向滑动可查看其余列</p>
+  <section className="ws-surface ws-trace-list" aria-busy={!data&&!error}><div className="ws-table-scroll"><table className="ws-trace-table"><thead><tr><th>{run?<input type="checkbox" aria-label="选择本页全部轨迹" ref={el=>{if(el)el.indeterminate=partly}} checked={checked} disabled={!data?.items.length} onChange={e=>select(e.target.checked?[...new Set([...selected,...data!.items.map(r=>r.id)])]:selected.filter(id=>!data!.items.some(r=>r.id===id)))}/>:null}</th><th>轨迹 / 来源</th><th>业务结果</th><th>诊断状态</th><th>根因类别</th><th>改进建议</th><th>人工复核</th><th>操作</th></tr></thead><tbody>{data?.items.map(r=><tr key={r.id} id={`row-${r.id}`} className={params.get('focus')===r.id?'ws-focused-row':''}><td>{run?<input type="checkbox" aria-label={`选择轨迹 ${r.id}`} checked={selected.includes(r.id)} onChange={e=>select(e.target.checked?[...selected,r.id]:selected.filter(id=>id!==r.id))}/>:null}</td><td><a href={'#'+tracePath(task.id,r.id,params)} className="ws-trace-title" onClick={event=>{if(event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();open(r)}}>{r.title}</a><small>{formatLabel(r.input_format)} · {r.steps} 条消息</small></td><td><Badge value={r.outcome}>{r.outcome==='failed'?'业务失败':r.outcome==='succeeded'?'业务成功':'结果未知'}</Badge></td><td><Badge value={r.diagnosis}>{diagnosisStatus[r.diagnosis]}</Badge>{r.diagnosis==='running'||r.diagnosis==='queued'?<small>{uiText(r.stage)} · {r.progress??0}%</small>:r.error?<small className="ws-error" title={uiText(r.error)}>请求失败 · {r.attempts} 次尝试</small>:null}</td><td>{r.diagnosis==='completed'&&r.outcome==='failed'?r.critical_step!==null?<><span className="ws-category" title={r.category??''}>{r.category||'未分类'}</span><small>关键步骤 #{r.critical_step}</small></>:<span className="muted">未定位关键步骤</span>:'—'}</td><td>{r.feedback_applicable?<Badge value={r.feedback_status??'pending'}>{{completed:'已生成',failed:'生成失败',queued:'排队中',running:'生成中'}[r.feedback_status??'']??'未生成'}</Badge>:<span className="muted">{r.diagnosis==='completed'?'不适用':'待诊断'}</span>}</td><td>{r.diagnosis==='completed'?<Badge value={r.review_status??'pending'}>{reviewStatus[r.review_status??'']??'待复核'}</Badge>:'—'}</td><td><button className="text-button" onClick={()=>open(r)}>查看详情</button></td></tr>)}</tbody></table></div>{!data||!data.items.length?<div className="empty">{data?'没有符合条件的轨迹，可清除筛选后再试。':error?<button className="secondary" onClick={refresh}>重新加载轨迹</button>:'正在读取轨迹列表…'}</div>:null}<Pagination page={data?.page??1} pages={data?.pages??1} pageSize={size} total={data?.total??0} onPage={n=>{if(!data||n===data.page)return;query({page:String(n)});document.querySelector('.ws-trace-list')?.scrollIntoView({block:'start',behavior:'smooth'})}} onSize={n=>query({page_size:String(n),page:'1'})} loading={!data}/></section>
+  {run?<section className="ws-surface ws-config"><h3>根因类别分布</h3>{categories.length?categories.map(c=><button key={c.name} className="ws-distribution" onClick={()=>query({category:c.name},true)}><span>{c.name}</span><strong>{c.count}</strong></button>):<p>暂无已定位的根因类别。</p>}<p className="ws-help">按模型诊断的根因类别统计。可点击类别筛选轨迹。</p></section>:null}
+  {batch?<Dialog title={batch.label} onClose={closeBatch} busy={busy}>
+    <div className="modal-body">
+      <p>{batch.ids?`处理已勾选的 ${batch.count} 条轨迹，包含跨页选择。`:`本轮预计处理 ${batch.count} 条符合条件的轨迹，包含筛选范围以外的轨迹。`}</p>
+      <p className="muted">{batch.kind==='feedback'?'根据本轮诊断结果生成改进建议，跳过未完成诊断、已有建议或不适用的轨迹。':'仅提交符合条件的轨迹，已完成和正在分析的轨迹会跳过。'}</p>
+      {batchError?<p className="error-inline" role="alert">{batchError}</p>:null}
+      {!config?.ready?<button className="text-button" onClick={()=>{closeBatch();openSettings()}}>查看模型设置</button>:null}
+    </div>
+    <footer><button className="secondary" disabled={busy} onClick={closeBatch}>取消</button><button className="primary" disabled={busy} onClick={()=>void perform()}>{busy?'正在提交…':'确认提交'}</button></footer>
+  </Dialog>:null}</>
+}
+
+function TaskConfig({task,run}:{task:AnalysisTask;run:AnalysisRun|undefined}) {
+  const c=run?.config
+  return <section className="ws-surface ws-config"><h3>数据范围</h3><dl><dt>轨迹数量</dt><dd>{task.input_count} 条</dd><dt>数据格式</dt><dd>{task.formats.map(formatLabel).join('、')}</dd><dt>业务结果</dt><dd>失败 {task.counts.business_failed??0} / 成功 {task.counts.business_succeeded??0}</dd><dt>创建时间</dt><dd>{dateLabel(task.created_at)}</dd></dl><h3>分析配置</h3>{c?<><dl><dt>分析轮次</dt><dd>第 {run!.number} 次</dd><dt>诊断模型</dt><dd>{String(c.model||'未保留')}</dd><dt>接口地址</dt><dd>{String(c.base_url||'未保留')}</dd><dt>轨迹并发上限</dt><dd>{String(c.concurrency??'未保留')}</dd><dt>步骤分析并发</dt><dd>{String(c.llm_concurrency??'未保留')}</dd><dt>输出上限</dt><dd>{String(c.max_tokens??'未保留')}</dd><dt>改进建议</dt><dd>{run!.auto_feedback?'诊断完成后自动生成':'按需生成'}</dd></dl>{c.note?<p className="ws-info">{String(c.note)}</p>:null}</>:<p className="muted">尚未启动分析。启动时保存当前执行配置。</p>}</section>
+}
