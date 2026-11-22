@@ -68,9 +68,9 @@
 
 第一轮 200 条精简集的完整结果记录在 [第一轮 RSI 阶段分析](rsi-round-1-analysis.md)。当前优先级如下。
 
-1. 提升 Stage B 对真实关键步骤的触发召回
-2. 减少 Phase 1 对 `origin_step` 和 `qualified_origin_step` 的偏移
-3. 改善 Phase 3 在多个合法实例之间的最终选择
+1. 减少官方已触发样本在 Phase 1 对 `origin_step` 和 `qualified_origin_step` 的偏移
+2. 改善 Phase 3 在多个合法实例之间的最终选择
+3. 对 Stage B 原生漏检只保留经过 Phase 1–3 端到端验证的候选
 4. 继续验证跨域数据，避免只改善航空和零售内部样本
 
 ## 后续记录模板
