@@ -5,7 +5,6 @@ import fcntl
 import hashlib
 import json
 import subprocess
-import time
 from collections import Counter, defaultdict
 from dataclasses import replace
 from pathlib import Path
@@ -53,7 +52,7 @@ def inputs(dataset):
     return cases
 
 
-async def run(dataset, output, concurrency=None, quota_wait_seconds=18000):
+async def run(dataset, output, concurrency=None):
     cases = inputs(dataset)
     verify_upstream()
     settings = Settings()
@@ -88,13 +87,8 @@ async def run(dataset, output, concurrency=None, quota_wait_seconds=18000):
                 except ModelError as exc:
                     usage = getattr(exc, 'usage', {}) or {}
                     attempts.append({'error': type(exc).__name__, 'usage': usage})
-                    if usage.get('failed_requests', 0):
-                        wait_seconds = quota_wait_seconds
-                        print(row['split'], row['input_sha256'][:12],
-                              f'服务端限流，等待 {wait_seconds} 秒后自动继续', flush=True)
-                        await asyncio.sleep(wait_seconds)
-                    elif attempt == 0:
-                        await asyncio.sleep(15)
+                    print(row['split'], row['input_sha256'][:12],
+                          '请求失败，立即重试', flush=True)
                     continue
                 write(dest, report)
                 print(row['split'], row['input_sha256'][:12], report['usage']['requests'], flush=True)
@@ -110,9 +104,8 @@ if __name__ == '__main__':
     parser.add_argument('--dataset', type=Path, default=ROOT/'data/rsi/v1-lite')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--concurrency', type=int, choices=range(1, 9))
-    parser.add_argument('--quota-wait-seconds', type=int, default=18000)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     with (args.output / 'baseline.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        asyncio.run(run(args.dataset.resolve(), args.output.resolve(), args.concurrency, args.quota_wait_seconds))
+        asyncio.run(run(args.dataset.resolve(), args.output.resolve(), args.concurrency))
