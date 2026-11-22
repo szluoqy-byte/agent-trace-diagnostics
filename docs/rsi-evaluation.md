@@ -53,3 +53,17 @@ curl -fL "https://api.github.com/repos/THU-KEG/TrajDebug/git/trees/$commit?recur
 ```
 
 上游使用条款见 [TrajDebug 数据说明](https://github.com/THU-KEG/TrajDebug/blob/5b04f98b1995ec758d9aba70940d17bb7d2d169b/data/README.md) 和 [AgentDebug 发布方](https://github.com/ulab-uiuc/AgentDebug#agenterrorbench-dataset)。
+
+## 第一轮配对实验
+
+从项目根目录运行以下命令。基线使用工作台当前默认模型，按现有并发参数执行，报告和模型缓存保存在独立实验目录。同一配置下重启命令会跳过已有报告。完整运行会调用模型，离线比较复用这些报告。
+
+```bash
+round_dir=data/validation/rsi-round-1
+mkdir -p "$round_dir"
+cp -n docs/rsi-round-1.md "$round_dir/protocol.md"
+.venv/bin/python scripts/run_rsi_baseline.py --output "$round_dir"
+.venv/bin/python scripts/evaluate_rsi_round.py --output "$round_dir"
+```
+
+候选规则、分区用途和验收门槛见[第一轮约定](rsi-round-1.md)。`report.md` 汇总精确命中，`comparison.json` 给出分域得分和用量，`paired-results.jsonl` 保存逐条预测。后续轮次使用新的输出目录，保留本轮冻结的证据。
