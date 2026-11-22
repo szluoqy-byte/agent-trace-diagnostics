@@ -77,6 +77,22 @@ def attribution_fields(critical, instances, step):
     return {'category': category or '未提供分类', 'critical_instance_id': chosen['id'] if chosen else None}
 
 
+def previous_diagnostic_step(trace, raw_step):
+    """Find the nearest preceding message that can carry an agent decision.
+
+    The upstream final selector occasionally points at a user or tool message.
+    That index cannot be shown as a critical agent step, but the preceding
+    non-user message is the causal action for the observed response in the
+    input contract.  This projection leaves the upstream output untouched.
+    """
+    if type(raw_step) is not int or raw_step <= 0:
+        return None
+    for message in reversed(trace.messages[:raw_step]):
+        if message.role != "user" and message.judgable is not False:
+            return message.step
+    return None
+
+
 def present_report(trace, outputs, *, model, usage, run_id=None, mode="live", stage_metrics=None):
     final = outputs.get("final") or {}
     views = compression_views(outputs.get("stage_a") or {}, trace)
@@ -116,6 +132,10 @@ def present_report(trace, outputs, *, model, usage, run_id=None, mode="live", st
     raw_step = critical.get("unified_critical_step")
     valid_step = type(raw_step) is int and 0 <= raw_step < len(trace.messages) and trace.messages[raw_step].role != "user" and trace.messages[raw_step].judgable is not False
     step = raw_step if valid_step else None
+    projected_previous_step = None
+    if step is None:
+        projected_previous_step = previous_diagnostic_step(trace, raw_step)
+        step = projected_previous_step
     fields = attribution_fields(critical, instances, step)
     chosen = next((i for i in instances if i['id'] == fields['critical_instance_id']), None)
     rationale = critical.get("llm_pick_rationale") or critical.get("agent_chain_explanation") or critical.get("env_chain_explanation") or ""
@@ -125,7 +145,10 @@ def present_report(trace, outputs, *, model, usage, run_id=None, mode="live", st
         rationale = "业务运行成功，无需进行失败归因。" if trace.outcome == "succeeded" else "本次诊断未定位到关键失败步骤。"
     warnings = []
     if raw_step is not None and not valid_step:
-        warnings.append("诊断返回的关键步骤无法定位到可诊断消息，已标记为未确定。")
+        if projected_previous_step is None:
+            warnings.append("诊断返回的关键步骤无法定位到可诊断消息，已标记为未确定。")
+        else:
+            warnings.append(f"诊断返回的关键步骤位于非可诊断消息，已映射到前一条可诊断消息（步骤 {projected_previous_step}）。")
     if any(i.get("parse_failed") for i in instances):
         warnings.append("部分错误实例的状态无法确定，请结合轨迹原文复核。")
     summary = summarize_evidence(triggers, instances)

@@ -99,6 +99,17 @@ def test_report_projects_category_and_instance_from_final_attribution_source():
     assert report['attribution']['critical_instance_id'] is None
 
 
+def test_invalid_critical_step_projects_previous_diagnostic_message():
+    trace = demo_trace()
+    trace.messages[5].judgable = False
+    official = copy.deepcopy(demo_report()['official_output'])
+    official['critical_error'].update(unified_critical_step=5, llm_pick_step=5)
+    report = present_report(trace, {'stage_b': {'step_triggers': official['step_triggers']}, 'final': official},
+                            model='test', usage={})
+    assert report['attribution']['critical_step'] == 4
+    assert any('映射到前一条可诊断消息' in warning for warning in report['warnings'])
+
+
 @pytest.fixture
 def provider():
     calls = []
