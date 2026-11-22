@@ -124,6 +124,7 @@ cd ..
 - [架构与官方接入边界](docs/architecture.md)
 - [用户旅程](docs/user-journey.md)
 - [第一轮 RSI 阶段分析](docs/rsi-round-1-analysis.md)
+- [TrajDebug 算法优化维护日志](docs/algorithm-optimization-log.md)
 - `backend/tracelens/_vendor/trajdebug/`：官方源码、许可证和哈希清单。
 - `data/trajdebug/runs/`：每次运行的输入、五阶段原始输出和用量。
 - `data/trajdebug/feedback/`：独立建议任务的输入副本、官方反馈报告和用量。
