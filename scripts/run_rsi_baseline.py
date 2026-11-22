@@ -5,6 +5,7 @@ import fcntl
 import hashlib
 import json
 import subprocess
+import time
 from collections import Counter, defaultdict
 from dataclasses import replace
 from pathlib import Path
@@ -52,14 +53,14 @@ def inputs(dataset):
     return cases
 
 
-async def run(dataset, output):
+async def run(dataset, output, concurrency=None, quota_wait_seconds=18000):
     cases = inputs(dataset)
     verify_upstream()
     settings = Settings()
     connection = ModelConnections(settings.data_dir).default()
     if connection:
         settings = replace(settings, **{k: connection[k] for k in ('model', 'base_url', 'api_key')})
-    settings = replace(settings, data_dir=output)
+    settings = replace(settings, data_dir=output, concurrency=concurrency or settings.concurrency)
     stamp = {
         'commit': subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse', 'HEAD'], text=True).strip(),
         'upstream': UPSTREAM_COMMIT, 'dataset_sha256': hashlib.sha256((dataset/'dataset.json').read_bytes()).hexdigest(),
@@ -85,8 +86,14 @@ async def run(dataset, output):
                 try:
                     report = await diagnose(trace, settings, progress)
                 except ModelError as exc:
-                    attempts.append({'error': type(exc).__name__, 'usage': getattr(exc, 'usage', {})})
-                    if attempt == 0:
+                    usage = getattr(exc, 'usage', {}) or {}
+                    attempts.append({'error': type(exc).__name__, 'usage': usage})
+                    if usage.get('failed_requests', 0):
+                        wait_seconds = quota_wait_seconds
+                        print(row['split'], row['input_sha256'][:12],
+                              f'服务端限流，等待 {wait_seconds} 秒后自动继续', flush=True)
+                        await asyncio.sleep(wait_seconds)
+                    elif attempt == 0:
                         await asyncio.sleep(15)
                     continue
                 write(dest, report)
@@ -102,8 +109,10 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--dataset', type=Path, default=ROOT/'data/rsi/v1-lite')
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--concurrency', type=int, choices=range(1, 9))
+    parser.add_argument('--quota-wait-seconds', type=int, default=18000)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     with (args.output / 'baseline.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        asyncio.run(run(args.dataset.resolve(), args.output.resolve()))
+        asyncio.run(run(args.dataset.resolve(), args.output.resolve(), args.concurrency, args.quota_wait_seconds))
