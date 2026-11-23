@@ -1,6 +1,6 @@
-import {useEffect, useState} from 'react'
-import {Plus, RefreshCw, Search} from 'lucide-react'
-import {dateLabel} from '../api'
+import {useEffect, useRef, useState} from 'react'
+import {Plus, RefreshCw, Search, Upload} from 'lucide-react'
+import {api, dateLabel} from '../api'
 import {sourceLabel} from '../branding'
 import {openPatternCreate} from '../patterns'
 import Pagination from '../components/Pagination'
@@ -13,9 +13,12 @@ const poll = (data: LibraryPage) => data.items.some(row => ['running', 'queued']
 export default function TraceLibrary({params, selected, onSelect}: {
   params: URLSearchParams; selected: LibrarySelection[]; onSelect: (items: LibrarySelection[]) => void
 }) {
-  const {go, version, refresh} = useWorkspace()
+  const {go, version, refresh, notify} = useWorkspace()
   const search = params.get('search') ?? ''
   const [searchInput, setSearchInput] = useState(search)
+  const [importing, setImporting] = useState(false)
+  const [importError, setImportError] = useState('')
+  const importInput = useRef<HTMLInputElement>(null)
   useEffect(() => setSearchInput(search), [search])
 
   const requestedPage = Number(params.get('page'))
@@ -54,11 +57,32 @@ export default function TraceLibrary({params, selected, onSelect}: {
     onSelect(checked ? [...selected, ...unselected] : selected.filter(row => !pageIds.has(row.id)))
   }
 
+  async function importFiles(files: File[]) {
+    if (!files.length || importing) return
+    setImporting(true)
+    setImportError('')
+    try {
+      const form = new FormData()
+      files.forEach(file => form.append('files', file))
+      const result = await api<{trace_ids: string[]}>('/import', {method: 'POST', body: form})
+      notify(`已导入 ${result.trace_ids.length} 条轨迹`)
+      refresh()
+    } catch (error) {
+      setImportError((error as Error).message)
+    } finally {
+      setImporting(false)
+    }
+  }
+
   return <>
     <div className="ws-heading">
       <div><h1>轨迹库</h1><p>查找已入库的轨迹，查看诊断记录或复用到新任务。</p></div>
-      <button className="secondary" onClick={refresh}><RefreshCw size={15}/>刷新</button>
+      <div className="ws-actions"><input ref={importInput} hidden type="file" multiple accept=".json,.jsonl,application/json,application/x-ndjson"
+        aria-label="选择要导入的轨迹文件" onChange={event => {void importFiles(Array.from(event.target.files ?? [])); event.target.value = ''}}/>
+        <button className="secondary" disabled={importing} onClick={() => importInput.current?.click()}><Upload size={15}/>{importing ? '正在导入…' : '导入轨迹'}</button>
+        <button className="secondary" onClick={refresh}><RefreshCw size={15}/>刷新</button></div>
     </div>
+    {importError ? <p className="error-inline" role="alert">{importError}</p> : null}
     <form className="ws-filters library-filters" onSubmit={event => {
       event.preventDefault()
       update({search: searchInput.trim(), page: ''})
