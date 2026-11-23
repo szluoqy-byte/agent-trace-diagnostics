@@ -8,7 +8,7 @@ from .normalize import fingerprint
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS workspace_meta (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS analysis_tasks (
- id TEXT PRIMARY KEY, name TEXT, agent TEXT, version TEXT, goal TEXT, created_at TEXT);
+ id TEXT PRIMARY KEY, name TEXT, agent TEXT, version TEXT, goal TEXT, prompt_language TEXT NOT NULL DEFAULT 'en', created_at TEXT);
 CREATE TABLE IF NOT EXISTS task_traces (
  task_id TEXT REFERENCES analysis_tasks(id), trace_id TEXT REFERENCES traces(id), position INTEGER,
  PRIMARY KEY(task_id,trace_id));
@@ -40,13 +40,15 @@ class TaskStore:
             db.execute('BEGIN IMMEDIATE')
             if not any(row['name'] == 'draft_auto_feedback' for row in db.execute('PRAGMA table_info(analysis_tasks)')):
                 db.execute('ALTER TABLE analysis_tasks ADD COLUMN draft_auto_feedback INTEGER NOT NULL DEFAULT 0')
+            if not any(row['name'] == 'prompt_language' for row in db.execute('PRAGMA table_info(analysis_tasks)')):
+                db.execute("ALTER TABLE analysis_tasks ADD COLUMN prompt_language TEXT NOT NULL DEFAULT 'en'")
             if db.execute("SELECT 1 FROM workspace_meta WHERE key='task_migration_v1'").fetchone():
                 return
             traces = db.execute('SELECT id FROM traces ORDER BY created_at,id').fetchall()
             if traces:
                 task_id, stamp = uuid.uuid4().hex, now()
-                db.execute('INSERT INTO analysis_tasks (id,name,agent,version,goal,created_at) VALUES (?,?,?,?,?,?)',
-                           (task_id, '历史轨迹 · 已有数据', '', '', '重构前导入的轨迹与分析结果，原始记录完整保留。', stamp))
+                db.execute('INSERT INTO analysis_tasks (id,name,agent,version,goal,prompt_language,created_at) VALUES (?,?,?,?,?,?,?)',
+                           (task_id, '历史轨迹 · 已有数据', '', '', '重构前导入的轨迹与分析结果，原始记录完整保留。', 'en', stamp))
                 for i, trace in enumerate(traces):
                     db.execute('INSERT INTO task_traces VALUES (?,?,?)', (task_id, trace['id'], i))
                 groups = {t['id']: db.execute('SELECT id,result,created_at FROM jobs WHERE trace_id=? ORDER BY created_at,rowid', (t['id'],)).fetchall() for t in traces}
@@ -221,8 +223,8 @@ class TaskStore:
             db.execute('BEGIN IMMEDIATE')
             ids = list(dict.fromkeys(trace_ids or [self._insert_trace(db, t) for t in traces]))
             task_id = uuid.uuid4().hex
-            db.execute('INSERT INTO analysis_tasks (id,name,agent,version,goal,created_at,draft_auto_feedback) VALUES (?,?,?,?,?,?,?)',
-                       (task_id, *(fields[k] for k in ('name','agent','version','goal')), now(), int(auto_feedback)))
+            db.execute('INSERT INTO analysis_tasks (id,name,agent,version,goal,prompt_language,created_at,draft_auto_feedback) VALUES (?,?,?,?,?,?,?,?)',
+                       (task_id, *(fields[k] for k in ('name','agent','version','goal','prompt_language')), now(), int(auto_feedback)))
             for i, trace_id in enumerate(ids):
                 db.execute('INSERT INTO task_traces VALUES (?,?,?)', (task_id, trace_id, i))
             run_id = self._start_run(db, task_id, config, auto_feedback) if config is not None else None

@@ -131,3 +131,5 @@
 .model-form-test span{font-size:12px}
 @media(max-width:640px){.model-connection{flex-direction:column;gap:12px}}
 @media(max-width:700px){.runtime-settings-form{padding:0 16px 16px}.runtime-settings-grid{grid-template-columns:1fr}.runtime-json-mode{padding-top:0}}
+
+.ws-choice-group{border:0;padding:0;margin:0 0 18px}.ws-choice-group legend{font-size:12px;color:#66758f;margin-bottom:10px}.ws-radio{display:flex!important;align-items:flex-start;gap:10px;font-size:12px;color:#6b7b95;margin:8px 0!important;line-height:1.8}.ws-radio input{margin-top:5px;accent-color:var(--accent)}.ws-radio span{display:block}.ws-radio small{display:block;font-size:11px;color:#99a3b2}

@@ -2,7 +2,7 @@
 from dataclasses import replace
 from .trajdebug import ENGINE_VERSION, UPSTREAM_COMMIT
 
-FIELDS = ('base_url', 'model', 'max_retries', 'timeout', 'llm_concurrency', 'max_tokens', 'cluster_json_mode')
+FIELDS = ('base_url', 'model', 'prompt_language', 'max_retries', 'timeout', 'llm_concurrency', 'max_tokens', 'cluster_json_mode')
 RUNTIME_FIELDS = ('concurrency', 'max_retries', 'timeout', 'llm_concurrency', 'max_tokens', 'cluster_json_mode')
 
 
@@ -23,9 +23,11 @@ def runtime_snapshot(settings):
     return {key: getattr(settings, key) for key in RUNTIME_FIELDS}
 
 
-def snapshot(settings, connection_id=None):
+def snapshot(settings, connection_id=None, prompt_language=None):
     config = {**{k: getattr(settings, k) for k in FIELDS}, 'concurrency': settings.concurrency,
               'engine': ENGINE_VERSION, 'upstream_commit': UPSTREAM_COMMIT}
+    if prompt_language is not None:
+        config['prompt_language'] = prompt_language
     if connection_id is not None:
         config['model_connection_id'] = connection_id
     return config

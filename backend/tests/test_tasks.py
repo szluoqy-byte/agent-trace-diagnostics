@@ -75,6 +75,15 @@ def test_task_create_pagination_filter_export_and_restart(tmp_path):
     assert len(restarted.state.store.run_rows(run))==20
 
 
+def test_task_prompt_language_is_persisted_and_frozen_per_run(tmp_path):
+    app, client, ids = setup(tmp_path, 1)
+    task = create(client, ids, prompt_language='zh')
+    assert client.get(f"/api/tasks/{task['task_id']}").json()['prompt_language'] == 'zh'
+    run_id = client.post(f"/api/tasks/{task['task_id']}/runs", json={}).json()['run_id']
+    assert app.state.store.runs(task['task_id'])[0]['config']['prompt_language'] == 'zh'
+    assert app.state.store.job_config(app.state.store.run_rows(run_id)[0]['job_id'])['prompt_language'] == 'zh'
+
+
 def test_retries_stay_in_analysis_and_history_is_read_only(tmp_path):
     app,client,ids=setup(tmp_path,2)
     task=create(client,ids,start=True)

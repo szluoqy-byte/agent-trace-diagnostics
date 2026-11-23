@@ -9,6 +9,7 @@ import threading
 import time
 from .trajdebug import STAGES, VENDOR, verify_upstream
 from .model_headers import apply_headers, parse_headers
+from .prompt_language import localize_model
 
 
 class Usage:
@@ -100,6 +101,7 @@ async def run(directory):
                 stage = cls(stage_config)
                 model = getattr(stage, "compress_model", None) or stage.model
                 apply_headers(model, parse_headers(os.environ.get("TRACELENS_MODEL_HEADERS")))
+                localize_model(model, config.get("prompt_language", "en"))
                 usage.attach(model, config)
                 try:
                     if key == "stage_a":

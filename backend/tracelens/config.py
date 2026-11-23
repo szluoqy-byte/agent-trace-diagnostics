@@ -13,6 +13,7 @@ class Settings:
     base_url: str = os.getenv("OPENAI_BASE_URL", "").rstrip("/")
     api_key: str = os.getenv("OPENAI_API_KEY", "")
     model: str = os.getenv("DIAG_MODEL", "")
+    prompt_language: str = os.getenv("DIAG_PROMPT_LANGUAGE", "en")
     headers: dict[str, str] = field(default_factory=dict)
     concurrency: int = max(1, min(8, int(os.getenv("DIAG_CONCURRENCY", "2"))))
     max_retries: int = max(0, min(5, int(os.getenv("DIAG_MAX_RETRIES", "2"))))

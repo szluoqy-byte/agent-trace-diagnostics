@@ -10,6 +10,7 @@ import time
 from .trajdebug import VENDOR, verify_upstream
 from .trajdebug_worker import Usage
 from .model_headers import apply_headers, parse_headers
+from .prompt_language import localize_model
 
 
 async def run(directory):
@@ -26,6 +27,7 @@ async def run(directory):
             model = APIModel(config['cache_path'], config['base_url'], config['model'], os.environ['OPENAI_API_KEY'],
                              extra_params=resolve_extra_params(None))
             apply_headers(model, parse_headers(os.environ.get('TRACELENS_MODEL_HEADERS')))
+            localize_model(model, config.get('prompt_language', 'en'))
             usage.attach(model, config)
             path = await _process_one(str(directory / 'input_final.json'), str(directory), str(directory), str(directory),
                                       model, _build_taxonomy_block(), config['max_tokens'], 0.0, asyncio.Semaphore(1))

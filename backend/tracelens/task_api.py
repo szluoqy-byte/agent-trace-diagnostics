@@ -9,6 +9,7 @@ from .normalize import parse_upload, fingerprint
 from .execution import active_execution, snapshot, job_settings, run_settings
 from .feedback import feedback_availability
 from .official_samples import load_official_samples
+from .prompt_language import normalize_prompt_language
 
 
 class TaskCreate(Contract):
@@ -16,6 +17,7 @@ class TaskCreate(Contract):
     agent: str = Field(default='', max_length=100)
     version: str = Field(default='', max_length=80)
     goal: str = Field(default='', max_length=3000)
+    prompt_language: Literal['en', 'zh'] = 'en'
     preview_id: str | None = None
     source_task_id: str | None = None
     trace_ids: list[str] | None = Field(default=None, min_length=1, max_length=500)
@@ -227,9 +229,10 @@ def attach_task_routes(app, store, settings, job_view):
                 traces.append(Trajectory.model_validate(trace['data']))
         execution, connection_id = active_execution(store, settings)
         validate_inputs(traces, start=body.start, execution=execution)
-        task_id, run_id = store.create_task({**body.model_dump(), 'name': body.name.strip()},
+        task_id, run_id = store.create_task({**body.model_dump(), 'name': body.name.strip(),
+                                             'prompt_language': normalize_prompt_language(body.prompt_language)},
                                          traces=traces, trace_ids=trace_ids,
-                                         config=snapshot(execution, connection_id) if body.start else None,
+                                         config=snapshot(execution, connection_id, body.prompt_language) if body.start else None,
                                          auto_feedback=body.auto_feedback)
         return {'task_id':task_id, 'run_id':run_id}
 
@@ -239,7 +242,8 @@ def attach_task_routes(app, store, settings, job_view):
         execution, connection_id = active_execution(store, settings)
         validate_inputs([Trajectory.model_validate(t['data']) for t in store.task_inputs(task_id)],
                         start=True, execution=execution)
-        run_id = checked(lambda:store.start_run(task_id, snapshot(execution, connection_id), body.auto_feedback))
+        run_id = checked(lambda:store.start_run(task_id, snapshot(execution, connection_id,
+                                                                  require_task(task_id)['prompt_language']), body.auto_feedback))
         return {'run_id':run_id}
 
     def trace_scope(task_id, run_id):
