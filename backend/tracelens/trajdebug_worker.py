@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 from .trajdebug import STAGES, VENDOR, verify_upstream
+from .model_headers import apply_headers, parse_headers
 
 
 class Usage:
@@ -98,6 +99,7 @@ async def run(directory):
             with contextlib.redirect_stdout(sys.stderr):
                 stage = cls(stage_config)
                 model = getattr(stage, "compress_model", None) or stage.model
+                apply_headers(model, parse_headers(os.environ.get("TRACELENS_MODEL_HEADERS")))
                 usage.attach(model, config)
                 try:
                     if key == "stage_a":

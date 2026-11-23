@@ -11,7 +11,7 @@ def active_execution(store, settings):
     if connection is None:
         return settings, None
     return replace(settings, base_url=connection['base_url'], model=connection['model'],
-                   api_key=connection['api_key']), connection['id']
+                   api_key=connection['api_key'], headers=connection.get('headers', {})), connection['id']
 
 
 def load_runtime_settings(store, settings):
@@ -42,7 +42,7 @@ def run_settings(store, settings, config):
     if connection_id := config.get('model_connection_id'):
         connection = store.model_connections.get(connection_id)
         if connection and connection['base_url'] == frozen['base_url'] and connection['model'] == frozen.get('model'):
-            return replace(settings, **frozen, api_key=connection['api_key'])
+            return replace(settings, **frozen, api_key=connection['api_key'], headers=connection.get('headers', {}))
     elif frozen['base_url'].rstrip('/') == settings.base_url.rstrip('/'):
         return replace(settings, **frozen)
-    return replace(settings, **{**frozen, 'base_url': '', 'api_key': ''})
+    return replace(settings, **{**frozen, 'base_url': '', 'api_key': '', 'headers': {}})

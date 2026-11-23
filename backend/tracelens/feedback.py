@@ -91,12 +91,14 @@ async def generate_feedback(job, settings, feedback_id):
             shutil.copyfile(source / name, directory / name)
             hashes[name] = hashlib.sha256((directory / name).read_bytes()).hexdigest()
     config = {key: getattr(settings, key) for key in ('base_url', 'model', 'max_tokens', 'timeout', 'max_retries')}
+    headers = dict(settings.headers)
     # The official client caches even HTTP-200 responses that fail JSON parsing.
     # A manual retry gets a fresh cache; completed tasks are reused by the API.
-    namespace = hashlib.sha256(json.dumps([hashes, config, UPSTREAM_COMMIT, 'official-feedback-v1', feedback_id], sort_keys=True).encode()).hexdigest()
+    namespace = hashlib.sha256(json.dumps([hashes, config, headers, UPSTREAM_COMMIT, 'official-feedback-v1', feedback_id], sort_keys=True).encode()).hexdigest()
     config['cache_path'] = str(settings.data_dir / 'trajdebug' / 'cache' / namespace / 'feedback.pkl')
     (directory / 'settings.json').write_text(json.dumps(config))
     env = {**os.environ, 'OPENAI_API_KEY': settings.api_key or 'EMPTY',
+           'TRACELENS_MODEL_HEADERS': json.dumps(headers, ensure_ascii=False),
            'PYTHONPATH': str(ROOT / 'backend') + os.pathsep + os.environ.get('PYTHONPATH', '')}
     process = await asyncio.create_subprocess_exec(sys.executable, '-m', 'tracelens.feedback_worker', str(directory),
                                                  env=env, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)

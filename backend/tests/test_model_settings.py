@@ -68,13 +68,14 @@ def test_default_switch_freezes_each_run_and_keeps_credentials_private(tmp_path)
 
 
 def test_connection_probe_and_validation_do_not_return_secrets(tmp_path, monkeypatch):
-    client = TestClient(create_app(Settings(data_dir=tmp_path, base_url='', model='', api_key='')))
+    app = create_app(Settings(data_dir=tmp_path, base_url='', model='', api_key=''))
+    client = TestClient(app)
     original_client = httpx.AsyncClient
     calls = []
 
     def provider(request):
         calls.append(request)
-        if request.headers['Authorization'] != 'Bearer probe-private-key':
+        if request.headers['Authorization'] != 'Bearer probe-private-key' or request.headers.get('X-Tenant') != 'tenant-a':
             return httpx.Response(401, json={'error': 'provider returned secret text'})
         return httpx.Response(200, json={'choices': [{'message': {'content': '{"ok": true}'}}]})
 
@@ -84,11 +85,13 @@ def test_connection_probe_and_validation_do_not_return_secrets(tmp_path, monkeyp
     monkeypatch.setattr('tracelens.model_settings_api.httpx.AsyncClient', use_mock_transport)
     body = {'name': 'Provider', 'model': 'provider-model', 'base_url': 'http://127.0.0.1:9000/v1',
             'api_key': 'probe-private-key'}
-    assert client.post(PATH + '/test', json=body).json() == {'ok': True}
+    assert client.post(PATH + '/test', json={**body, 'headers': {'X-Tenant': 'tenant-a'}}).json() == {'ok': True}
     assert str(calls[0].url) == body['base_url'] + '/chat/completions'
     assert client.get(PATH).json() == {'items': []}
-    config_id = client.post(PATH, json={**body, 'make_default': True}).json()['id']
+    config_id = client.post(PATH, json={**body, 'headers': {'X-Tenant': 'tenant-a'}, 'make_default': True}).json()['id']
     assert client.post(f'{PATH}/{config_id}/test').json() == {'ok': True}
+    assert app.state.store.model_connections.get(config_id)['headers'] == {'X-Tenant': 'tenant-a'}
+    assert 'tenant-a' not in client.get(PATH).text
 
     failed = client.post(PATH + '/test', json={**body, 'api_key': 'wrong-secret'})
     assert failed.status_code == 502

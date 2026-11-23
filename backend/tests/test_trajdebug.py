@@ -150,7 +150,8 @@ def provider():
             else:
                 stage = "attribution"
                 value = {"critical_step": 3, "rationale": "Fixture intentionally chooses outside the upstream pool."}
-            calls.append({"stage": stage, "request": request})
+            calls.append({"stage": stage, "request": request,
+                          "headers": {key.lower(): value for key, value in self.headers.items()}})
             response = {"id": "fixture", "object": "chat.completion", "created": 0, "model": "fixture", "choices": [{"index": 0, "message": {"role": "assistant", "content": json.dumps(value)}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}}
             self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(json.dumps(response).encode())
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -171,12 +172,13 @@ def pipeline_trace():
 
 async def test_real_official_five_stages_transport_artifacts_and_cache(tmp_path, provider):
     url, calls, _ = provider
-    settings = Settings(data_dir=tmp_path, base_url=url, model="fixture", api_key="test", max_retries=0, timeout=5)
+    settings = Settings(data_dir=tmp_path, base_url=url, model="fixture", api_key="test", headers={"X-Tenant": "fixture"}, max_retries=0, timeout=5)
     events = []
     async def progress(stage, value, partial):
         events.append((stage, value))
     report = await diagnose(pipeline_trace(), settings, progress)
     assert {c["stage"] for c in calls} == {"compression", "detection", "clustering", "state", "attribution"}
+    assert all(c["headers"].get("x-tenant") == "fixture" for c in calls)
     assert len(calls) == 7
     assert next(c['request'] for c in calls if c['stage'] == 'clustering').get('response_format') is None
     assert report["usage"]["requests"] == 7
@@ -188,6 +190,7 @@ async def test_real_official_five_stages_transport_artifacts_and_cache(tmp_path,
     directory = tmp_path / "trajdebug/runs" / report["provenance"]["run_id"]
     assert len(list(directory.glob('input*.json'))) == 6
     assert "api_key" not in json.loads((directory / "settings.json").read_text())
+    assert "X-Tenant" not in directory.joinpath("settings.json").read_text()
     assert events[-1] == ("诊断完成", 100)
     again = await diagnose(pipeline_trace(), settings, progress)
     assert len(calls) == 7

@@ -13,6 +13,7 @@ interface ModelConfiguration {
   base_url: string
   model: string
   has_key: boolean
+  has_headers: boolean
   is_default: boolean
 }
 
@@ -83,6 +84,7 @@ export default function SystemSettings({onBack}: {onBack?: () => void}) {
                 <dt>模型标识</dt><dd>{item.model}</dd>
                 <dt>接口地址</dt><dd>{item.base_url}</dd>
                 <dt>API 密钥</dt><dd>{item.has_key ? '已配置' : '未配置'}</dd>
+                <dt>自定义 Header</dt><dd>{item.has_headers ? '已配置' : '未配置'}</dd>
               </dl>
               {result ? <p className={result.ok ? 'muted' : 'error-inline'} role={result.ok ? 'status' : 'alert'}>{result.message}</p> : null}
             </div>
@@ -143,7 +145,7 @@ function RuntimeSettingsForm({value, onChange, error, onError}: {value: RuntimeS
 
 function ModelConfigurationForm({first, onClose}: {first: boolean; onClose: () => void}) {
   const {busy, action} = useWorkspace()
-  const [value, setValue] = useState({name: '', base_url: '', model: '', api_key: ''})
+  const [value, setValue] = useState({name: '', base_url: '', model: '', api_key: '', headers: '{}'})
   const [makeDefault, setMakeDefault] = useState(first)
   const [testing, setTesting] = useState(false)
   const [result, setResult] = useState<TestResult | null>(null)
@@ -158,10 +160,19 @@ function ModelConfigurationForm({first, onClose}: {first: boolean; onClose: () =
 
   async function test(form: HTMLFormElement | null) {
     if (locked || !form?.reportValidity()) return
+    let headers: Record<string, string>
+    try {
+      const parsed = JSON.parse(value.headers || '{}')
+      if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object' || Object.values(parsed).some(item => typeof item !== 'string')) throw new Error()
+      headers = parsed as Record<string, string>
+    } catch {
+      setResult({ok: false, message: '自定义 Header 必须是值为字符串的 JSON 对象。'})
+      return
+    }
     setTesting(true)
     setResult(null)
     try {
-      await post(path + '/test', value)
+      await post(path + '/test', {...value, headers})
       setResult({ok: true, message: '连接正常，模型已返回有效 JSON。'})
     } catch (error) {
       setResult({ok: false, message: (error as Error).message})
@@ -174,8 +185,17 @@ function ModelConfigurationForm({first, onClose}: {first: boolean; onClose: () =
     event.preventDefault()
     if (locked) return
     setSaveError('')
+    let headers: Record<string, string>
+    try {
+      const parsed = JSON.parse(value.headers || '{}')
+      if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object' || Object.values(parsed).some(item => typeof item !== 'string')) throw new Error()
+      headers = parsed as Record<string, string>
+    } catch {
+      setSaveError('自定义 Header 必须是值为字符串的 JSON 对象。')
+      return
+    }
     const saved = await action(
-      () => post<{id: string}>(path, {...value, make_default: makeDefault}),
+      () => post<{id: string}>(path, {...value, headers, make_default: makeDefault}),
       makeDefault ? '已保存并设为默认诊断模型' : '已保存模型配置',
       setSaveError,
     )
@@ -197,6 +217,9 @@ function ModelConfigurationForm({first, onClose}: {first: boolean; onClose: () =
           value={value.api_key} aria-describedby="model-key-help" disabled={locked}
           onChange={event => change('api_key', event.target.value)}/></label>
         <p className="ws-help" id="model-key-help">无需鉴权的服务可留空。密钥仅保存在本机服务端。</p>
+        <label>自定义 Header<textarea rows={4} value={value.headers} aria-describedby="model-headers-help" disabled={locked}
+          placeholder={'{"X-API-Key":"your-key"}'} onChange={event => change('headers', event.target.value)}/></label>
+        <p className="ws-help" id="model-headers-help">填写 JSON 对象，例如 {`{"X-API-Key":"your-key"}`}。Header 值仅保存在本机服务端，不会在列表中回显。</p>
         <label className="ws-check"><input type="checkbox" checked={makeDefault} disabled={locked}
           onChange={event => setMakeDefault(event.target.checked)}/>设为默认诊断模型</label>
         <div className="ws-actions model-form-test">

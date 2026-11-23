@@ -22,11 +22,15 @@ async def diagnose(trace, settings, progress):
     (directory / "input.json").write_text(json.dumps(unified, ensure_ascii=False, indent=2))
     config = {key: value for key, value in asdict(settings).items()
               if key not in {"api_key", "data_dir", "chunk_chars", "json_mode", "enable_validation_data"}}
+    headers = config.pop("headers", {})
     cache_config = {key: value for key, value in config.items() if key != "cluster_json_mode"}
+    cache_config["headers"] = headers
     namespace = hashlib.sha256(json.dumps([unified, cache_config, UPSTREAM_COMMIT], sort_keys=True).encode()).hexdigest()
     config["cache_dir"] = str(settings.data_dir / "trajdebug" / "cache" / namespace)
     (directory / "settings.json").write_text(json.dumps(config))
-    env = {**os.environ, "OPENAI_API_KEY": settings.api_key or "EMPTY", "PYTHONPATH": str(ROOT / "backend") + os.pathsep + os.environ.get("PYTHONPATH", "")}
+    env = {**os.environ, "OPENAI_API_KEY": settings.api_key or "EMPTY",
+           "TRACELENS_MODEL_HEADERS": json.dumps(headers, ensure_ascii=False),
+           "PYTHONPATH": str(ROOT / "backend") + os.pathsep + os.environ.get("PYTHONPATH", "")}
     process = await asyncio.create_subprocess_exec(sys.executable, "-m", "tracelens.trajdebug_worker", str(directory),
                                                  env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
     partial = {"schema_version": 2, "algorithm": "TrajDebug", "engine_version": ENGINE_VERSION,

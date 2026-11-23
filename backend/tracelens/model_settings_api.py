@@ -1,6 +1,7 @@
 """Manage and test OpenAI-compatible model connections."""
 
 import json
+import re
 from urllib.parse import urlsplit
 
 import httpx
@@ -18,6 +19,7 @@ class ModelConnectionInput(Contract):
     base_url: str = Field(min_length=1, max_length=2048)
     model: str = Field(min_length=1, max_length=200)
     api_key: SecretStr = Field(default=SecretStr(''), max_length=4096)
+    headers: dict[str, str] = Field(default_factory=dict, max_length=40)
 
     @field_validator('name', 'model', mode='before')
     @classmethod
@@ -47,18 +49,41 @@ class ModelConnectionInput(Contract):
             raise HTTPException(422, 'API 密钥不能包含空格或控制字符')
         return SecretStr(key)
 
+    @field_validator('headers', mode='before')
+    @classmethod
+    def validate_headers(cls, value):
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError('自定义 Header 必须是 JSON 对象')
+        normalized = {}
+        names = set()
+        name_pattern = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
+        for raw_name, raw_value in value.items():
+            name = raw_name.strip() if isinstance(raw_name, str) else ''
+            header_value = raw_value.strip() if isinstance(raw_value, str) else None
+            if not name or not name_pattern.fullmatch(name) or len(name) > 200 or name.lower() in names:
+                raise ValueError('自定义 Header 名称无效或重复')
+            if header_value is None or len(header_value) > 4096 or any(ord(char) < 32 or ord(char) == 127 for char in header_value):
+                raise ValueError('自定义 Header 值必须是字符串，且不能包含控制字符')
+            names.add(name.lower())
+            normalized[name] = header_value
+        return normalized
+
 
 class ModelConnectionCreate(ModelConnectionInput):
     make_default: bool = False
 
 
-async def test_connection(base_url, model, api_key):
+async def test_connection(base_url, model, api_key, headers=None):
     url = base_url.rstrip('/')
     if not url.endswith('/chat/completions'):
         url += '/chat/completions'
     try:
         async with httpx.AsyncClient(timeout=25, trust_env=False, follow_redirects=False) as client:
-            response = await client.post(url, headers={'Authorization': 'Bearer ' + (api_key or 'EMPTY')}, json={
+            request_headers = dict(headers or {})
+            request_headers.setdefault('Authorization', 'Bearer ' + (api_key or 'EMPTY'))
+            response = await client.post(url, headers=request_headers, json={
                 'model': model,
                 'messages': [{'role': 'user', 'content': 'Return only the JSON object {"ok": true}.'}],
                 'response_format': {'type': 'json_object'},
@@ -94,31 +119,34 @@ def attach_model_settings_routes(app, connections, settings):
     def list_configurations():
         items = connections.list()
         default_id = next((item['id'] for item in items if item['is_default']), None)
-        items = [{**item, 'has_key': bool(item['has_key']), 'is_default': bool(item['is_default'])} for item in items]
+        items = [{**item, 'has_key': bool(item['has_key']), 'has_headers': bool(item['has_headers']),
+                  'is_default': bool(item['is_default'])} for item in items]
         if settings.ready:
             items.insert(0, {'id': ENVIRONMENT_ID, 'name': '环境配置', 'base_url': settings.base_url,
                              'model': settings.model, 'has_key': bool(settings.api_key),
+                             'has_headers': bool(settings.headers),
                              'is_default': default_id is None})
         return {'items': items}
 
     @router.post('', status_code=201)
     def add_configuration(body: ModelConnectionCreate):
         connection_id = connections.add(name=body.name, base_url=body.base_url, model=body.model,
-                                        api_key=body.api_key.get_secret_value(), make_default=body.make_default)
+                                        api_key=body.api_key.get_secret_value(), headers=body.headers,
+                                        make_default=body.make_default)
         return {'id': connection_id}
 
     @router.post('/test')
     async def test_new_configuration(body: ModelConnectionInput):
-        return await test_connection(body.base_url, body.model, body.api_key.get_secret_value())
+        return await test_connection(body.base_url, body.model, body.api_key.get_secret_value(), body.headers)
 
     @router.post('/{connection_id}/test')
     async def test_saved_configuration(connection_id: str):
         if connection_id == ENVIRONMENT_ID and settings.ready:
-            return await test_connection(settings.base_url, settings.model, settings.api_key)
+            return await test_connection(settings.base_url, settings.model, settings.api_key, settings.headers)
         connection = connections.get(connection_id)
         if connection is None:
             raise HTTPException(404, '模型配置不存在')
-        return await test_connection(connection['base_url'], connection['model'], connection['api_key'])
+        return await test_connection(connection['base_url'], connection['model'], connection['api_key'], connection['headers'])
 
     @router.post('/{connection_id}/default')
     def set_default_configuration(connection_id: str):
