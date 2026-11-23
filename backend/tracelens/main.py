@@ -308,6 +308,11 @@ def create_app(settings=None, *, frontend_dir=None):
     dist = Path(frontend_dir) if frontend_dir is not None else ROOT / "frontend" / "dist"
     if (dist / 'index.html').is_file() and (dist / 'assets').is_dir():
         app.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")
+        template_dir = dist / 'templates'
+        if not template_dir.is_dir():
+            template_dir = ROOT / 'frontend' / 'public' / 'templates'
+        if template_dir.is_dir():
+            app.mount("/templates", StaticFiles(directory=template_dir), name="templates")
         @app.get("/")
         def index():
             return FileResponse(dist / "index.html")

@@ -49,3 +49,11 @@ def test_review_and_native_artifact_exports_keep_original_output(tmp_path):
         assert client.get('/api/jobs/'+job['id']+'/export?format=json').json()['job']['result']['official_output'] == original['official_output']
         review.update(decision='rejected',critical_step=7)
         assert client.post('/api/jobs/'+job['id']+'/reviews',json=review).status_code == 422
+
+
+def test_trajectory_templates_are_downloadable(tmp_path):
+    app = create_app(Settings(data_dir=tmp_path))
+    with TestClient(app) as client:
+        response = client.get('/templates/trajectory-json-template.json')
+    assert response.status_code == 200
+    assert response.json()['metadata']['dataset'] == 'custom'

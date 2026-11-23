@@ -24,6 +24,9 @@ it('accepts both upload formats through the same entry point without offering pr
   ]})
   renderUpload()
   expect(screen.getByRole('button',{name:'选择文件'})).toBeTruthy()
+  expect(screen.getByRole('link',{name:'标准 JSON'}).getAttribute('download')).toBe('')
+  expect(screen.getByRole('link',{name:'JSONL 批量'}).getAttribute('href')).toBe('/templates/trajectory-jsonl-template.jsonl')
+  expect(screen.getByRole('link',{name:'OTel GenAI'}).getAttribute('href')).toBe('/templates/otel-genai-template.json')
   expect(screen.queryByRole('button',{name:/样例|示例|演示/})).toBeNull()
   const files = [new File(['{}'], 'genai.json'), new File(['{}'], 'native.jsonl')]
   fireEvent.change(screen.getByLabelText('选择轨迹文件'), {target:{files}})
