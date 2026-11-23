@@ -93,6 +93,20 @@ def test_connection_probe_and_validation_do_not_return_secrets(tmp_path, monkeyp
     assert app.state.store.model_connections.get(config_id)['headers'] == {'X-Tenant': 'tenant-a'}
     assert 'tenant-a' not in client.get(PATH).text
 
+    detail = client.get(f'{PATH}/{config_id}')
+    assert detail.status_code == 200 and detail.json()['model'] == 'provider-model'
+    updated = client.put(f'{PATH}/{config_id}', json={
+        'name': 'Provider updated', 'model': 'provider-model-v2',
+        'base_url': 'http://127.0.0.1:9001/v1', 'headers': {'X-Tenant': 'tenant-b'},
+        'make_default': True,
+    })
+    assert updated.status_code == 200
+    saved = app.state.store.model_connections.get(config_id)
+    assert saved['model'] == 'provider-model-v2' and saved['api_key'] == 'probe-private-key'
+    assert saved['headers'] == {'X-Tenant': 'tenant-b'}
+    assert client.delete(f'{PATH}/{config_id}').json() == {'ok': True}
+    assert client.get(f'{PATH}/{config_id}').status_code == 404
+
     failed = client.post(PATH + '/test', json={**body, 'api_key': 'wrong-secret'})
     assert failed.status_code == 502
     assert '认证失败' in failed.json()['detail']
@@ -119,3 +133,12 @@ def test_runtime_settings_are_editable_and_persisted(tmp_path):
     assert {key: restored.get('/api/config').json()[key] for key in body} == body
     invalid = restored.put('/api/runtime-settings', json={**body, 'timeout': 3})
     assert invalid.status_code == 422
+
+
+def test_runtime_settings_fill_backend_defaults_when_fields_are_omitted(tmp_path):
+    settings = Settings(data_dir=tmp_path)
+    client = TestClient(create_app(settings))
+    response = client.put('/api/runtime-settings', json={})
+    assert response.status_code == 200
+    assert response.json() == {key: getattr(settings, key) for key in (
+        'concurrency', 'max_retries', 'timeout', 'llm_concurrency', 'max_tokens', 'cluster_json_mode')}

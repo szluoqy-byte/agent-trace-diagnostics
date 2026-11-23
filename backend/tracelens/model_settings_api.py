@@ -19,7 +19,7 @@ class ModelConnectionInput(Contract):
     base_url: str = Field(min_length=1, max_length=2048)
     model: str = Field(min_length=1, max_length=200)
     api_key: SecretStr = Field(default=SecretStr(''), max_length=4096)
-    headers: dict[str, str] = Field(default_factory=dict, max_length=40)
+    headers: dict[str, str] | None = Field(default=None, max_length=40)
 
     @field_validator('name', 'model', mode='before')
     @classmethod
@@ -53,7 +53,7 @@ class ModelConnectionInput(Contract):
     @classmethod
     def validate_headers(cls, value):
         if value is None:
-            return {}
+            return None
         if not isinstance(value, dict):
             raise ValueError('自定义 Header 必须是 JSON 对象')
         normalized = {}
@@ -72,6 +72,10 @@ class ModelConnectionInput(Contract):
 
 
 class ModelConnectionCreate(ModelConnectionInput):
+    make_default: bool = False
+
+
+class ModelConnectionUpdate(ModelConnectionInput):
     make_default: bool = False
 
 
@@ -134,6 +138,29 @@ def attach_model_settings_routes(app, connections, settings):
                                         api_key=body.api_key.get_secret_value(), headers=body.headers,
                                         make_default=body.make_default)
         return {'id': connection_id}
+
+    @router.get('/{connection_id}')
+    def get_configuration(connection_id: str):
+        connection = connections.get(connection_id)
+        if connection is None:
+            raise HTTPException(404, '模型配置不存在')
+        return {'id': connection['id'], 'name': connection['name'], 'base_url': connection['base_url'],
+                'model': connection['model'], 'has_key': bool(connection['api_key']),
+                'has_headers': bool(connection['headers'])}
+
+    @router.put('/{connection_id}')
+    def update_configuration(connection_id: str, body: ModelConnectionUpdate):
+        if not connections.update(connection_id, name=body.name, base_url=body.base_url, model=body.model,
+                                  api_key=body.api_key.get_secret_value(), headers=body.headers,
+                                  make_default=body.make_default):
+            raise HTTPException(404, '模型配置不存在')
+        return {'ok': True}
+
+    @router.delete('/{connection_id}')
+    def delete_configuration(connection_id: str):
+        if not connections.delete(connection_id):
+            raise HTTPException(404, '模型配置不存在')
+        return {'ok': True}
 
     @router.post('/test')
     async def test_new_configuration(body: ModelConnectionInput):

@@ -1,7 +1,7 @@
 import {useCallback, useEffect, useState} from 'react'
 import type {FormEvent} from 'react'
 import {ArrowLeft, Plus} from 'lucide-react'
-import {post, put} from '../api'
+import {api, post, put} from '../api'
 import {Dialog} from '../components/Dialogs'
 import {Badge, useResource, useWorkspace} from '../workspace'
 
@@ -35,11 +35,12 @@ export default function SystemSettings({onBack}: {onBack?: () => void}) {
   const {config, version, busy, action, refresh} = useWorkspace()
   const {data, error} = useResource<{items: ModelConfiguration[]}>(path, version)
   const [adding, setAdding] = useState(false)
+  const [editing, setEditing] = useState<ModelConfiguration | null>(null)
   const [testing, setTesting] = useState('')
   const [results, setResults] = useState<Record<string, TestResult>>({})
   const [runtime, setRuntime] = useState<RuntimeSettings | null>(null)
   const [runtimeError, setRuntimeError] = useState('')
-  const close = useCallback(() => setAdding(false), [])
+  const close = useCallback(() => { setAdding(false); setEditing(null); refresh() }, [refresh])
 
   useEffect(() => {
     if (config) {
@@ -94,13 +95,17 @@ export default function SystemSettings({onBack}: {onBack?: () => void}) {
               </button>
               {item.is_default ? null : <button className="secondary small" disabled={busy || !!testing}
                 onClick={() => void action(() => post(`${path}/${item.id}/default`), '已更新默认诊断模型')}>设为默认</button>}
+              {item.id !== 'environment' ? <button className="secondary small" disabled={busy || !!testing}
+                onClick={() => setEditing(item)}>编辑</button> : null}
+              {item.id !== 'environment' ? <button className="text-button" disabled={busy || !!testing}
+                onClick={() => { if (window.confirm(`确定删除模型配置“${item.name}”吗？`)) void action(() => api(`${path}/${item.id}`, {method: 'DELETE'}), '已删除模型配置') }}>删除</button> : null}
             </div>
           </li>
         })}
       </ul> : !error ? <p className="model-settings-empty" role="status">{data ? '暂无模型配置。添加配置并设为默认后即可开始诊断。' : '正在加载模型配置…'}</p> : null}
     </section>
     {runtime ? <RuntimeSettingsForm value={runtime} onChange={setRuntime} error={runtimeError} onError={setRuntimeError}/> : null}
-    {adding ? <ModelConfigurationForm onClose={close} first={!data?.items.length}/> : null}
+    {adding || editing ? <ModelConfigurationForm key={editing?.id ?? 'new'} configuration={editing ?? undefined} onClose={close} first={!data?.items.length}/> : null}
   </>
 }
 
@@ -124,16 +129,16 @@ function RuntimeSettingsForm({value, onChange, error, onError}: {value: RuntimeS
     </div>
     <form className="runtime-settings-form" onSubmit={save}>
       <div className="runtime-settings-grid">
-        <label>轨迹并发上限<input type="number" min="1" max="8" required value={value.concurrency} disabled={busy}
-          onChange={event => change('concurrency', Number(event.target.value))}/><small>同时处理的轨迹数量，范围 1–8。</small></label>
+        <label>轨迹并发上限<input type="number" min="1" max="8" required placeholder="默认 2" value={value.concurrency} disabled={busy}
+          onChange={event => change('concurrency', Number(event.target.value))}/><small>同时处理的轨迹数量，范围 1–8，默认 2。</small></label>
         <label>步骤分析并发上限<input type="number" min="1" max="16" required value={value.llm_concurrency} disabled={busy}
-          onChange={event => change('llm_concurrency', Number(event.target.value))}/><small>单条轨迹内部阶段调用的并发上限，范围 1–16。</small></label>
+          onChange={event => change('llm_concurrency', Number(event.target.value))}/><small>单条轨迹内部阶段调用的并发上限，范围 1–16，默认 8。</small></label>
         <label>请求重试次数<input type="number" min="0" max="5" required value={value.max_retries} disabled={busy}
-          onChange={event => change('max_retries', Number(event.target.value))}/><small>模型请求失败后的自动重试次数，范围 0–5。</small></label>
+          onChange={event => change('max_retries', Number(event.target.value))}/><small>模型请求失败后的自动重试次数，范围 0–5，默认 2。</small></label>
         <label>请求超时（秒）<input type="number" min="5" max="600" required value={value.timeout} disabled={busy}
-          onChange={event => change('timeout', Number(event.target.value))}/><small>单次模型请求的最长等待时间，范围 5–600 秒。</small></label>
+          onChange={event => change('timeout', Number(event.target.value))}/><small>单次模型请求的最长等待时间，范围 5–600 秒，默认 120 秒。</small></label>
         <label>单次输出上限<input type="number" min="1024" max="131072" required value={value.max_tokens} disabled={busy}
-          onChange={event => change('max_tokens', Number(event.target.value))}/><small>每次阶段调用允许生成的最大 token 数。</small></label>
+          onChange={event => change('max_tokens', Number(event.target.value))}/><small>每次阶段调用允许生成的最大 token 数，默认 32768。</small></label>
         <label className="ws-check runtime-json-mode"><input type="checkbox" checked={value.cluster_json_mode} disabled={busy}
           onChange={event => change('cluster_json_mode', event.target.checked)}/><span>强制聚类阶段使用 JSON 输出<small>适用于严格要求 JSON 响应格式的模型服务。</small></span></label>
       </div>
@@ -143,10 +148,10 @@ function RuntimeSettingsForm({value, onChange, error, onError}: {value: RuntimeS
   </section>
 }
 
-function ModelConfigurationForm({first, onClose}: {first: boolean; onClose: () => void}) {
+function ModelConfigurationForm({first, configuration, onClose}: {first: boolean; configuration?: ModelConfiguration; onClose: () => void}) {
   const {busy, action} = useWorkspace()
-  const [value, setValue] = useState({name: '', base_url: '', model: '', api_key: '', headers: '{}'})
-  const [makeDefault, setMakeDefault] = useState(first)
+  const [value, setValue] = useState({name: configuration?.name ?? '', base_url: configuration?.base_url ?? '', model: configuration?.model ?? '', api_key: '', headers: configuration ? '' : '{}'})
+  const [makeDefault, setMakeDefault] = useState(configuration?.is_default ?? first)
   const [testing, setTesting] = useState(false)
   const [result, setResult] = useState<TestResult | null>(null)
   const [saveError, setSaveError] = useState('')
@@ -160,15 +165,17 @@ function ModelConfigurationForm({first, onClose}: {first: boolean; onClose: () =
 
   async function test(form: HTMLFormElement | null) {
     if (locked || !form?.reportValidity()) return
-    let headers: Record<string, string>
-    try {
-      const parsed = JSON.parse(value.headers || '{}')
-      if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object' || Object.values(parsed).some(item => typeof item !== 'string')) throw new Error()
-      headers = parsed as Record<string, string>
-    } catch {
-      setResult({ok: false, message: '自定义 Header 必须是值为字符串的 JSON 对象。'})
+    if (configuration) {
+      setTesting(true)
+      setResult(null)
+      try { await post(`${path}/${configuration.id}/test`); setResult({ok: true, message: '连接正常，模型已返回有效 JSON。'}) }
+      catch (error) { setResult({ok: false, message: (error as Error).message}) }
+      finally { setTesting(false) }
       return
     }
+    let headers: Record<string, string>
+    try { const parsed = JSON.parse(value.headers || '{}'); if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object' || Object.values(parsed).some(item => typeof item !== 'string')) throw new Error(); headers = parsed as Record<string, string> }
+    catch { setResult({ok: false, message: '自定义 Header 必须是值为字符串的 JSON 对象。'}); return }
     setTesting(true)
     setResult(null)
     try {
@@ -185,24 +192,23 @@ function ModelConfigurationForm({first, onClose}: {first: boolean; onClose: () =
     event.preventDefault()
     if (locked) return
     setSaveError('')
-    let headers: Record<string, string>
-    try {
-      const parsed = JSON.parse(value.headers || '{}')
-      if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object' || Object.values(parsed).some(item => typeof item !== 'string')) throw new Error()
-      headers = parsed as Record<string, string>
-    } catch {
-      setSaveError('自定义 Header 必须是值为字符串的 JSON 对象。')
-      return
+    let headers: Record<string, string> | undefined
+    if (value.headers.trim()) {
+      try { const parsed = JSON.parse(value.headers); if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object' || Object.values(parsed).some(item => typeof item !== 'string')) throw new Error(); headers = parsed as Record<string, string> }
+      catch { setSaveError('自定义 Header 必须是值为字符串的 JSON 对象。'); return }
     }
+    const payload: Record<string, unknown> = {...value, make_default: makeDefault}
+    if (headers) payload.headers = headers
+    else delete payload.headers
     const saved = await action(
-      () => post<{id: string}>(path, {...value, headers, make_default: makeDefault}),
-      makeDefault ? '已保存并设为默认诊断模型' : '已保存模型配置',
+      () => configuration ? put(`${path}/${configuration.id}`, payload) : post<{id: string}>(path, {...payload, headers: headers ?? {}}),
+      configuration ? '已更新模型配置' : makeDefault ? '已保存并设为默认诊断模型' : '已保存模型配置',
       setSaveError,
     )
     if (saved) onClose()
   }
 
-  return <Dialog title="添加模型配置" onClose={onClose} busy={locked}>
+  return <Dialog title={configuration ? '编辑模型配置' : '添加模型配置'} onClose={onClose} busy={locked}>
     <form onSubmit={save}>
       <div className="modal-body model-configuration-form">
         <label>配置名称<input required autoFocus maxLength={100} value={value.name}
@@ -213,13 +219,13 @@ function ModelConfigurationForm({first, onClose}: {first: boolean; onClose: () =
         <p className="ws-help" id="model-base-help">填写兼容 OpenAI Chat Completions 的接口地址，保留服务要求的路径。</p>
         <label>模型标识<input required maxLength={200} value={value.model} disabled={locked}
           onChange={event => change('model', event.target.value)}/></label>
-        <label>API 密钥<input type="password" autoComplete="new-password" maxLength={4096}
+        <label>API 密钥<input type="password" autoComplete="new-password" maxLength={4096} placeholder={configuration ? '留空保持原密钥' : undefined}
           value={value.api_key} aria-describedby="model-key-help" disabled={locked}
           onChange={event => change('api_key', event.target.value)}/></label>
         <p className="ws-help" id="model-key-help">无需鉴权的服务可留空。密钥仅保存在本机服务端。</p>
         <label>自定义 Header<textarea rows={4} value={value.headers} aria-describedby="model-headers-help" disabled={locked}
           placeholder={'{"X-API-Key":"your-key"}'} onChange={event => change('headers', event.target.value)}/></label>
-        <p className="ws-help" id="model-headers-help">填写 JSON 对象，例如 {`{"X-API-Key":"your-key"}`}。Header 值仅保存在本机服务端，不会在列表中回显。</p>
+        <p className="ws-help" id="model-headers-help">填写 JSON 对象，例如 {`{"X-API-Key":"your-key"}`}。{configuration ? '编辑时留空保持原 Header，填写 {} 可清空。' : ''}Header 值仅保存在本机服务端，不会在列表中回显。</p>
         <label className="ws-check"><input type="checkbox" checked={makeDefault} disabled={locked}
           onChange={event => setMakeDefault(event.target.checked)}/>设为默认诊断模型</label>
         <div className="ws-actions model-form-test">

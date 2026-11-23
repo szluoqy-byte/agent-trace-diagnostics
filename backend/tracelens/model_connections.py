@@ -73,6 +73,28 @@ class ModelConnections:
                         json.dumps(headers or {}, ensure_ascii=False, sort_keys=True), int(make_default)))
         return connection_id
 
+    def update(self, connection_id, *, name, base_url, model, api_key=None, headers=None, make_default=False):
+        with self.connect() as db:
+            row = db.execute('SELECT api_key,headers FROM model_connections WHERE id=?', (connection_id,)).fetchone()
+            if row is None:
+                return False
+            stored_headers = json.loads(row['headers'] or '{}')
+            next_key = api_key if api_key else row['api_key']
+            next_headers = stored_headers if headers is None else headers
+            if make_default:
+                db.execute('UPDATE model_connections SET is_default=0 WHERE is_default=1')
+            db.execute('''UPDATE model_connections
+                          SET name=?,base_url=?,model=?,api_key=?,headers=?,is_default=?
+                          WHERE id=?''',
+                       (name, base_url, model, next_key,
+                        json.dumps(next_headers, ensure_ascii=False, sort_keys=True), int(make_default), connection_id))
+            return True
+
+    def delete(self, connection_id):
+        with self.connect() as db:
+            result = db.execute('DELETE FROM model_connections WHERE id=?', (connection_id,))
+            return result.rowcount > 0
+
     def set_default(self, connection_id):
         """A null ID selects the environment configuration."""
         with self.connect() as db:
