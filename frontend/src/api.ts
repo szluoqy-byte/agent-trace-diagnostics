@@ -10,4 +10,5 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 export const post = <T,>(path: string, data?: unknown) => api<T>(path, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data ?? {}) })
+export const put = <T,>(path: string, data?: unknown) => api<T>(path, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data ?? {}) })
 export function dateLabel(value: string) { return new Intl.DateTimeFormat('zh-CN', {month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'}).format(new Date(value)) }

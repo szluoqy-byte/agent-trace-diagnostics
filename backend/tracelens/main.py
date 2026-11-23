@@ -19,8 +19,9 @@ from .trajdebug import UPSTREAM_COMMIT, UPSTREAM_URL
 from .reporting import markdown_report
 from .official_samples import load_official_samples
 from .feedback import feedback_availability
-from .execution import active_execution, job_settings, snapshot
+from .execution import RUNTIME_FIELDS, active_execution, job_settings, load_runtime_settings, runtime_snapshot, snapshot
 from .model_settings_api import MODEL_SETTINGS_PATH, attach_model_settings_routes
+from .runtime_settings_api import attach_runtime_settings_routes
 from .task_api import attach_task_routes
 from .pattern_api import attach_pattern_routes
 
@@ -33,6 +34,9 @@ class BatchRequest(Contract):
 def create_app(settings=None, *, frontend_dir=None):
     settings = settings or Settings()
     store = Store(settings.data_dir)
+    loaded_settings = load_runtime_settings(store, settings)
+    for key in RUNTIME_FIELDS:
+        setattr(settings, key, getattr(loaded_settings, key))
     store.freeze_legacy_runs(snapshot(settings))
     queue = JobQueue(store, settings)
 
@@ -65,10 +69,9 @@ def create_app(settings=None, *, frontend_dir=None):
     def config():
         execution, _ = active_execution(store, settings)
         return {"ready": execution.ready, "model": execution.model, "base_url": execution.base_url,
-                "has_key": bool(execution.api_key), "concurrency": settings.concurrency,
-                "max_retries": settings.max_retries, "engine": ENGINE_VERSION, "algorithm": "TrajDebug",
-                "upstream_commit": UPSTREAM_COMMIT, "upstream_url": UPSTREAM_URL,
-                "llm_concurrency": settings.llm_concurrency}
+                "has_key": bool(execution.api_key), **runtime_snapshot(settings),
+                "engine": ENGINE_VERSION, "algorithm": "TrajDebug",
+                "upstream_commit": UPSTREAM_COMMIT, "upstream_url": UPSTREAM_URL}
 
     @app.get("/api/traces")
     def traces():
@@ -300,6 +303,7 @@ def create_app(settings=None, *, frontend_dir=None):
     attach_task_routes(app, store, settings, job)
     attach_pattern_routes(app, store)
     attach_model_settings_routes(app, store.model_connections, settings)
+    attach_runtime_settings_routes(app, store, settings, queue)
 
     dist = Path(frontend_dir) if frontend_dir is not None else ROOT / "frontend" / "dist"
     if (dist / 'index.html').is_file() and (dist / 'assets').is_dir():

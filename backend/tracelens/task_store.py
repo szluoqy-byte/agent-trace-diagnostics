@@ -175,6 +175,26 @@ class TaskStore:
                 row = db.execute('SELECT config FROM standalone_job_configs WHERE job_id=?', (job_id,)).fetchone()
             return json.loads(row['config']) if row else None
 
+    def runtime_settings(self, defaults, fields):
+        """Read persisted workspace runtime settings with safe defaults."""
+        with self.connect() as db:
+            row = db.execute("SELECT value FROM workspace_meta WHERE key='runtime_settings_v1'").fetchone()
+        stored = {}
+        if row:
+            try:
+                value = json.loads(row['value'])
+                if isinstance(value, dict):
+                    stored = value
+            except (TypeError, ValueError):
+                pass
+        return {key: stored.get(key, getattr(defaults, key)) for key in fields}
+
+    def save_runtime_settings(self, values):
+        with self.connect() as db:
+            db.execute("INSERT INTO workspace_meta(key,value) VALUES('runtime_settings_v1', ?)"
+                       " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                       (json.dumps(values, ensure_ascii=False),))
+
     def save_preview(self, data):
         from .store import now
         token = uuid.uuid4().hex

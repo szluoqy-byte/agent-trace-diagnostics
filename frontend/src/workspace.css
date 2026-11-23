@@ -117,8 +117,17 @@
 .model-settings-empty{padding:24px 20px;border-top:1px solid var(--border);margin:0}
 .model-runtime{margin-top:16px}
 .model-runtime .model-runtime-values{margin-bottom:0}
+.runtime-settings-form{padding:0 20px 20px}
+.runtime-settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px 20px}
+.runtime-settings-grid label:not(.ws-check){display:grid;gap:6px;font-size:13px;color:var(--text)}
+.runtime-settings-grid input[type=number]{width:100%}
+.runtime-settings-grid small{font-size:11px;line-height:1.5;color:var(--muted);font-weight:400}
+.runtime-json-mode{align-items:start;padding-top:25px}
+.runtime-json-mode span{display:grid;gap:4px}
+.runtime-settings-actions{justify-content:flex-end;margin-top:20px}
 .model-configuration-form{display:grid;gap:10px}
 .model-configuration-form label:not(.ws-check){display:grid;gap:5px}
 .model-configuration-form p{margin:0}
 .model-form-test span{font-size:12px}
 @media(max-width:640px){.model-connection{flex-direction:column;gap:12px}}
+@media(max-width:700px){.runtime-settings-form{padding:0 16px 16px}.runtime-settings-grid{grid-template-columns:1fr}.runtime-json-mode{padding-top:0}}

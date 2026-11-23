@@ -1,4 +1,4 @@
-export interface Config { ready: boolean; model: string; base_url: string; has_key: boolean; concurrency: number; max_retries: number; engine: string; algorithm?: string; upstream_commit?: string; upstream_url?: string; llm_concurrency?: number }
+export interface Config { ready: boolean; model: string; base_url: string; has_key: boolean; concurrency: number; max_retries: number; timeout: number; llm_concurrency: number; max_tokens: number; cluster_json_mode: boolean; engine: string; algorithm?: string; upstream_commit?: string; upstream_url?: string }
 export interface TraceSummary { id: string; title: string; created_at: string; dataset: string; task_id: string; outcome: string; kind: 'demo' | 'imported'; source: string; steps: number; input_format?: string }
 export interface OTelSource { trace_id: string; span_id: string; attribute: string; message_index: number | null }
 export interface OTelSpan { span: {spanId:string; [key:string]:unknown}; resource: Record<string,unknown>; scope: Record<string,unknown>; location: string }

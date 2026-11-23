@@ -101,3 +101,18 @@ def test_connection_probe_and_validation_do_not_return_secrets(tmp_path, monkeyp
     assert missing_name.status_code == 422
     assert body['api_key'] not in missing_name.text
     assert client.post(PATH, json=body, headers={'Origin': 'https://elsewhere.test'}).status_code == 403
+
+
+def test_runtime_settings_are_editable_and_persisted(tmp_path):
+    settings = Settings(data_dir=tmp_path, base_url='https://environment.example/v1', model='environment-model')
+    client = TestClient(create_app(settings))
+    body = {'concurrency': 4, 'max_retries': 1, 'timeout': 30, 'llm_concurrency': 5,
+            'max_tokens': 4096, 'cluster_json_mode': True}
+    response = client.put('/api/runtime-settings', json=body)
+    assert response.status_code == 200 and response.json() == body
+    assert {key: client.get('/api/config').json()[key] for key in body} == body
+
+    restored = TestClient(create_app(Settings(data_dir=tmp_path, base_url='https://environment.example/v1', model='environment-model')))
+    assert {key: restored.get('/api/config').json()[key] for key in body} == body
+    invalid = restored.put('/api/runtime-settings', json={**body, 'timeout': 3})
+    assert invalid.status_code == 422

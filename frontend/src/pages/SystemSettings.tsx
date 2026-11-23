@@ -1,7 +1,7 @@
-import {useCallback, useState} from 'react'
+import {useCallback, useEffect, useState} from 'react'
 import type {FormEvent} from 'react'
 import {ArrowLeft, Plus} from 'lucide-react'
-import {post} from '../api'
+import {post, put} from '../api'
 import {Dialog} from '../components/Dialogs'
 import {Badge, useResource, useWorkspace} from '../workspace'
 
@@ -21,13 +21,31 @@ interface TestResult {
   message: string
 }
 
+interface RuntimeSettings {
+  concurrency: number
+  max_retries: number
+  timeout: number
+  llm_concurrency: number
+  max_tokens: number
+  cluster_json_mode: boolean
+}
+
 export default function SystemSettings({onBack}: {onBack?: () => void}) {
   const {config, version, busy, action, refresh} = useWorkspace()
   const {data, error} = useResource<{items: ModelConfiguration[]}>(path, version)
   const [adding, setAdding] = useState(false)
   const [testing, setTesting] = useState('')
   const [results, setResults] = useState<Record<string, TestResult>>({})
+  const [runtime, setRuntime] = useState<RuntimeSettings | null>(null)
+  const [runtimeError, setRuntimeError] = useState('')
   const close = useCallback(() => setAdding(false), [])
+
+  useEffect(() => {
+    if (config) {
+      setRuntime({concurrency: config.concurrency, max_retries: config.max_retries, timeout: config.timeout,
+        llm_concurrency: config.llm_concurrency, max_tokens: config.max_tokens, cluster_json_mode: config.cluster_json_mode})
+    }
+  }, [config])
 
   async function test(id: string) {
     setTesting(id)
@@ -79,11 +97,48 @@ export default function SystemSettings({onBack}: {onBack?: () => void}) {
         })}
       </ul> : !error ? <p className="model-settings-empty" role="status">{data ? '暂无模型配置。添加配置并设为默认后即可开始诊断。' : '正在加载模型配置…'}</p> : null}
     </section>
-    {config ? <section className="ws-surface ws-config model-runtime"><h2>运行参数</h2><dl className="model-runtime-values">
-      <dt>轨迹并发上限</dt><dd>{config.concurrency}</dd><dt>步骤分析并发上限</dt><dd>{config.llm_concurrency ?? '—'}</dd>
-    </dl></section> : null}
+    {runtime ? <RuntimeSettingsForm value={runtime} onChange={setRuntime} error={runtimeError} onError={setRuntimeError}/> : null}
     {adding ? <ModelConfigurationForm onClose={close} first={!data?.items.length}/> : null}
   </>
+}
+
+function RuntimeSettingsForm({value, onChange, error, onError}: {value: RuntimeSettings; onChange: (value: RuntimeSettings) => void; error: string; onError: (value: string) => void}) {
+  const {busy, action} = useWorkspace()
+
+  function change(field: keyof RuntimeSettings, next: number | boolean) {
+    onChange({...value, [field]: next})
+    onError('')
+  }
+
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const saved = await action(() => put<RuntimeSettings>('/runtime-settings', value), '运行参数已保存', onError)
+    if (saved) onChange(saved)
+  }
+
+  return <section className="ws-surface ws-config model-runtime" aria-labelledby="runtime-settings-heading">
+    <div className="model-settings-heading">
+      <div><h2 id="runtime-settings-heading">运行参数</h2><p>参数会在启动分析时写入本次分析记录。</p></div>
+    </div>
+    <form className="runtime-settings-form" onSubmit={save}>
+      <div className="runtime-settings-grid">
+        <label>轨迹并发上限<input type="number" min="1" max="8" required value={value.concurrency} disabled={busy}
+          onChange={event => change('concurrency', Number(event.target.value))}/><small>同时处理的轨迹数量，范围 1–8。</small></label>
+        <label>步骤分析并发上限<input type="number" min="1" max="16" required value={value.llm_concurrency} disabled={busy}
+          onChange={event => change('llm_concurrency', Number(event.target.value))}/><small>单条轨迹内部阶段调用的并发上限，范围 1–16。</small></label>
+        <label>请求重试次数<input type="number" min="0" max="5" required value={value.max_retries} disabled={busy}
+          onChange={event => change('max_retries', Number(event.target.value))}/><small>模型请求失败后的自动重试次数，范围 0–5。</small></label>
+        <label>请求超时（秒）<input type="number" min="5" max="600" required value={value.timeout} disabled={busy}
+          onChange={event => change('timeout', Number(event.target.value))}/><small>单次模型请求的最长等待时间，范围 5–600 秒。</small></label>
+        <label>单次输出上限<input type="number" min="1024" max="131072" required value={value.max_tokens} disabled={busy}
+          onChange={event => change('max_tokens', Number(event.target.value))}/><small>每次阶段调用允许生成的最大 token 数。</small></label>
+        <label className="ws-check runtime-json-mode"><input type="checkbox" checked={value.cluster_json_mode} disabled={busy}
+          onChange={event => change('cluster_json_mode', event.target.checked)}/><span>强制聚类阶段使用 JSON 输出<small>适用于严格要求 JSON 响应格式的模型服务。</small></span></label>
+      </div>
+      {error ? <p className="error-inline" role="alert">{error}</p> : null}
+      <div className="ws-actions runtime-settings-actions"><button className="primary" type="submit" disabled={busy}>{busy ? '正在保存…' : '保存运行参数'}</button></div>
+    </form>
+  </section>
 }
 
 function ModelConfigurationForm({first, onClose}: {first: boolean; onClose: () => void}) {

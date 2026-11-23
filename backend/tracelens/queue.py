@@ -13,19 +13,33 @@ class JobQueue:
     def __init__(self, store, settings):
         self.store, self.settings = store, settings
         self.tasks = []
+        self.started = False
 
     async def start(self):
         self.store.recover()
         self.schedule_feedback()
-        self.tasks = [asyncio.create_task(self.worker()) for _ in range(self.settings.concurrency)]
+        self.started = True
+        self.tasks = [asyncio.create_task(self.worker(slot)) for slot in range(self.settings.concurrency)]
 
     async def stop(self):
+        self.started = False
         for task in self.tasks:
             task.cancel()
         await asyncio.gather(*self.tasks, return_exceptions=True)
+        self.tasks = []
 
-    async def worker(self):
+    async def apply_settings(self):
+        """Apply a new concurrency limit without interrupting active jobs."""
+        if not self.started:
+            return
+        self.tasks = [task for task in self.tasks if not task.done()]
+        while len(self.tasks) < self.settings.concurrency:
+            self.tasks.append(asyncio.create_task(self.worker(len(self.tasks))))
+
+    async def worker(self, slot):
         while True:
+            if slot >= self.settings.concurrency:
+                return
             job = self.store.claim()
             if not job:
                 feedback = self.store.claim_feedback()

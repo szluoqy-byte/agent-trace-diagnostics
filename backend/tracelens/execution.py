@@ -3,6 +3,7 @@ from dataclasses import replace
 from .trajdebug import ENGINE_VERSION, UPSTREAM_COMMIT
 
 FIELDS = ('base_url', 'model', 'max_retries', 'timeout', 'llm_concurrency', 'max_tokens', 'cluster_json_mode')
+RUNTIME_FIELDS = ('concurrency', 'max_retries', 'timeout', 'llm_concurrency', 'max_tokens', 'cluster_json_mode')
 
 
 def active_execution(store, settings):
@@ -11,6 +12,15 @@ def active_execution(store, settings):
         return settings, None
     return replace(settings, base_url=connection['base_url'], model=connection['model'],
                    api_key=connection['api_key']), connection['id']
+
+
+def load_runtime_settings(store, settings):
+    values = store.runtime_settings(settings, RUNTIME_FIELDS)
+    return replace(settings, **values)
+
+
+def runtime_snapshot(settings):
+    return {key: getattr(settings, key) for key in RUNTIME_FIELDS}
 
 
 def snapshot(settings, connection_id=None):
