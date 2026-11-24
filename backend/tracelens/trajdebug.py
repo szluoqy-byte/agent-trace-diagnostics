@@ -18,8 +18,13 @@ STAGES = [("stage_a", "多粒度压缩", 8, 25), ("stage_b", "错误触发检测
 def verify_upstream():
     manifest = json.loads((VENDOR / "UPSTREAM.json").read_text(encoding="utf-8"))
     for relative, expected in manifest["files"].items():
-        if hashlib.sha256((VENDOR / relative).read_bytes()).hexdigest() != expected:
-            raise ValueError("TrajDebug 官方源码完整性检查失败：" + relative)
+        content = (VENDOR / relative).read_bytes()
+        if hashlib.sha256(content).hexdigest() == expected:
+            continue
+        # Older Windows checkouts can retain CRLF after pulling .gitattributes.
+        if b"\r\n" in content and hashlib.sha256(content.replace(b"\r\n", b"\n")).hexdigest() == expected:
+            continue
+        raise ValueError("TrajDebug 官方源码完整性检查失败：" + relative)
     return manifest
 
 

@@ -5,6 +5,7 @@ import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
+from tracelens import trajdebug
 from tracelens.config import Settings
 from tracelens.demo import demo_trace, demo_report
 from tracelens.engine import diagnose
@@ -27,6 +28,23 @@ def test_native_adapter_preserves_routing_and_removes_gold():
     assert unified["metadata"]["extra"] == {"agent_framework_description": "A tool-using agent"}
     assert "SECRET" not in json.dumps(unified)
     assert len(verify_upstream()["files"]) == 20
+
+
+def test_upstream_verification_accepts_crlf_but_rejects_content_changes(tmp_path, monkeypatch):
+    manifest = verify_upstream()
+    (tmp_path / "UPSTREAM.json").write_bytes((trajdebug.VENDOR / "UPSTREAM.json").read_bytes())
+    for relative in manifest["files"]:
+        original = (trajdebug.VENDOR / relative).read_bytes()
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(original.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
+    monkeypatch.setattr(trajdebug, "VENDOR", tmp_path)
+    assert verify_upstream() == manifest
+
+    script = tmp_path / "run_pipeline.sh"
+    script.write_bytes(script.read_bytes() + b"\r\n# modified\r\n")
+    with pytest.raises(ValueError, match=r"完整性检查失败：run_pipeline\.sh"):
+        verify_upstream()
 
 
 def test_unknown_outcome_is_not_silently_treated_as_failure():
