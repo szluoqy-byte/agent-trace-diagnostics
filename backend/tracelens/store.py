@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from .models import Trajectory
 from .model_connections import ModelConnections
-from .normalize import fingerprint
 from .task_store import TaskStore
 from .pattern_store import PatternStore
 from .trajdebug import attribution_fields
@@ -90,11 +89,9 @@ class Store(TaskStore, PatternStore):
         return result
 
     def add_trace(self, trace: Trajectory):
-        digest = fingerprint(trace)
         with self.connect() as db:
-            db.execute("INSERT OR IGNORE INTO traces VALUES (?, ?, ?, ?, ?)",
-                       (uuid.uuid4().hex, digest, trace.title, trace.model_dump_json(), now()))
-            return self.row(db.execute("SELECT * FROM traces WHERE hash=?", (digest,)).fetchone())
+            trace_id = self._insert_trace(db, trace)
+            return self.row(db.execute("SELECT * FROM traces WHERE id=?", (trace_id,)).fetchone())
 
     def traces(self):
         with self.connect() as db:

@@ -4,7 +4,7 @@ export interface OTelSource { trace_id: string; span_id: string; attribute: stri
 export interface OTelSpan { span: {spanId:string; [key:string]:unknown}; resource: Record<string,unknown>; scope: Record<string,unknown>; location: string }
 export interface OTelProvenance { trace_id: string; adapter_version: string; spans: OTelSpan[]; warnings: string[] }
 export interface Message { step: number; role: string; content: string; name: string; source_step: string; judgable?: boolean | null; compress_role?: string; source_refs?: OTelSource[] }
-export interface Trace { id: string; data: { title: string; task_description: string; messages: Message[]; annotation: Record<string, unknown>; source: string; kind: string; outcome: string; otel?: OTelProvenance | null; input_format?: 'deepagent' | null } }
+export interface Trace { id: string; data: { title: string; task_description: string; messages: Message[]; annotation: Record<string, unknown>; source: string; kind: string; outcome: string; otel?: OTelProvenance | null; input_format?: 'deepagent' | null; deepagent?: {trace_id: string; span_count: number} | null } }
 export interface ViewMatch { step: number; tier: string; start: number; end: number }
 export type CompressionViews = Record<string, Record<string, string>>
 export interface Evidence { step?: number | null; source_id?: string | null; quote: string; start?: number; end?: number; matched?: boolean; original_matched?: boolean; source_kind?: 'original' | 'compressed' | 'task' | 'runtime' | 'framework' | 'unlocated'; view_matches?: ViewMatch[]; view_scope?: string }

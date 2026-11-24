@@ -5,6 +5,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from pydantic import Field
 from .models import Contract, Trajectory, trajectory_format
+from .deepagent import trace_with_source_summary
 from .normalize import parse_upload, fingerprint
 from .execution import active_execution, snapshot, job_settings, run_settings
 from .feedback import feedback_availability
@@ -277,7 +278,7 @@ def attach_task_routes(app, store, settings, job_view):
         index = ids.index(trace_id) if trace_id in ids else -1
         previous = next((r['id'] for r in reversed(filtered) if r['position']<row['position']),None)
         following = next((r['id'] for r in filtered if r['position']>row['position']),None)
-        return {'trace':store.trace(trace_id), 'job':job_view(row['job_id']) if row.get('job_id') else None,
+        return {'trace':trace_with_source_summary(store.trace(trace_id)), 'job':job_view(row['job_id']) if row.get('job_id') else None,
                 'attempts':store.item_attempts(run_id,trace_id) if run else [], 'read_only':read_only,
                 'navigation':{'index':index,'total':len(ids),'previous_id':previous,'next_id':following}}
 
@@ -326,7 +327,7 @@ def attach_task_routes(app, store, settings, job_view):
         for row in rows:
             if trace_id is not None and row['id'] not in trace_id:
                 continue
-            items.append({'trace':store.trace(row['id']), 'job':job_view(row['job_id']) if row['job_id'] else None,
+            items.append({'trace':trace_with_source_summary(store.trace(row['id'])), 'job':job_view(row['job_id']) if row['job_id'] else None,
                           'attempts':[{'job':job_view(a['id']),'feedback_history':store.feedback_history(a['id'])} for a in store.item_attempts(run_id,row['id'])]})
         payload = {'schema_version':1,'task':require_task(task_id),'analysis':run,'trajectories':items}
         return Response(json.dumps(payload,ensure_ascii=False,indent=2), media_type='application/json',

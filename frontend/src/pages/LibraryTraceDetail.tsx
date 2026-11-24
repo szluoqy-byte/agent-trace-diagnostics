@@ -3,6 +3,7 @@ import {dateLabel} from '../api'
 import {sourceLabel} from '../branding'
 import {patternTaskPath} from '../patterns'
 import OTelOverview from '../components/OTelOverview'
+import DeepAgentOverview from '../components/DeepAgentOverview'
 import TraceViewer from '../components/TraceViewer'
 import {businessOutcomes, libraryDiagnosis, libraryPath} from '../traceLibrary'
 import type {LibraryHistory} from '../traceLibrary'
@@ -32,6 +33,7 @@ export default function LibraryTraceDetail({id, params}: {id: string; params: UR
     </div>
     {task_description ? <details className="ws-trace-context"><summary>轨迹任务说明</summary><p>{task_description}</p></details> : null}
     <OTelOverview trace={trace}/>
+    <DeepAgentOverview key={trace.id} trace={trace}/>
     <div className="library-detail-grid">
       <TraceViewer key={id} messages={messages} criticalStep={null} selection={null} otel={otel}/>
       <section className="ws-surface library-history" aria-busy={!history && !historyError}>

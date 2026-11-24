@@ -20,6 +20,12 @@ class OTelProvenance(Contract):
     warnings: list[str] = Field(default_factory=list)
 
 
+class DeepAgentProvenance(Contract):
+    trace_id: str
+    spans: list[dict] = Field(min_length=1)
+    export_metadata: dict
+
+
 class Message(Contract):
     step: int = Field(ge=0)
     role: Literal["system", "user", "assistant", "tool"]
@@ -56,6 +62,7 @@ class Trajectory(Contract):
     agent_framework_description: str = ""
     otel: OTelProvenance | None = None
     input_format: Literal["deepagent"] | None = None
+    deepagent: DeepAgentProvenance | None = None
 
     @model_validator(mode="after")
     def indices(self):
@@ -69,7 +76,7 @@ class Trajectory(Contract):
 
     def input_json(self, *, fingerprint=False):
         # Preserve the hashes of existing traces/reports when no new sources exist.
-        excluded = {"annotation", "otel", "input_format"}
+        excluded = {"annotation", "otel", "input_format", "deepagent"}
         if fingerprint:
             excluded |= {"title", "source"}
         if not self.runtime_inputs:

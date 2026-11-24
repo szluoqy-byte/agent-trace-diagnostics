@@ -3,7 +3,7 @@ import json
 from collections import defaultdict
 from pathlib import Path
 
-from .models import Message, Trajectory
+from .models import DeepAgentProvenance, Message, Trajectory
 
 
 FAILURE_REASONS = {"content_filter", "error", "failed", "ai_security_guard_input", "ai_security_guard_output"}
@@ -161,6 +161,7 @@ def convert_deepagent(data, filename):
     if not isinstance(spans, list) or not spans:
         raise ValueError("DeepAgent 导出需要非空的 result.spans 数组")
     groups = defaultdict(dict)
+    originals = defaultdict(list)
     for span in spans:
         if (not isinstance(span, dict)
                 or not all(isinstance(span.get(key), str) and span[key].strip() for key in ("trace_id", "span_id"))
@@ -171,7 +172,32 @@ def convert_deepagent(data, filename):
         if span["span_id"] in group and group[span["span_id"]] != span:
             raise ValueError("DeepAgent 导出包含冲突的重复 span")
         group[span["span_id"]] = span
+        originals[span["trace_id"]].append(span)
     outcome = result.get("outcome", data.get("outcome")) if len(groups) == 1 else None
     if outcome not in ("failed", "succeeded"):
         outcome = "unknown"
-    return [convert_trace(trace_id, list(group.values()), filename, outcome) for trace_id, group in groups.items()]
+    metadata = {**data, "result": {key: value for key, value in result.items() if key != "spans"}}
+    traces = []
+    for trace_id, group in groups.items():
+        trace = convert_trace(trace_id, list(group.values()), filename, outcome)
+        trace.deepagent = DeepAgentProvenance(trace_id=trace_id, spans=originals[trace_id], export_metadata=metadata)
+        traces.append(trace)
+    return traces
+
+
+def trace_with_source_summary(trace):
+    source = trace["data"].get("deepagent")
+    if not source:
+        return trace
+    summary = {"trace_id": source["trace_id"], "span_count": len(source["spans"])}
+    return {**trace, "data": {**trace["data"], "deepagent": summary}}
+
+
+def source_bundle(data):
+    source = data["deepagent"]
+    mappings = []
+    for message in data["messages"]:
+        span_id, separator, field = message["source_step"].rpartition(":")
+        if separator and field in {"span_input", "span_output"}:
+            mappings.append({"step": message["step"], "span_id": span_id, "field": field})
+    return {**source, "message_sources": mappings}

@@ -10,6 +10,7 @@ import type {PatternMembers} from '../patterns'
 import Inspector from '../components/Inspector'
 import TraceViewer from '../components/TraceViewer'
 import OTelOverview from '../components/OTelOverview'
+import DeepAgentOverview from '../components/DeepAgentOverview'
 import {Badge,diagnosisStatus,filterQuery,formatLabel,taskPath,tracePath,useResource,useWorkspace} from '../workspace'
 import type {ActionResult,AnalysisTask,TraceDetail} from '../workspace'
 
@@ -58,6 +59,7 @@ export default function TrajectoryDetail({id,traceId,params}:{id:string;traceId:
   </div>:null}
   {readonly&&!draft?<div className="ws-warning">正在查看历史分析记录。可查看并导出已有结果。</div>:null}
   <details className="ws-trace-context"><summary>轨迹任务说明及来源</summary><p>{trace.data.task_description||'未提供任务说明。'}</p><p className="muted">来源：{sourceLabel(trace.data.source)}</p></details><OTelOverview trace={trace}/>
+  <DeepAgentOverview key={trace.id} trace={trace}/>
   <div className="ws-detail-status"><span>{uiText(job?.stage)||'尚未开始分析'}{job?.status==='running'?` · ${job.progress}%`:''}</span><div className="ws-actions">{canRun?<button className="primary small" disabled={busy||blocked} onClick={()=>void diagnose()}>{job?<RotateCcw size={14}/>:<Play size={14}/>} {job?'重试诊断':'诊断轨迹'}</button>:null}<button className="secondary small" disabled={job?.status!=='completed'} onClick={()=>setDialog('export')}><Download size={14}/>导出诊断报告</button></div></div>
   {blocked?<p className="ws-warning">该轨迹缺少业务结果。请重新上传并填写业务结果。</p>:null}
   {job?.status==='queued'||job?.status==='running'?<progress className="diagnosis-progress" max={100} value={job.progress} aria-label="诊断进度"/>:null}

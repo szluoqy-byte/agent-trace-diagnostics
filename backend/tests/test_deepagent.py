@@ -7,7 +7,7 @@ from test_trajdebug import provider
 
 from tracelens.config import Settings
 from tracelens.main import create_app
-from tracelens.normalize import parse_upload
+from tracelens.normalize import fingerprint, parse_upload
 from tracelens.trajdebug import to_unified
 
 
@@ -36,12 +36,16 @@ def test_deepagent_keeps_main_agent_and_marks_terminal_content_filter():
     ])
     [trace] = parse_upload(json.dumps(payload).encode(), "agent.json")
     assert trace.outcome == "failed"
+    assert trace.deepagent.spans == payload["result"]["spans"]
+    assert trace.deepagent.export_metadata == {"status": "OK", "result": {"totalSpans": 4}}
     assert [(m.role, m.content, m.source_step) for m in trace.messages] == [
         ("system", "Policy", "llm:span_input"), ("user", "Read status", "llm:span_input"),
         ("tool", "finish_reason: ai_security_guard_input", "llm:span_output"),
         ("tool", "finish: content-filter", "agent:span_output"),
     ]
     assert to_unified(trace)["metadata"]["reward"] == 0
+    assert "Generated title" not in json.dumps(to_unified(trace))
+    assert fingerprint(trace) == fingerprint(trace.model_copy(update={"deepagent": None}))
 
 
 def test_deepagent_reconstructs_model_history_and_keeps_unknown_outcome():
@@ -99,8 +103,45 @@ def test_deepagent_upload_starts_diagnosis_and_appears_in_library(tmp_path, prov
         assert detail["job"]["status"] == "completed", detail["job"].get("error")
         assert len(detail["job"]["result"]["stage_metrics"]) == 5
         assert detail["trace"]["data"]["input_format"] == "deepagent"
+        assert detail["trace"]["data"]["deepagent"] == {"trace_id": "trace-1", "span_count": 2}
         library = client.get("/api/trace-library?input_format=deepagent").json()
         assert [(row["id"], row["input_format"], row["diagnosis"]) for row in library["items"]] == [
             (trace_id, "deepagent", "completed"),
         ]
     assert {call["stage"] for call in calls} == {"compression", "detection", "clustering", "state", "attribution"}
+
+
+@pytest.mark.parametrize("through_task", [False, True])
+def test_reimport_restores_raw_spans_on_legacy_trace(tmp_path, through_task):
+    agent = span("agent", "AGENT", 0, 6, request={"message": "Read status"}, response={"info": {"finish": "error"}})
+    risk = {**span("risk", "RISK_CHECK", 2, 3, parent="agent"), "attributes": '{"details":"原始证据"}'}
+    payload = export([risk, agent, risk])
+    content = json.dumps(payload).encode()
+    [trace] = parse_upload(content, "agent.json")
+    app = create_app(Settings(data_dir=tmp_path))
+    store = app.state.store
+    legacy = store.add_trace(trace.model_copy(update={"deepagent": None}))
+    trace_id = legacy["id"]
+    existing_job = store.enqueue(trace_id, "live")
+    client = TestClient(app)
+    path = f"/api/traces/{trace_id}/deepagent"
+    assert client.get(path).status_code == 404
+    files = {"files": ("agent.json", content, "application/json")}
+    if through_task:
+        preview = client.post("/api/import/preview", files=files).json()
+        task = client.post("/api/tasks", json={"name": "恢复来源", "preview_id": preview["id"]})
+        assert task.status_code == 200, task.text
+        assert client.get(f"/api/tasks/{task.json()['task_id']}/runs/draft/traces/{trace_id}").status_code == 200
+    else:
+        assert client.post("/api/import", files=files).json()["trace_ids"] == [trace_id]
+
+    response = client.get(path, params={"download": True})
+    assert response.status_code == 200
+    assert response.headers["content-disposition"].startswith("attachment;")
+    assert response.json()["spans"] == payload["result"]["spans"]
+    assert response.json()["message_sources"] == [
+        {"step": 0, "span_id": "agent", "field": "span_input"},
+        {"step": 1, "span_id": "agent", "field": "span_output"},
+    ]
+    assert store.jobs() == [existing_job]
+    assert client.get("/api/trace-library").json()["total"] == 1

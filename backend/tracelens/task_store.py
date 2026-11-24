@@ -215,7 +215,11 @@ class TaskStore:
     def _insert_trace(db, trace):
         from .store import now
         digest = fingerprint(trace)
-        db.execute('INSERT OR IGNORE INTO traces VALUES (?,?,?,?,?)', (uuid.uuid4().hex, digest, trace.title, trace.model_dump_json(), now()))
+        inserted = db.execute('INSERT OR IGNORE INTO traces VALUES (?,?,?,?,?)',
+                              (uuid.uuid4().hex, digest, trace.title, trace.model_dump_json(), now()))
+        if not inserted.rowcount and trace.deepagent is not None:
+            db.execute("UPDATE traces SET data=json_set(data,'$.deepagent',json(?)) WHERE hash=? AND json_extract(data,'$.deepagent') IS NULL",
+                       (trace.deepagent.model_dump_json(), digest))
         return db.execute('SELECT id FROM traces WHERE hash=?', (digest,)).fetchone()['id']
 
     def create_task(self, fields, *, traces=None, trace_ids=None, config=None, auto_feedback=False):

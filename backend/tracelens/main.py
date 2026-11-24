@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import Field, ValidationError
 from .config import Settings, ROOT
 from .models import Contract, Review, trajectory_format
+from .deepagent import source_bundle, trace_with_source_summary
 from .normalize import parse_upload, normalize
 from .store import Store
 from .queue import JobQueue
@@ -100,7 +101,7 @@ def create_app(settings=None, *, frontend_dir=None):
 
     @app.get("/api/traces/{trace_id}")
     def trace(trace_id: str):
-        return require_trace(trace_id)
+        return trace_with_source_summary(require_trace(trace_id))
 
     @app.get('/api/trace-library')
     def trace_library(
@@ -128,6 +129,14 @@ def create_app(settings=None, *, frontend_dir=None):
         bundle = {**provenance, "message_sources": [{"step": m["step"], "source_refs": m.get("source_refs", [])} for m in data["messages"]]}
         return Response(json.dumps(bundle, ensure_ascii=False, indent=2), media_type="application/json",
                         headers={"Content-Disposition": f'attachment; filename="otel-source-{trace_id}.json"'})
+
+    @app.get("/api/traces/{trace_id}/deepagent")
+    def deepagent_source(trace_id: str, download: bool = False):
+        data = require_trace(trace_id)["data"]
+        if not data.get("deepagent"):
+            raise HTTPException(404, "该轨迹尚未保存 DeepAgent 原始 span")
+        headers = {"Content-Disposition": f'attachment; filename="deepagent-source-{trace_id}.json"'} if download else None
+        return Response(json.dumps(source_bundle(data), ensure_ascii=False, indent=2), media_type="application/json", headers=headers)
 
     @app.post("/api/import")
     async def import_files(files: list[UploadFile] = File(...), outcome: str = Form("")):
@@ -291,7 +300,7 @@ def create_app(settings=None, *, frontend_dir=None):
         trace = require_trace(job["trace_id"])
         reviews = store.reviews(job_id)
         feedback = store.latest_feedback(job_id)
-        payload = {"trace": trace, "job": job, "reviews": reviews,
+        payload = {"trace": trace_with_source_summary(trace), "job": job, "reviews": reviews,
                    "feedback": feedback, "feedback_history": store.feedback_history(job_id)}
         headers = {"Content-Disposition": f'attachment; filename="tianluo-diagnosis-{job_id[:8]}.{format}"'}
         if format == "json":
