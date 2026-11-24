@@ -41,7 +41,7 @@ def to_unified(trace: Trajectory):
         "dataset": trace.dataset, "task_id": trace.task_id, "task_description": task,
         "reward": int(trace.outcome == "succeeded"), "annotation": {},
         "extra": {"agent_framework_description": trace.agent_framework_description}}}
-    if trace.otel is not None:
+    if trace.otel is not None or trace.input_format == "deepagent":
         validate_unified(unified)
     return unified
 

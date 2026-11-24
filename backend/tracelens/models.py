@@ -55,6 +55,7 @@ class Trajectory(Contract):
     runtime_inputs: list[RuntimeInput] = Field(default_factory=list)
     agent_framework_description: str = ""
     otel: OTelProvenance | None = None
+    input_format: Literal["deepagent"] | None = None
 
     @model_validator(mode="after")
     def indices(self):
@@ -68,7 +69,7 @@ class Trajectory(Contract):
 
     def input_json(self, *, fingerprint=False):
         # Preserve the hashes of existing traces/reports when no new sources exist.
-        excluded = {"annotation", "otel"}
+        excluded = {"annotation", "otel", "input_format"}
         if fingerprint:
             excluded |= {"title", "source"}
         if not self.runtime_inputs:
@@ -88,6 +89,10 @@ class Trajectory(Contract):
         if message_fields:
             excluded_fields["messages"] = message_fields
         return self.model_dump_json(exclude=excluded_fields)
+
+
+def trajectory_format(data: dict) -> str:
+    return data.get("input_format") or ("otel_genai" if data.get("otel") else "messages")
 
 
 class Review(Contract):

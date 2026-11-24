@@ -4,7 +4,7 @@ from typing import Literal
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from pydantic import Field
-from .models import Contract, Trajectory
+from .models import Contract, Trajectory, trajectory_format
 from .normalize import parse_upload, fingerprint
 from .execution import active_execution, snapshot, job_settings, run_settings
 from .feedback import feedback_availability
@@ -99,7 +99,7 @@ def attach_task_routes(app, store, settings, job_view):
 
     def inputs(task_id):
         return [dict(id=t['id'], **{k: t['data'][k] for k in ('title','task_id','source','kind','outcome','dataset')},
-                     input_format='otel_genai' if t['data'].get('otel') else 'messages',
+                     input_format=trajectory_format(t['data']),
                      steps=len(t['data']['messages']), diagnosis='pending', position=index) for index,t in enumerate(store.task_inputs(task_id))]
 
     def task_view(task):
@@ -125,7 +125,7 @@ def attach_task_routes(app, store, settings, job_view):
                 rows.append({'id': digest, 'file_id': file['id'], 'title': trajectory.title,
                              'task_id': trajectory.task_id, 'outcome': trajectory.outcome,
                              'fingerprints': {outcome: fingerprint(trajectory.model_copy(update={'outcome':outcome})) for outcome in ('failed','succeeded')} if trajectory.outcome=='unknown' else {},
-                             'steps': len(trajectory.messages), 'input_format': 'otel_genai' if trajectory.otel else 'messages'})
+                             'steps': len(trajectory.messages), 'input_format': trajectory_format(value)})
         return {'id': token, 'files': [{k:v for k,v in f.items() if k!='traces'} for f in files], 'rows': rows, 'duplicates': duplicates}
 
     @router.post('/import/preview')
@@ -148,9 +148,10 @@ def attach_task_routes(app, store, settings, job_view):
             count += len(parsed)
             if count>500:
                 raise HTTPException(413, '每个任务最多 500 条轨迹')
+            values = [t.model_dump() for t in parsed]
             results.append({'id': str(index), 'name': file.filename or 'trajectory.json', 'errors': errors,
-                            'count': len(parsed), 'formats': sorted({'otel_genai' if t.otel else 'messages' for t in parsed}),
-                            'traces': [t.model_dump() for t in parsed]})
+                            'count': len(parsed), 'formats': sorted({trajectory_format(value) for value in values}),
+                            'traces': values})
         return stage_preview(results)
 
     @router.post('/import/samples/preview')

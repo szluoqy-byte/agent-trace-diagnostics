@@ -110,7 +110,8 @@ class TaskStore:
                 json_extract(t.data,'$.task_id') AS source_task_id,
                 json_extract(t.data,'$.outcome') AS outcome,
                 json_array_length(t.data,'$.messages') AS steps,
-                CASE WHEN json_type(t.data,'$.otel')='object' THEN 'otel_genai' ELSE 'messages' END AS input_format,
+                COALESCE(json_extract(t.data,'$.input_format'),
+                         CASE WHEN json_type(t.data,'$.otel')='object' THEN 'otel_genai' ELSE 'messages' END) AS input_format,
                 COALESCE((SELECT status FROM jobs WHERE trace_id=t.id AND status IN ('completed','running','queued','failed')
                     ORDER BY CASE status WHEN 'completed' THEN 0 WHEN 'running' THEN 1 WHEN 'queued' THEN 2 ELSE 3 END LIMIT 1),
                     'pending') AS diagnosis
@@ -288,7 +289,8 @@ class TaskStore:
              json_extract(t.data,'$.dataset') dataset,json_extract(t.data,'$.task_id') task_id,
              json_extract(t.data,'$.source') source,json_extract(t.data,'$.outcome') outcome,
              json_extract(t.data,'$.kind') kind,json_array_length(t.data,'$.messages') steps,
-             CASE WHEN json_type(t.data,'$.otel')='object' THEN 'otel_genai' ELSE 'messages' END input_format,
+             COALESCE(json_extract(t.data,'$.input_format'),
+                      CASE WHEN json_type(t.data,'$.otel')='object' THEN 'otel_genai' ELSE 'messages' END) input_format,
              j.id job_id,COALESCE(j.status,'pending') diagnosis,j.stage,j.progress,j.error,j.updated_at,
              a.attempt attempts,j.mode,json_extract(j.result,'$.schema_version') schema_version,
              json_extract(j.result,'$.attribution.critical_step') critical_step,

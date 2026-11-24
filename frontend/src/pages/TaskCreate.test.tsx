@@ -15,12 +15,14 @@ function renderUpload() {
   }}><TaskCreate source={null}/></WorkspaceContext>)
 }
 
-it('accepts both upload formats through the same entry point without offering preset data', async () => {
+it('accepts DeepAgent and existing formats through the same upload entry point', async () => {
   vi.mocked(api).mockResolvedValue({id:'preview', files:[
     {id:'0', name:'genai.json', formats:['otel_genai'], count:1, errors:[]},
     {id:'1', name:'native.jsonl', formats:['messages'], count:1, errors:[]},
+    {id:'2', name:'deepagent.json', formats:['deepagent'], count:1, errors:[]},
   ], rows:[
     {id:'otel', file_id:'0', outcome:'failed'}, {id:'native', file_id:'1', outcome:'succeeded'},
+    {id:'deepagent', file_id:'2', outcome:'failed'},
   ]})
   renderUpload()
   expect(screen.getByRole('button',{name:'选择文件'})).toBeTruthy()
@@ -29,13 +31,15 @@ it('accepts both upload formats through the same entry point without offering pr
   expect(screen.getByRole('link',{name:'OTel GenAI'}).getAttribute('href')).toBe('/templates/otel-genai-template.json')
   expect(screen.getByRole('link',{name:'OTel GenAI 批量'}).getAttribute('href')).toBe('/templates/otel-genai-batch-template.json')
   expect(screen.queryByRole('button',{name:/样例|示例|演示/})).toBeNull()
-  const files = [new File(['{}'], 'genai.json'), new File(['{}'], 'native.jsonl')]
+  const files = [new File(['{}'], 'genai.json'), new File(['{}'], 'native.jsonl'), new File(['{}'], 'deepagent.json')]
   fireEvent.change(screen.getByLabelText('选择轨迹文件'), {target:{files}})
   expect(await screen.findByText('genai.json')).toBeTruthy()
   expect(screen.getByText('native.jsonl')).toBeTruthy()
+  expect(screen.getByText('deepagent.json')).toBeTruthy()
+  expect(screen.getByText('DeepAgent JSON')).toBeTruthy()
   const [path, request] = vi.mocked(api).mock.calls[0]
   expect(path).toBe('/import/preview')
-  expect((request?.body as FormData).getAll('files')).toHaveLength(2)
+  expect((request?.body as FormData).getAll('files')).toHaveLength(3)
   expect((screen.getByRole('button',{name:'保存草稿'}) as HTMLButtonElement).disabled).toBe(false)
 })
 

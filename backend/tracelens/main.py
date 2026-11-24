@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse, Response, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import Field, ValidationError
 from .config import Settings, ROOT
-from .models import Contract, Review
+from .models import Contract, Review, trajectory_format
 from .normalize import parse_upload, normalize
 from .store import Store
 from .queue import JobQueue
@@ -77,7 +77,7 @@ def create_app(settings=None, *, frontend_dir=None):
     def traces():
         return [{"id": t["id"], "title": t["title"], "created_at": t["created_at"],
                  **{key: t["data"][key] for key in ("dataset", "task_id", "outcome", "kind", "source")},
-                 "input_format": "otel_genai" if t["data"].get("otel") else "messages",
+                 "input_format": trajectory_format(t["data"]),
                  "steps": len(t["data"]["messages"])} for t in store.traces()]
 
     def require_trace(trace_id):
@@ -108,7 +108,7 @@ def create_app(settings=None, *, frontend_dir=None):
         search: str = Query('', max_length=200),
         diagnosis: Literal['all', 'pending', 'queued', 'running', 'completed', 'failed'] = 'all',
         business: Literal['all', 'failed', 'succeeded', 'unknown'] = 'all',
-        input_format: Literal['all', 'messages', 'otel_genai'] = 'all',
+        input_format: Literal['all', 'messages', 'otel_genai', 'deepagent'] = 'all',
     ):
         return store.trace_library(page, int(page_size), search.strip(), diagnosis, business, input_format)
 

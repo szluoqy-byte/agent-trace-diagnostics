@@ -1,5 +1,6 @@
 import hashlib
 import json
+from .deepagent import convert_deepagent, is_deepagent
 from .models import Message, Trajectory
 from .otel_genai import convert_envelopes, is_otlp
 
@@ -65,6 +66,12 @@ def normalize(data: dict, filename: str = "trajectory.json") -> Trajectory:
                       agent_framework_description=str(extra.get("agent_framework_description", "")))
 
 
+def parse_upload_item(data, filename: str) -> list[Trajectory]:
+    if is_deepagent(data):
+        return convert_deepagent(data, filename)
+    return [normalize(data, filename)]
+
+
 def parse_upload(content: bytes, filename: str) -> list[Trajectory]:
     text = content.decode("utf-8-sig")
     try:
@@ -77,14 +84,16 @@ def parse_upload(content: bytes, filename: str) -> list[Trajectory]:
     if is_otlp(data):
         return convert_envelopes([data], filename)
     if isinstance(data, list):
-        if any(is_otlp(item) for item in data):
-            envelopes = [item for item in data if is_otlp(item)]
-            others = [item for item in data if not is_otlp(item)]
-            return convert_envelopes(envelopes, filename) + [normalize(item, f"{filename}:{i + 1}") for i, item in enumerate(others)]
         if data and all(isinstance(x, dict) and "role" in x for x in data):
             data = [{"messages": data}]
-        return [normalize(x, filename if len(data) == 1 else f"{filename}:{i + 1}") for i, x in enumerate(data)]
-    return [normalize(data, filename)]
+        envelopes = [item for item in data if is_otlp(item)]
+        others = [item for item in data if not is_otlp(item)] if envelopes else data
+        traces = convert_envelopes(envelopes, filename) if envelopes else []
+        for index, item in enumerate(others, 1):
+            name = filename if len(data) == 1 else f"{filename}:{index}"
+            traces.extend(parse_upload_item(item, name))
+        return traces
+    return parse_upload_item(data, filename)
 
 
 def fingerprint(trace: Trajectory) -> str:

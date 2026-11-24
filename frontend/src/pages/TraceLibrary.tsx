@@ -76,7 +76,7 @@ export default function TraceLibrary({params, selected, onSelect}: {
 
   return <>
     <div className="ws-heading">
-      <div><h1>轨迹库</h1><p>查找已入库的轨迹，查看诊断记录或复用到新任务。</p></div>
+      <div><h1>轨迹库</h1><p>导入或查找轨迹，查看诊断记录或复用到新任务。支持 DeepAgent、OTel GenAI 和标准轨迹。</p></div>
       <div className="ws-actions"><input ref={importInput} hidden type="file" multiple accept=".json,.jsonl,application/json,application/x-ndjson"
         aria-label="选择要导入的轨迹文件" onChange={event => {void importFiles(Array.from(event.target.files ?? [])); event.target.value = ''}}/>
         <button className="secondary" disabled={importing} onClick={() => importInput.current?.click()}><Upload size={15}/>{importing ? '正在导入…' : '导入轨迹'}</button>
@@ -100,7 +100,7 @@ export default function TraceLibrary({params, selected, onSelect}: {
       </select>
       <select aria-label="输入格式" value={filters.input_format} onChange={event => update({input_format: event.target.value, page: ''})}>
         <option value="">全部输入格式</option>
-        {['messages', 'otel_genai'].map(value => <option key={value} value={value}>{formatLabel(value)}</option>)}
+        {['messages', 'otel_genai', 'deepagent'].map(value => <option key={value} value={value}>{formatLabel(value)}</option>)}
       </select>
       {hasFilters ? <button type="button" className="text-button" onClick={() => {
         setSearchInput('')

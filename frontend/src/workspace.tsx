@@ -14,7 +14,7 @@ export interface ActionResult {enqueued:number; skipped:{trace_id:string;reason:
 export const taskStatus:Record<string,string>={draft:'草稿',pending:'待分析',running:'分析中',feedback_running:'建议生成中',completed:'已完成',partial:'部分完成',failed:'分析失败'}
 export const diagnosisStatus:Record<string,string>={pending:'待诊断',queued:'排队中',running:'诊断中',completed:'已诊断',failed:'诊断失败'}
 export const reviewStatus:Record<string,string>={confirmed:'已确认',modified:'已修改',rejected:'已驳回'}
-export const formatLabel=(format:string)=>format==='otel_genai'?'OTel GenAI':'标准轨迹 JSON'
+export const formatLabel=(format:string)=>format==='deepagent'?'DeepAgent JSON':format==='otel_genai'?'OTel GenAI':'标准轨迹 JSON'
 export function Badge({value,children}:{value:string;children?:React.ReactNode}) {return <span className={'ws-badge '+value}>{children??taskStatus[value]??value}</span>}
 
 export function useResource<T>(path:string|null,version=0,poll:number|((data:T)=>number)=0) {
