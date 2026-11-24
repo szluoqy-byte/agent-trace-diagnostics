@@ -89,8 +89,8 @@ def parse_output(text):
 
 
 def one(path, trace_path, settings, cache_dir):
-    trace = json.loads(trace_path.read_text())
-    report = json.loads(path.read_text())
+    trace = json.loads(trace_path.read_text(encoding='utf-8'))
+    report = json.loads(path.read_text(encoding='utf-8'))
     model = model_for(settings, cache_dir)
     text, usage = model.generate(make_prompt(trace, report), max_tokens=2048, temperature=0.0,
                                  response_format={'type': 'json_object'}, return_usage=True)
@@ -124,7 +124,7 @@ def main():
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         futures = {}
         for path in reports:
-            report = json.loads(path.read_text())
+            report = json.loads(path.read_text(encoding='utf-8'))
             if args.only_missing and (report.get('attribution') or {}).get('critical_step') is not None:
                 continue
             futures[pool.submit(one, path, trace_path(report), settings,
@@ -139,7 +139,7 @@ def main():
                 print(args.split, path.stem[:12], 'error', str(exc), flush=True)
     predictions.sort(key=lambda x: x['input_sha256'])
     args.output.write_text(json.dumps({'split': args.split, 'model': settings.model,
-                                       'predictions': predictions, 'errors': errors}, ensure_ascii=False, indent=2) + '\n')
+                                       'predictions': predictions, 'errors': errors}, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     print(json.dumps({'split': args.split, 'completed': len(predictions), 'errors': len(errors)}, ensure_ascii=False))
 
 

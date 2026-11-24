@@ -12,7 +12,7 @@ PARTS = ('train', 'dev', 'heldout', 'external_eval')
 
 def labels(dataset, split):
     return {row['input_sha256']: row['critical_error_step']
-            for row in map(json.loads, (dataset / 'labels' / f'{split}.jsonl').read_text().splitlines())}
+            for row in map(json.loads, (dataset / 'labels' / f'{split}.jsonl').read_text(encoding='utf-8').splitlines())}
 
 
 def summarize(dataset, reports, split):
@@ -58,7 +58,7 @@ def main():
     args = parser.parse_args()
     result = {'splits': {split: summarize(args.dataset, args.reports, split) for split in PARTS}}
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n')
+    args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 

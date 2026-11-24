@@ -1,5 +1,6 @@
 import hashlib
 import json
+from codecs import BOM_UTF16_BE, BOM_UTF16_LE
 from .deepagent import convert_deepagent, is_deepagent
 from .models import Message, Trajectory
 from .otel_genai import convert_envelopes, is_otlp
@@ -73,7 +74,11 @@ def parse_upload_item(data, filename: str) -> list[Trajectory]:
 
 
 def parse_upload(content: bytes, filename: str) -> list[Trajectory]:
-    text = content.decode("utf-8-sig")
+    encoding = "utf-16" if content.startswith((BOM_UTF16_LE, BOM_UTF16_BE)) else "utf-8-sig"
+    try:
+        text = content.decode(encoding)
+    except UnicodeDecodeError as exc:
+        raise ValueError("轨迹文件请保存为 UTF-8 或带 BOM 的 UTF-16 编码") from exc
     try:
         data = json.loads(text)
     except json.JSONDecodeError:

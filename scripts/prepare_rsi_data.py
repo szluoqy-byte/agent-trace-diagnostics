@@ -274,8 +274,8 @@ def main():
     args = parser.parse_args()
     if args.output.exists():
         parser.error('Output already exists; choose a new directory to preserve the frozen split')
-    tree = json.loads(args.tree.read_text())
-    prior = json.loads(Path(__file__).with_name('official_testset.json').read_text())
+    tree = json.loads(args.tree.read_text(encoding='utf-8'))
+    prior = json.loads(Path(__file__).with_name('official_testset.json').read_text(encoding='utf-8'))
     if prior['commit'] != UPSTREAM_COMMIT:
         parser.error('Regression catalog is pinned to a different upstream commit')
     sources, blobs = read_sources(args.archive, tree)

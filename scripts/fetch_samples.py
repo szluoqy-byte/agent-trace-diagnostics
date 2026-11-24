@@ -39,7 +39,7 @@ def main():
     args = parser.parse_args()
     directory = args.output_dir.resolve()
     directory.mkdir(parents=True, exist_ok=True)
-    catalog = json.loads(Path(__file__).with_name("official_testset.json").read_text())
+    catalog = json.loads(Path(__file__).with_name("official_testset.json").read_text(encoding='utf-8'))
     assert catalog["commit"] == UPSTREAM_COMMIT
     with ThreadPoolExecutor(max_workers=4) as pool:
         list(pool.map(lambda entry: fetch_file(directory, entry), catalog["cases"]))
@@ -49,7 +49,7 @@ def main():
         if not path.is_file():
             with urllib.request.urlopen(base + relative, timeout=40) as reply:
                 path.write_bytes(reply.read())
-    (directory / "trajdebug-testset.json").write_text(json.dumps(catalog, ensure_ascii=False, indent=2) + "\n")
+    (directory / "trajdebug-testset.json").write_text(json.dumps(catalog, ensure_ascii=False, indent=2) + "\n", encoding='utf-8')
     traces = load_official_samples(directory)
     print(json.dumps({"downloaded_and_verified": len(traces), "commit": UPSTREAM_COMMIT,
                       "counts": catalog["selection"]["counts"], "directory": str(directory),

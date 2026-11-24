@@ -23,6 +23,21 @@ bash scripts/start.sh
 
 开发模式使用 `bash scripts/dev.sh`，Vite 地址为 http://127.0.0.1:5173 。
 
+### Windows PowerShell
+
+在仓库根目录运行以下命令。`.env` 使用 UTF-8 编码，已有配置会保留。
+
+```powershell
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e '.[test]'
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+Push-Location frontend
+pnpm.cmd install --frozen-lockfile
+pnpm.cmd build
+Pop-Location
+.\scripts\start.ps1
+```
+
 ## 使用
 
 从顶部的「轨迹库」可跨任务筛选已有轨迹、查看原文和历史诊断，也可跨页勾选轨迹新建分析任务。保存任务时写入的轨迹会直接出现在库中。
@@ -78,6 +93,8 @@ bash scripts/start.sh
 新增支持 **OTel GenAI 的 OTLP JSON / JSONL**，与原有格式共用前端导入入口，可混合选择文件。串行消息历史转换为官方统一格式，执行前通过官方 schema 校验；原始 span 和消息映射可在前端查看及下载。官方检测算法保持不变。可直接上传 [格式示例](examples/otel-genai.json)，支持范围见 [OTel GenAI 接入说明](docs/otel-genai.md)。
 
 **DeepAgent 轨迹 JSON** 可在新建任务或轨迹库中直接上传。工作台从导出的 `result.spans` 按 `trace_id` 还原对话、记录在模型消息中的工具调用和结果，以及明确的终止信号。导出状态 `OK` 只表示获取轨迹成功。缺少明确业务结果时，在新建任务的上传预览中补充成功或失败后即可分析。
+
+轨迹文件支持 UTF-8（可带 BOM）及带 BOM 的 UTF-16。
 
 | 环境变量 | 用途 | 默认 |
 |---|---|---|

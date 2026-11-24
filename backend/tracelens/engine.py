@@ -19,7 +19,7 @@ async def diagnose(trace, settings, progress):
     run_id = uuid.uuid4().hex
     directory = settings.data_dir / "trajdebug" / "runs" / run_id
     directory.mkdir(parents=True)
-    (directory / "input.json").write_text(json.dumps(unified, ensure_ascii=False, indent=2))
+    (directory / "input.json").write_text(json.dumps(unified, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n")
     config = {key: value for key, value in asdict(settings).items()
               if key not in {"api_key", "data_dir", "chunk_chars", "json_mode", "enable_validation_data"}}
     headers = config.pop("headers", {})
@@ -27,9 +27,10 @@ async def diagnose(trace, settings, progress):
     cache_config["headers"] = headers
     namespace = hashlib.sha256(json.dumps([unified, cache_config, UPSTREAM_COMMIT], sort_keys=True).encode()).hexdigest()
     config["cache_dir"] = str(settings.data_dir / "trajdebug" / "cache" / namespace)
-    (directory / "settings.json").write_text(json.dumps(config))
+    (directory / "settings.json").write_text(json.dumps(config), encoding="utf-8")
     env = {**os.environ, "OPENAI_API_KEY": settings.api_key or "EMPTY",
            "TRACELENS_MODEL_HEADERS": json.dumps(headers, ensure_ascii=False),
+           "PYTHONIOENCODING": "utf-8",
            "PYTHONPATH": str(ROOT / "backend") + os.pathsep + os.environ.get("PYTHONPATH", "")}
     process = await asyncio.create_subprocess_exec(sys.executable, "-m", "tracelens.trajdebug_worker", str(directory),
                                                  env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
@@ -46,7 +47,7 @@ async def diagnose(trace, settings, progress):
         code = await process.wait()
         if code:
             raise ModelError("诊断执行失败。请检查模型配置和服务状态后重试。", usage=partial.get("usage"))
-        payload = json.loads((directory / "result.json").read_text())
+        payload = json.loads((directory / "result.json").read_text(encoding="utf-8"))
         report = present_report(trace, payload["outputs"], model=settings.model, usage=payload["usage"],
                                 run_id=run_id, stage_metrics=payload["stage_metrics"])
         report["execution"] = {key: config[key] for key in ("max_tokens", "llm_concurrency", "max_retries", "timeout", "cluster_json_mode")}

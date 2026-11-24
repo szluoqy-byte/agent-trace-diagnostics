@@ -69,7 +69,7 @@ async def run(directory):
     from stage_c_phase1_cluster import Phase1Clusterer
     from stage_c_phase2_state import Phase2Annotator
     from stage_c_phase3_assemble import Phase3Assembler
-    config = json.loads((directory / "settings.json").read_text())
+    config = json.loads((directory / "settings.json").read_text(encoding="utf-8"))
     cache = Path(config["cache_dir"])
     cache.mkdir(parents=True, exist_ok=True)
     usage = Usage()
@@ -125,10 +125,10 @@ async def run(directory):
             if delta["empty_responses"] and delta["requests"] and not delta["completion_tokens"]:
                 raise RuntimeError("No usable model responses in upstream stage")
             event(name, end)
-        (directory / "result.json").write_text(json.dumps({"outputs": outputs, "usage": usage.snapshot(), "stage_metrics": metrics}, ensure_ascii=False))
+        (directory / "result.json").write_text(json.dumps({"outputs": outputs, "usage": usage.snapshot(), "stage_metrics": metrics}, ensure_ascii=False), encoding="utf-8")
     except Exception as exc:
         event("诊断失败", current_progress)
-        (directory / "failure.json").write_text(json.dumps({"failure_type": type(exc).__name__, "completed_stages": list(outputs), "usage": usage.snapshot(), "stage_metrics": metrics}))
+        (directory / "failure.json").write_text(json.dumps({"failure_type": type(exc).__name__, "completed_stages": list(outputs), "usage": usage.snapshot(), "stage_metrics": metrics}), encoding="utf-8")
         return 1
     return 0
 

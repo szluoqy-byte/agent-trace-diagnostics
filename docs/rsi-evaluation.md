@@ -66,4 +66,6 @@ cp -n docs/rsi-round-1.md "$round_dir/protocol.md"
 .venv/bin/python scripts/evaluate_rsi_round.py --output "$round_dir"
 ```
 
+在 Windows PowerShell 中从项目根目录运行同一批脚本时，使用 `.\.venv\Scripts\python.exe`。将命令输出重定向到文件时，可先设置 `$env:PYTHONIOENCODING = 'utf-8'`。
+
 候选规则、分区用途和验收门槛见[第一轮约定](rsi-round-1.md)。`report.md` 汇总精确命中，`comparison.json` 给出分域得分和用量，`paired-results.jsonl` 保存逐条预测。后续轮次使用新的输出目录，保留本轮冻结的证据。

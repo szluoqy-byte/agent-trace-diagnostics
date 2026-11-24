@@ -1,13 +1,14 @@
 """Run the frozen, unlabelled RSI inputs through the workbench diagnosis engine."""
 import argparse
 import asyncio
-import fcntl
 import hashlib
 import json
 import subprocess
 from collections import Counter, defaultdict
 from dataclasses import replace
 from pathlib import Path
+
+from filelock import FileLock
 
 from tracelens.config import ROOT, Settings
 from tracelens.engine import diagnose
@@ -20,12 +21,12 @@ from tracelens.trajdebug import UPSTREAM_COMMIT, to_unified, verify_upstream
 
 def write(path, value):
     temp = path.with_suffix('.tmp')
-    temp.write_text(json.dumps(value, ensure_ascii=False, indent=2) + '\n')
+    temp.write_text(json.dumps(value, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     temp.replace(path)
 
 
 def inputs(dataset):
-    meta = json.loads((dataset / 'dataset.json').read_text())
+    meta = json.loads((dataset / 'dataset.json').read_text(encoding='utf-8'))
     manifest = dataset / 'manifest.jsonl'
     if hashlib.sha256(manifest.read_bytes()).hexdigest() != meta['sha256']['manifest.jsonl']:
         raise ValueError('Manifest hash mismatch')
@@ -33,7 +34,7 @@ def inputs(dataset):
     groups = defaultdict(set)
     ids = set()
     files = {}
-    for row in map(json.loads, manifest.read_text().splitlines()):
+    for row in map(json.loads, manifest.read_text(encoding='utf-8').splitlines()):
         name = row['input_file']
         if name not in files:
             body = (dataset / name).read_bytes()
@@ -61,13 +62,13 @@ async def run(dataset, output, concurrency=None):
         settings = replace(settings, **{k: connection[k] for k in ('model', 'base_url', 'api_key')})
     settings = replace(settings, data_dir=output, concurrency=concurrency or settings.concurrency)
     stamp = {
-        'commit': subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse', 'HEAD'], text=True).strip(),
+        'commit': subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse', 'HEAD'], encoding='utf-8').strip(),
         'upstream': UPSTREAM_COMMIT, 'dataset_sha256': hashlib.sha256((dataset/'dataset.json').read_bytes()).hexdigest(),
         'settings': {k: getattr(settings, k) for k in ('model', 'base_url', 'concurrency', 'max_retries', 'llm_concurrency', 'max_tokens', 'timeout', 'cluster_json_mode')},
         'counts': dict(Counter(r['split'] for r, _ in cases)),
     }
     stamp_file = output / 'baseline.json'
-    if stamp_file.exists() and json.loads(stamp_file.read_text()) != stamp:
+    if stamp_file.exists() and json.loads(stamp_file.read_text(encoding='utf-8')) != stamp:
         raise ValueError('Baseline configuration changed')
     write(stamp_file, stamp)
     slots = asyncio.Semaphore(settings.concurrency)
@@ -106,6 +107,5 @@ if __name__ == '__main__':
     parser.add_argument('--concurrency', type=int, choices=range(1, 9))
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
-    with (args.output / 'baseline.lock').open('a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    with FileLock(str(args.output / 'baseline.lock'), timeout=0):
         asyncio.run(run(args.dataset.resolve(), args.output.resolve(), args.concurrency))

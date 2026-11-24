@@ -10,7 +10,7 @@ def load_official_samples(directory: Path):
     manifest = directory / "trajdebug-testset.json"
     if not manifest.is_file():
         raise ValueError("请先运行 .venv/bin/python scripts/fetch_samples.py 下载官方测试集")
-    catalog = json.loads(manifest.read_text())
+    catalog = json.loads(manifest.read_text(encoding="utf-8"))
     if not isinstance(catalog, dict):
         raise ValueError("官方测试集清单必须是 JSON 对象")
     cases = catalog.get("cases", [])

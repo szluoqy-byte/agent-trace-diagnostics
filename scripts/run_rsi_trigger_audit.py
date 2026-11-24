@@ -68,7 +68,7 @@ def parse(text):
     return out
 
 def one(path,settings,root,cache_dir):
-    report=json.loads(path.read_text()); run=root/'trajdebug/runs'/report['provenance']['run_id'];trace=json.loads((run/'input.json').read_text())
+    report=json.loads(path.read_text(encoding='utf-8')); run=root/'trajdebug/runs'/report['provenance']['run_id'];trace=json.loads((run/'input.json').read_text(encoding='utf-8'))
     model=model_for(settings,cache_dir);text,usage=model.generate(make_prompt(trace,report),max_tokens=2048,temperature=0.0,response_format={'type':'json_object'},return_usage=True)
     return {'input_sha256':path.stem,'split':path.parent.name,'additional_triggers':parse(text),'usage':usage or {}}
 
@@ -82,5 +82,5 @@ def main():
         for f in as_completed(futures):
             try: results.append(f.result())
             except Exception as exc: errors.append({'error':str(exc)})
-    results.sort(key=lambda x:x['input_sha256']);args.output.parent.mkdir(parents=True,exist_ok=True);args.output.write_text(json.dumps({'split':args.split,'model':settings.model,'predictions':results,'errors':errors},ensure_ascii=False,indent=2)+'\n');print(json.dumps({'split':args.split,'completed':len(results),'errors':len(errors)},ensure_ascii=False))
+    results.sort(key=lambda x:x['input_sha256']);args.output.parent.mkdir(parents=True,exist_ok=True);args.output.write_text(json.dumps({'split':args.split,'model':settings.model,'predictions':results,'errors':errors},ensure_ascii=False,indent=2)+'\n', encoding='utf-8');print(json.dumps({'split':args.split,'completed':len(results),'errors':len(errors)},ensure_ascii=False))
 if __name__=='__main__':main()

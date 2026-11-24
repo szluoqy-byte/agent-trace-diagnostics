@@ -36,7 +36,7 @@ def provider():
                 time.sleep(2)
             report = {'conflict_type': 'cat-1', 'taxonomy_tag': 'act.UnsafeOrForbiddenAction',
                       'wrong_content_quote': 'issue_refund', 'reference_quote': 'Do not refund without approval.',
-                      'error_explanation': 'Refund submitted without approval.', 'hint_sentence': HINT,
+                      'error_explanation': 'Refund submitted without approval.', 'hint_sentence': state.get('hint', HINT),
                       'alternative_critical_steps': [{'step': 3, 'taxonomy_tag': 'reason.InvalidInference',
                                                       'reason': 'The final answer repeats the unsupported claim.',
                                                       'hint_sentence': 'Check the tool response before confirming completion.'}],
@@ -103,15 +103,17 @@ def wait_feedback(client, job_id):
 
 @pytest.mark.parametrize('otel', [False, True])
 async def test_official_feedback_uses_original_artifacts_and_one_model_call(tmp_path, provider, otel):
-    url, calls, _ = provider
+    url, calls, state = provider
+    hint = HINT + ' 退款前请确认审批😊'
+    state['hint'] = hint
     settings = Settings(data_dir=tmp_path, base_url=url, model='fixture', api_key='SECRET_KEY', max_retries=0, timeout=5)
     store = Store(tmp_path)
     job, source = seed_job(store, settings, otel=otel)
     original = copy.deepcopy(job)
     feedback_id = uuid.uuid4().hex
     result = await generate_feedback(job, settings, feedback_id)
-    assert result['hint_sentence'] == HINT
-    assert result['official_report']['fix_suggestion']['hint_sentence'] == HINT
+    assert result['hint_sentence'] == hint
+    assert result['official_report']['fix_suggestion']['hint_sentence'] == hint
     assert result['critical_step'] == 1 and result['alternatives'][0]['step'] == 3
     assert result['usage']['requests'] == 1 and len(calls) == 1
     assert 'single actionable instruction' in calls[0]['messages'][-1]['content']
@@ -122,8 +124,8 @@ async def test_official_feedback_uses_original_artifacts_and_one_model_call(tmp_
     snapshot = tmp_path / 'trajdebug' / 'feedback' / feedback_id
     for name in ('input.json', 'input_final.json', 'input_stage_a.json'):
         assert (snapshot / name).read_bytes() == (source / name).read_bytes()
-    assert json.loads((snapshot / 'input_report.json').read_text()) == result['official_report']
-    assert 'SECRET_KEY' not in (snapshot / 'settings.json').read_text()
+    assert json.loads((snapshot / 'input_report.json').read_text(encoding='utf-8')) == result['official_report']
+    assert 'SECRET_KEY' not in (snapshot / 'settings.json').read_text(encoding='utf-8')
 
 
 def test_frontend_api_queue_review_export_and_restart_are_independent_of_diagnosis(tmp_path, provider):

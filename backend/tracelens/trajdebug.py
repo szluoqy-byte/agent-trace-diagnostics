@@ -16,7 +16,7 @@ STAGES = [("stage_a", "多粒度压缩", 8, 25), ("stage_b", "错误触发检测
 
 
 def verify_upstream():
-    manifest = json.loads((VENDOR / "UPSTREAM.json").read_text())
+    manifest = json.loads((VENDOR / "UPSTREAM.json").read_text(encoding="utf-8"))
     for relative, expected in manifest["files"].items():
         if hashlib.sha256((VENDOR / relative).read_bytes()).hexdigest() != expected:
             raise ValueError("TrajDebug 官方源码完整性检查失败：" + relative)

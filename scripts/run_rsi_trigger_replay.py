@@ -18,7 +18,7 @@ from tracelens.trajdebug import present_report, verify_upstream
 
 
 def load_audit(path: Path):
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding='utf-8'))
     return {row["input_sha256"]: row.get("additional_triggers", [])
             for row in data.get("predictions", [])}
 
@@ -63,18 +63,18 @@ def augment_stage_b(stage_b: dict, additions: list[dict]) -> dict:
 
 
 async def replay_one(report_path, audit, settings, run_root, output_root, classes):
-    report = json.loads(report_path.read_text())
+    report = json.loads(report_path.read_text(encoding='utf-8'))
     run_id = report["provenance"]["run_id"]
     source_dir = run_root / "trajdebug" / "runs" / run_id
     trace_file = source_dir / "input.json"
     stage_a_file = source_dir / "input_stage_a.json"
     stage_b_file = source_dir / "input_stage_b.json"
-    stage_b = json.loads(stage_b_file.read_text())
+    stage_b = json.loads(stage_b_file.read_text(encoding='utf-8'))
     augmented_dir = output_root / "runs" / run_id
     augmented_dir.mkdir(parents=True, exist_ok=True)
     augmented_stage_b = augmented_dir / "input_stage_b.json"
     augmented_stage_b.write_text(json.dumps(augment_stage_b(stage_b, audit.get(report_path.stem, [])),
-                                            ensure_ascii=False, indent=2))
+                                            ensure_ascii=False, indent=2), encoding='utf-8')
     cache_dir = output_root / "cache" / report_path.stem
     cache_dir.mkdir(parents=True, exist_ok=True)
     phase1 = classes[0](stage_config(settings, cache_dir, "phase1"))
@@ -136,7 +136,7 @@ async def main_async(args):
     results.sort(key=lambda row: row["input_sha256"])
     output_root.joinpath("predictions.json").write_text(
         json.dumps({"split": args.split, "model": settings.model, "predictions": results},
-                   ensure_ascii=False, indent=2) + "\n")
+                   ensure_ascii=False, indent=2) + "\n", encoding='utf-8')
     print(json.dumps({"split": args.split, "completed": sum("error" not in row for row in results),
                       "errors": sum("error" in row for row in results)}, ensure_ascii=False))
 

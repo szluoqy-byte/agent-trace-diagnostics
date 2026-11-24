@@ -33,7 +33,7 @@ def predict(policy, report, trace):
 
 
 def load_partition(cases, part, root, dataset):
-    labels = list(map(json.loads, (dataset/'labels'/f'{part}.jsonl').read_text().splitlines()))
+    labels = list(map(json.loads, (dataset/'labels'/f'{part}.jsonl').read_text(encoding='utf-8').splitlines()))
     lookup = {r['input_sha256']: r for r in labels}
     if len(lookup) != len(cases) or len(lookup) != len(labels):
         raise ValueError(f'Label count mismatch: {part}')
@@ -101,7 +101,7 @@ def paired(rows, policy):
 
 
 def freeze(path, evidence):
-    if path.exists() and json.loads(path.read_text()) != evidence:
+    if path.exists() and json.loads(path.read_text(encoding='utf-8')) != evidence:
         raise ValueError(f'Frozen evidence changed: {path}')
     write(path, evidence)
 
@@ -110,7 +110,7 @@ def evaluate(dataset, root):
     groups = {p:[] for p in PARTS}
     for row, trace in inputs(dataset):
         groups[row['split']].append((row,trace))
-    meta = json.loads((dataset/'dataset.json').read_text())
+    meta = json.loads((dataset/'dataset.json').read_text(encoding='utf-8'))
     for name, digest in meta['sha256'].items():
         if hashlib.sha256((dataset/name).read_bytes()).hexdigest() != digest:
             raise ValueError(name)
@@ -141,11 +141,11 @@ def evaluate(dataset, root):
     output = {'policy':selected,'dev_passed':passed,'promote':promote,'splits':scores,'domains':domains,
               'completed_report_usage':dict(usage),'candidate_additional_model_requests':0}
     write(root/'comparison.json',output)
-    with (root/'paired-results.jsonl').open('w') as stream:
+    with (root/'paired-results.jsonl').open('w', encoding='utf-8') as stream:
         for part, rows in results.items():
             for r in rows:
                 stream.write(json.dumps({'split':part, **{k:r[k] for k in ('id','group','domain','sha256','gold','baseline', selected,'failed')}},ensure_ascii=False)+'\n')
-    lines = ['# 第一轮 RSI 配对评估', '', f"模型为 {json.loads((root/'baseline.json').read_text())['settings']['model']}，冻结策略为 `{selected}`。",
+    lines = ['# 第一轮 RSI 配对评估', '', f"模型为 {json.loads((root/'baseline.json').read_text(encoding='utf-8'))['settings']['model']}，冻结策略为 `{selected}`。",
              '', '| 分区 | 条数 | 基线命中 | 候选命中 | 变化（百分点） | 改对 / 改错 |',
              '| --- | ---: | ---: | ---: | ---: | ---: |']
     for part, value in scores.items():
@@ -158,7 +158,7 @@ def evaluate(dataset, root):
                   f"同域留出双侧配对精确检验 p = {hold['exact_mcnemar_p']:.4f}，跨域 p = {ext['exact_mcnemar_p']:.4f}。",
                   '样本量较小，尤其是分域结果。比较只覆盖这批失败轨迹的关键步骤定位。',
                   '', '分域结果、用量和区间估计见 comparison.json，逐条对照见 paired-results.jsonl。'])
-    (root/'report.md').write_text('\n'.join(lines)+'\n')
+    (root/'report.md').write_text('\n'.join(lines)+'\n', encoding='utf-8')
     print(json.dumps(output,ensure_ascii=False,indent=2))
 
 

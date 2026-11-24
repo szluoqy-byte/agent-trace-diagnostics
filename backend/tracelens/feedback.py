@@ -96,15 +96,17 @@ async def generate_feedback(job, settings, feedback_id):
     # A manual retry gets a fresh cache; completed tasks are reused by the API.
     namespace = hashlib.sha256(json.dumps([hashes, config, headers, UPSTREAM_COMMIT, 'official-feedback-v1', feedback_id], sort_keys=True).encode()).hexdigest()
     config['cache_path'] = str(settings.data_dir / 'trajdebug' / 'cache' / namespace / 'feedback.pkl')
-    (directory / 'settings.json').write_text(json.dumps(config))
+    (directory / 'settings.json').write_text(json.dumps(config), encoding='utf-8')
     env = {**os.environ, 'OPENAI_API_KEY': settings.api_key or 'EMPTY',
            'TRACELENS_MODEL_HEADERS': json.dumps(headers, ensure_ascii=False),
+           'PYTHONIOENCODING': 'utf-8',
            'PYTHONPATH': str(ROOT / 'backend') + os.pathsep + os.environ.get('PYTHONPATH', '')}
     process = await asyncio.create_subprocess_exec(sys.executable, '-m', 'tracelens.feedback_worker', str(directory),
                                                  env=env, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
     try:
         code = await process.wait()
-        payload = json.loads((directory / 'result.json').read_text()) if (directory / 'result.json').is_file() else {}
+        result_path = directory / 'result.json'
+        payload = json.loads(result_path.read_text(encoding='utf-8')) if result_path.is_file() else {}
         usage = payload.get('usage')
         if code or not isinstance(payload.get('official_report'), dict):
             raise ModelError('改进建议生成失败。请检查模型配置和服务状态后重试。', usage=usage)

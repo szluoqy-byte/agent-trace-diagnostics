@@ -170,13 +170,16 @@ def pipeline_trace():
                           Message(step=3, role="assistant", content="A" * 500 + " refund complete")])
 
 
-async def test_real_official_five_stages_transport_artifacts_and_cache(tmp_path, provider):
+async def test_real_official_five_stages_transport_artifacts_and_cache(tmp_path, provider, monkeypatch):
+    monkeypatch.setenv("PYTHONIOENCODING", "cp1252")
     url, calls, _ = provider
     settings = Settings(data_dir=tmp_path, base_url=url, model="fixture", api_key="test", headers={"X-Tenant": "fixture"}, max_retries=0, timeout=5)
+    trace = pipeline_trace()
+    trace.messages[0].content += "\n退款规则😊"
     events = []
     async def progress(stage, value, partial):
         events.append((stage, value))
-    report = await diagnose(pipeline_trace(), settings, progress)
+    report = await diagnose(trace, settings, progress)
     assert {c["stage"] for c in calls} == {"compression", "detection", "clustering", "state", "attribution"}
     assert all(c["headers"].get("x-tenant") == "fixture" for c in calls)
     assert len(calls) == 7
@@ -189,10 +192,12 @@ async def test_real_official_five_stages_transport_artifacts_and_cache(tmp_path,
     assert "SECRET_GOLD" not in json.dumps(calls)
     directory = tmp_path / "trajdebug/runs" / report["provenance"]["run_id"]
     assert len(list(directory.glob('input*.json'))) == 6
-    assert "api_key" not in json.loads((directory / "settings.json").read_text())
-    assert "X-Tenant" not in directory.joinpath("settings.json").read_text()
+    assert "退款规则😊" in (directory / "input.json").read_text(encoding="utf-8")
+    settings_text = (directory / "settings.json").read_text(encoding="utf-8")
+    assert "api_key" not in json.loads(settings_text)
+    assert "X-Tenant" not in settings_text
     assert events[-1] == ("诊断完成", 100)
-    again = await diagnose(pipeline_trace(), settings, progress)
+    again = await diagnose(trace, settings, progress)
     assert len(calls) == 7
     assert again["usage"]["requests"] == 0
     assert again["usage"]["cache_hits"] == 7

@@ -22,9 +22,16 @@ def test_bad_input_rejected(raw):
         normalize(raw)
 
 
-def test_jsonl_and_message_stream():
-    content = b'{"role":"user","content":"hello"}\n{"role":"assistant","content":"hi"}\n'
-    assert len(parse_upload(content, "stream.jsonl")[0].messages) == 2
+@pytest.mark.parametrize("encoding", ["utf-8", "utf-8-sig", "utf-16"])
+def test_jsonl_and_message_stream(encoding):
+    content = '{"role":"user","content":"查询状态😊"}\r\n{"role":"assistant","content":"hi"}\r\n'
+    [trace] = parse_upload(content.encode(encoding), "stream.jsonl")
+    assert [message.content for message in trace.messages] == ["查询状态😊", "hi"]
+
+
+def test_upload_reports_encoding_and_json_errors():
+    with pytest.raises(ValueError, match="请保存为 UTF-8"):
+        parse_upload('{"messages":[{"role":"user","content":"查询"}]}'.encode("gbk"), "gbk.json")
     with pytest.raises(ValueError):
         parse_upload(b'not-json', "broken.json")
 
