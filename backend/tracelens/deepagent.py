@@ -353,6 +353,8 @@ def source_nodes(spans):
     except ValueError:
         # Historical imports can contain cycles accepted by older converters.
         ordered_ids = sorted(by_id, key=lambda span_id: (by_id[span_id]["start_time"], span_id))
+    origin = min((span["start_time"] for span in by_id.values()), default=0)
+    depths = {}
     nodes = []
     for span_id in ordered_ids:
         span = by_id[span_id]
@@ -363,8 +365,15 @@ def source_nodes(spans):
             duration = span["end_time"] - span["start_time"]
         status_code = span.get("status_code")
         finish = finish_reason(kind, attrs, obj(span.get("span_output")))
+        start_offset = span["start_time"] - origin
+        end_offset = span["end_time"] - origin
+        depth = depths.get(span.get("parent_id"), -1) + 1
+        depths[span_id] = depth
         nodes.append({"span_id": span_id, "title": span_title(span, kind), "kind": kind,
                       "duration_us": duration if 0 <= duration < 2**64 else None,
+                      "start_offset_us": start_offset if start_offset < 2**64 else None,
+                      "end_offset_us": end_offset if start_offset <= end_offset < 2**64 else None,
+                      "depth": depth,
                       "status_code": status_code if type(status_code) in (str, int) else None,
                       "finish_reason": finish if isinstance(finish, str) else None})
     return nodes

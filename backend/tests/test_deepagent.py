@@ -116,6 +116,9 @@ def test_deepagent_orders_parent_starts_before_children_and_preserves_overlaps()
     assert all('"start_time"' not in m.content for m in trace.messages)
     assert bundle["nodes"][2]["duration_us"] == 8
     assert bundle["nodes"][2]["status_code"] == "1"
+    assert [(node["start_offset_us"], node["end_offset_us"], node["depth"]) for node in bundle["nodes"]] == [
+        (3, 9, 0), (5, 15, 0), (0, 8, 1), (6, 12, 1), (12, 15, 1),
+    ]
 
 
 def test_deepagent_rejects_a_cycle_in_the_parent_chain():
