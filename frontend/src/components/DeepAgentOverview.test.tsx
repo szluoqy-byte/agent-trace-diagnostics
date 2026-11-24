@@ -16,23 +16,25 @@ const trace: Trace = {id:'trace', data:{title:'DeepAgent', task_description:'Rea
 
 it('shows a single call with duration, recorded input, output and status fields', async () => {
   vi.mocked(api).mockResolvedValue({
-    spans:[{span_id:'llm', span_input:'{"request":"Read status"}', span_output:'{"answer":"Blocked request"}'},
+    spans:[{span_id:'llm', span_name:'Model call', span_input:'{"request":"Read status"}', span_output:'{"answer":"Blocked request"}'},
       {span_id:'risk', parent_id:'llm', attributes:'raw telemetry'}],
-    nodes:[{span_id:'llm', title:'Model call', kind:'LLM', duration_us:4800000, status_code:'0', finish_reason:'content-filter'},
+    nodes:[{span_id:'llm', title:'Model display name', kind:'LLM', duration_us:4800000, status_code:'0', finish_reason:'content-filter'},
       {span_id:'risk', title:'Safety check', kind:'RISK_CHECK', duration_us:29740, status_code:'1', finish_reason:null}],
     message_sources:[{step:0, span_id:'llm', field:'span'}],
   })
   const {rerender} = render(<DeepAgentOverview trace={trace} criticalStep={0} selection={null}/>)
   expect(screen.getByText('2 个调用')).toBeTruthy()
   expect(screen.getByRole('link').getAttribute('href')).toBe('/api/traces/trace/deepagent?download=true')
-  expect((await screen.findByText('Model call')).closest('details')).toBeTruthy()
+  expect((await screen.findByText('#1 Model call')).closest('details')).toBeTruthy()
+  expect(screen.getByText('#2 Safety check')).toBeTruthy()
   expect(screen.getByText('4.8 s')).toBeTruthy()
   expect(screen.getByText('29.74 ms')).toBeTruthy()
   fireEvent.change(screen.getByRole('searchbox', {name:'筛选调用'}), {target:{value:'Safety check'}})
-  expect(screen.queryByText('Model call')).toBeNull()
+  expect(screen.queryByText('#1 Model call')).toBeNull()
+  expect(screen.getByText('#2 Safety check')).toBeTruthy()
 
   rerender(<DeepAgentOverview trace={trace} criticalStep={0} selection={{step:0, quote:'Blocked request'}}/>)
-  const record = (await screen.findByText('Model call')).closest('details')!
+  const record = (await screen.findByText('#1 Model call')).closest('details')!
   expect(record.open).toBe(true)
   expect(within(record).getByLabelText('输入').textContent).toContain('Read status')
   expect(within(record).getByLabelText('输出').textContent).toContain('Blocked request')

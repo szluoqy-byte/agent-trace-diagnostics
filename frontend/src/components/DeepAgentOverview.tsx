@@ -66,7 +66,7 @@ function EvidenceText({message, selection}: {message: Message; selection: Eviden
 }
 
 function SpanRecord({span, node, parentTitle, steps, critical, selection}: {
-  span: Span; node: SpanNode; parentTitle?: string; steps: Message[]; critical: boolean; selection: Evidence | null
+  span: Span; node: SpanNode & {number: number}; parentTitle?: string; steps: Message[]; critical: boolean; selection: Evidence | null
 }) {
   const record = useRef<HTMLDetailsElement>(null)
   const [open, setOpen] = useState(false)
@@ -81,7 +81,7 @@ function SpanRecord({span, node, parentTitle, steps, critical, selection}: {
   return <details ref={record} className={`deepagent-call${critical ? ' deepagent-critical' : ''}`}
     onToggle={event => setOpen(event.currentTarget.open)}>
     <summary>
-      <strong>{node.title}</strong>
+      <strong>#{node.number} {node.title}</strong>
       <span className="deepagent-kind">{node.kind}</span>
       <span className="deepagent-duration">{durationLabel(node.duration_us)}</span>
       {critical ? <span className="critical-label">关键步骤</span> : null}
@@ -117,9 +117,13 @@ export default function DeepAgentOverview({trace, criticalStep, selection}: {
   const [limit, setLimit] = useState(20)
   const [version, setVersion] = useState(0)
   const {data, error} = useResource<DeepAgentSource>(path, version)
-  const {byId, nodesById, stepsBySpan, spanByStep} = useMemo(() => {
+  const {byId, numberedNodes, nodesById, stepsBySpan, spanByStep} = useMemo(() => {
     const byId = new Map(data?.spans.map(span => [span.span_id, span]))
-    const nodesById = new Map(data?.nodes?.map(node => [node.span_id, node]))
+    const numberedNodes = (data?.nodes ?? []).map((node, index) => {
+      const name = byId.get(node.span_id)?.span_name
+      return {...node, number: index + 1, title: typeof name === 'string' && name.trim() ? name.trim() : node.title}
+    })
+    const nodesById = new Map(numberedNodes.map(node => [node.span_id, node]))
     const stepsBySpan = new Map<string, Message[]>()
     const spanByStep = new Map<number, string>()
     for (const source of data?.message_sources ?? []) {
@@ -130,7 +134,7 @@ export default function DeepAgentOverview({trace, criticalStep, selection}: {
       stepsBySpan.set(source.span_id, steps)
       spanByStep.set(source.step, source.span_id)
     }
-    return {byId, nodesById, stepsBySpan, spanByStep}
+    return {byId, numberedNodes, nodesById, stepsBySpan, spanByStep}
   }, [data, trace.data.messages])
   const selectedSpan = selection?.step != null ? spanByStep.get(selection.step) : undefined
   const criticalSpan = criticalStep != null ? spanByStep.get(criticalStep) : undefined
@@ -143,7 +147,7 @@ export default function DeepAgentOverview({trace, criticalStep, selection}: {
 
   if (data && !data.nodes) return <TraceViewer messages={trace.data.messages} criticalStep={criticalStep} selection={selection}/>
   const term = query.trim().toLowerCase()
-  const visible = data?.nodes?.filter(node => !term || [node.title, node.kind, node.span_id].some(value => value.toLowerCase().includes(term))) ?? []
+  const visible = numberedNodes.filter(node => !term || [node.title, node.kind, node.span_id].some(value => value.toLowerCase().includes(term)))
   return <section className="panel trace-panel deepagent-panel" aria-label="DeepAgent 执行轨迹">
     <div className="panel-heading">
       <h2>执行轨迹 <span className="count">{trace.data.deepagent?.span_count ?? 0} 个调用</span></h2>
