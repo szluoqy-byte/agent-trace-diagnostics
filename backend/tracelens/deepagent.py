@@ -1,6 +1,8 @@
 """Convert DeepAgent's span export into a chronological diagnosis input."""
 import json
 from collections import defaultdict
+from graphlib import CycleError, TopologicalSorter
+from heapq import heappop, heappush
 from pathlib import Path
 
 from .models import DeepAgentProvenance, Message, Trajectory
@@ -13,8 +15,8 @@ OBSERVATION_ATTRIBUTES = (
     "http.status_code", "success", "operation", "error.type", "error.message",
 )
 FRAMEWORK = (
-    "DeepAgent runtime span records are observations, including auxiliary calls and infrastructure. "
-    "The parent_span_id links each observation to its caller. Time intervals may overlap. "
+    "DeepAgent span start events show the call and available inputs. Completion events show the recorded result. "
+    "The parent_span_id links each call to its caller. Time intervals may overlap. "
     "Span status describes execution, while the task outcome describes business success or failure. "
     "Assistant messages in the main conversation are model actions. A diagnostic candidate still needs evidence of an error."
 )
@@ -77,13 +79,36 @@ def present_value(value):
     return value is not None and value != "" and value != [] and value != {}
 
 
-def observe_span(span, kind, attributes, request, output, *, auxiliary, finish, error):
-    details = {
+def span_details(span, kind, event):
+    return {
         "span_id": span["span_id"], "parent_span_id": span.get("parent_id"), "kind": kind,
         "name": span.get("span_display_name") or span.get("span_name"),
-        "start_time": span["start_time"], "end_time": span["end_time"],
-        "status_code": span.get("status_code"),
+        "event": event, "start_time": span["start_time"],
     }
+
+
+def span_message(details, kind):
+    content = json.dumps({key: value for key, value in details.items() if present_value(value) or key == "parent_span_id"},
+                         ensure_ascii=False, separators=(",", ":"))
+    return "tool", content, f"DeepAgent {kind}"
+
+
+def start_span(span, kind, request, *, auxiliary):
+    details = span_details(span, kind, "start")
+    if kind == "LLM":
+        details["scope"] = "auxiliary or unscoped" if auxiliary else "main conversation"
+        if auxiliary:
+            details["input_messages"] = payload(obj(request).get("messages"))
+    elif kind == "AGENT":
+        details["input_message"] = payload(obj(request).get("message"))
+    else:
+        details["input"] = payload(request)
+    judgable = kind.startswith("TOOL") and present_value(details.get("input"))
+    return span_message(details, kind), judgable
+
+
+def observe_span(span, kind, attributes, output, *, auxiliary, finish, error):
+    details = {**span_details(span, kind, "end"), "end_time": span["end_time"], "status_code": span.get("status_code")}
     for key in OBSERVATION_ATTRIBUTES:
         if present_value(value := attributes.get(key)):
             details[key] = value
@@ -95,29 +120,23 @@ def observe_span(span, kind, attributes, request, output, *, auxiliary, finish, 
     if kind == "LLM":
         details["scope"] = "auxiliary or unscoped" if auxiliary else "main conversation"
         if auxiliary:
-            details["input_messages"] = payload(obj(request).get("messages"))
             details["output_choices"] = payload(obj(output).get("choices"))
         if not obj(output).get("choices"):
             details["output"] = payload(output)
     elif kind == "AGENT":
-        details["input_message"] = payload(obj(request).get("message"))
         parts = decoded(obj(output).get("parts"))
         if isinstance(parts, list):
             details["output_events"] = [payload(part) for part in parts if isinstance(part, dict)
                                         and part.get("type") not in ("text", "step-start", "step-finish")]
     else:
-        details["input"] = payload(request)
         details["output"] = payload(output)
 
     status = str(details["status_code"]).lower()
     http_status = str(details.get("http.status_code", ""))
     judgable = (failed_finish(finish) or present_value(error) or status in {"1", "2", "error", "failed"}
                 or details.get("success") is False or (http_status.isdecimal() and len(http_status) == 3 and int(http_status) >= 400)
-                or present_value(details.get("error.message")) or present_value(details.get("output"))
-                or (kind.startswith("TOOL") and present_value(details.get("input"))))
-    content = json.dumps({key: value for key, value in details.items() if present_value(value) or key == "parent_span_id"},
-                         ensure_ascii=False, separators=(",", ":"))
-    return ("tool", content, f"DeepAgent {kind}"), judgable
+                or present_value(details.get("error.message")) or present_value(details.get("output")))
+    return span_message(details, kind), judgable
 
 
 def overlap(recorded, incoming):
@@ -149,14 +168,55 @@ def call_scope(span, spans_by_id, kinds):
     return None, in_step
 
 
+def span_timeline(spans_by_id):
+    """Order ready events by timestamp after honoring known span dependencies."""
+    graph = TopologicalSorter()
+    for span_id, span in spans_by_id.items():
+        start = span_id, "start"
+        end = span_id, "end"
+        graph.add(end, start)
+        parent_id = span.get("parent_id")
+        if parent_id not in spans_by_id:
+            continue
+        graph.add(start, (parent_id, "start"))
+        if span["end_time"] == spans_by_id[parent_id]["end_time"]:
+            graph.add((parent_id, "end"), end)
+    try:
+        graph.prepare()
+    except CycleError as exc:
+        raise ValueError("DeepAgent span 的父子关系包含循环") from exc
+
+    ready = []
+
+    def enqueue(available_at=None):
+        for span_id, phase in graph.get_ready():
+            span = spans_by_id[span_id]
+            time = span[f"{phase}_time"]
+            if available_at is not None:
+                time = max(time, available_at)
+            # Unrelated completions are already observable at the next call's start.
+            heappush(ready, (time, phase == "start", span["end_time"], span_id, phase))
+
+    timeline = {}
+    enqueue()
+    while ready:
+        time, _, _, span_id, phase = heappop(ready)
+        event = span_id, phase
+        timeline[event] = len(timeline)
+        graph.done(event)
+        enqueue(time)
+    return timeline
+
+
 def convert_trace(trace_id, spans, filename, outcome):
-    ordered = sorted(spans, key=lambda span: (span["start_time"], span["end_time"], span["span_id"]))
+    spans_by_id = {span["span_id"]: span for span in spans}
+    timeline = span_timeline(spans_by_id)
+    ordered = [spans_by_id[span_id] for span_id, phase in timeline if phase == "start"]
     attributes = {span["span_id"]: obj(span.get("attributes")) for span in ordered}
     kinds = {
         span["span_id"]: str(span.get("ai_span_kind") or attributes[span["span_id"]].get("gen_ai.span.kind") or "SPAN").upper()
         for span in ordered
     }
-    spans_by_id = {span["span_id"]: span for span in ordered}
     llm_scopes = {span_id: call_scope(span, spans_by_id, kinds) for span_id, span in spans_by_id.items()
                   if kinds[span_id] == "LLM"}
     agents_with_steps = {owner for owner, in_step in llm_scopes.values() if in_step}
@@ -164,7 +224,7 @@ def convert_trace(trace_id, spans, filename, outcome):
     task_span, task = next(((span, message) for span in agents
                            if isinstance(message := obj(span.get("span_input")).get("message"), str) and message.strip()),
                            (None, ""))
-    terminal = max(agents, key=lambda span: span["end_time"], default=None)
+    terminal = max(agents, key=lambda span: timeline[span["span_id"], "end"], default=None)
 
     events = []
     histories = defaultdict(list)
@@ -175,11 +235,11 @@ def convert_trace(trace_id, spans, filename, outcome):
     def record(message, span, field, *, judgable=None):
         role, content, name = message
         preserve = role in {"system", "user"}
-        timestamp = span["start_time"] if field == "span_input" else span["end_time"]
+        phase = "start" if field in {"span_start", "span_input"} else "end"
         step = Message(step=0, role=role, content=content, name=name,
                        source_step=f"{span['span_id']}:{field}", judgable=False if preserve else judgable,
                        compress_role="preserve" if preserve else "default")
-        events.append((timestamp, step))
+        events.append((timeline[span["span_id"], phase], step))
 
     finishes_by_agent = {}
     terminal_finish = None
@@ -193,12 +253,13 @@ def convert_trace(trace_id, spans, filename, outcome):
         user_input = obj(request)
         finish = attributes[span_id].get("gen_ai.agent.step.finish_reason")
         error = output.get("error")
-        auxiliary = False
+        owner, in_step = llm_scopes.get(span_id, (None, False))
+        # Direct calls alongside STEP-scoped calls can be auxiliary work.
+        auxiliary = kind == "LLM" and owner in agents_with_steps and not in_step
+        opening, judgable = start_span(span, kind, request, auxiliary=auxiliary)
+        record(opening, span, "span_start", judgable=judgable)
 
         if kind == "LLM":
-            owner, in_step = llm_scopes[span_id]
-            # Direct calls alongside STEP-scoped calls can be auxiliary work.
-            auxiliary = owner in agents_with_steps and not in_step
             choices = output.get("choices")
             choice = next((item for item in choices if isinstance(item, dict)), {}) if isinstance(choices, list) else {}
             finish = choice.get("finish_reason") or finish
@@ -215,18 +276,20 @@ def convert_trace(trace_id, spans, filename, outcome):
                     elif message not in systems:
                         record(message, span, "span_input")
                         systems.add(message)
-                context = [message for timestamp, message in history if timestamp <= span["start_time"]]
+                start = timeline[span_id, "start"]
+                end = timeline[span_id, "end"]
+                context = [message for position, message in sorted(history, key=lambda entry: entry[0]) if position < start]
                 for message in incoming[overlap(context, incoming):]:
                     record(message, span, "span_input")
-                    history.append((span["start_time"], message))
+                    history.append((start, message))
                 reply = chat_message(choice.get("message"))
                 if reply:
                     record(reply, span, "span_output")
-                    history.append((span["end_time"], reply))
-                    replies_by_agent[owner].append((span["end_time"], reply[1]))
+                    history.append((end, reply))
+                    replies_by_agent[owner].append((end, reply[1]))
                 latest = finishes_by_agent.get(owner)
-                if latest is None or span["end_time"] >= latest[0]:
-                    finishes_by_agent[owner] = (span["end_time"], finish)
+                if latest is None or end >= latest[0]:
+                    finishes_by_agent[owner] = (end, finish)
         elif kind == "AGENT":
             info = obj(output.get("info"))
             parts = decoded(output.get("parts"))
@@ -242,13 +305,13 @@ def convert_trace(trace_id, spans, filename, outcome):
                 terminal_finish = finish
                 terminal_has_answer = bool(final.strip())
 
-        observation, judgable = observe_span(span, kind, attributes[span_id], request, response,
+        observation, judgable = observe_span(span, kind, attributes[span_id], response,
                                              auxiliary=auxiliary, finish=finish, error=error)
         record(observation, span, "span", judgable=judgable)
 
     for span, answer in agent_answers:
         # Both the Agent and its model can report the same terminal answer.
-        previous = max((item for item in replies_by_agent[span["span_id"]] if item[0] <= span["end_time"]),
+        previous = max((item for item in replies_by_agent[span["span_id"]] if item[0] < timeline[span["span_id"], "end"]),
                        key=lambda item: item[0], default=None)
         if not previous or previous[1] != answer:
             record(("assistant", answer, ""), span, "span_output")
@@ -312,6 +375,6 @@ def source_bundle(data):
     mappings = []
     for message in data["messages"]:
         span_id, separator, field = message["source_step"].rpartition(":")
-        if separator and field in {"span", "span_input", "span_output"}:
+        if separator and field in {"span_start", "span", "span_input", "span_output"}:
             mappings.append({"step": message["step"], "span_id": span_id, "field": field})
     return {**source, "message_sources": mappings}

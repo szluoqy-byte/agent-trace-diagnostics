@@ -140,6 +140,7 @@ def provider():
             messages = request["messages"]
             system = messages[0]["content"]
             user = messages[-1]["content"]
+            trigger_step = state.get("trigger_step", 1)
             if state["slow"]:
                 import time
                 time.sleep(2)
@@ -151,16 +152,16 @@ def provider():
             elif system.startswith("You are an error-trigger"):
                 stage = "detection"
                 step = int(re.search(r"CURRENT STEP \(msg (\d+)\)", user)[1])
-                value = {"triggers": [{"step": 1, "category": "cat-1", "taxonomy_tag": "act.UnsafeOrForbiddenAction", "attribution": "agent",
+                value = {"triggers": [{"step": trigger_step, "category": "cat-1", "taxonomy_tag": "act.UnsafeOrForbiddenAction", "attribution": "agent",
                                         "wrong_content_quote": "issue_refund()", "reference_quote": "Do not refund without approval.",
-                                        "confidence": "high", "confidence_reasoning": "Refund without approval."}] if step == 1 else []}
+                                        "confidence": "high", "confidence_reasoning": "Refund without approval."}] if step == trigger_step else []}
             elif system.startswith("You are an error-instance clustering"):
                 stage = "clustering"
                 value = {"instances": [{"instance_id": 1, "trigger_indices": [0], "attribution": "agent", "category": "cat-1",
                                          "error_content": "unapproved refund", "what_is_being_violated": "approval", "merged_reasoning": "same object"}]}
             elif system.startswith("You are an instance-state"):
                 stage = "state"
-                value = {"instance_id": 1, "origin_commitment_status": "explicit_wrong_commitment", "qualified_origin_step": 1,
+                value = {"instance_id": 1, "origin_commitment_status": "explicit_wrong_commitment", "qualified_origin_step": trigger_step,
                          "qualified_origin_trigger_id": 0, "qualified_origin_taxonomy_tag": "act.UnsafeOrForbiddenAction",
                          "origin_relocated": False, "exploration_suppressed": False, "fix_status": "active", "state": "regular",
                          "terminal_connection": "irreversible", "chain_membership": True, "state_evidence_quote": "refund complete",
