@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import {afterEach, expect, it, vi} from 'vitest'
-import {cleanup, fireEvent, render, screen} from '@testing-library/react'
+import {cleanup, fireEvent, render, screen, within} from '@testing-library/react'
 import TaskCreate from './TaskCreate'
 import {api} from '../api'
 import {WorkspaceContext} from '../workspace'
@@ -25,6 +25,11 @@ it('accepts DeepAgent and existing formats through the same upload entry point',
     {id:'deepagent', file_id:'2', outcome:'failed'},
   ]})
   renderUpload()
+  const languages = within(screen.getByRole('group', {name:'提示词语言'})).getAllByRole<HTMLInputElement>('radio')
+  expect(languages.map(option => option.value)).toEqual(['zh', 'en'])
+  expect(languages.map(option => option.checked)).toEqual([true, false])
+  fireEvent.click(languages[1])
+  expect(languages.map(option => option.checked)).toEqual([false, true])
   expect(screen.getByRole('button',{name:'选择文件'})).toBeTruthy()
   expect(screen.getByRole('link',{name:'标准 JSON'}).getAttribute('download')).toBe('')
   expect(screen.getByRole('link',{name:'JSONL 批量'}).getAttribute('href')).toBe('/templates/trajectory-jsonl-template.jsonl')
