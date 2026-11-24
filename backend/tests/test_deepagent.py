@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from test_trajdebug import provider
 
 from tracelens.config import Settings
+from tracelens.deepagent import source_bundle
 from tracelens.main import create_app
 from tracelens.normalize import fingerprint, parse_upload
 from tracelens.trajdebug import to_unified
@@ -40,23 +41,14 @@ def test_deepagent_keeps_main_agent_and_marks_terminal_content_filter():
     assert trace.deepagent.export_metadata == {"status": "OK", "result": {"totalSpans": 4}}
     unified = to_unified(trace)
     assert unified["metadata"]["reward"] == 0
-    assert [m.source_step for m in trace.messages] == [
-        "agent:span_start", "step:span_start", "helper:span_start", "helper:span",
-        "llm:span_start", "llm:span_input", "llm:span_input", "llm:span", "step:span", "agent:span",
-    ]
-    assert [(m["role"], m["content"]) for m in unified["messages"] if m["role"] != "tool"] == [
-        ("system", "Policy"), ("user", "Read status"),
-    ]
-    by_span = {json.loads(m["content"])["span_id"]: m for m in unified["messages"] if m["role"] == "tool"}
-    assert set(by_span) == {span["span_id"] for span in payload["result"]["spans"]}
-    assert "Generated title" in by_span["helper"]["content"] and not by_span["helper"]["judgable"]
-    assert by_span["llm"]["judgable"] and "ai_security_guard_input" in by_span["llm"]["content"]
-    assert by_span["agent"]["judgable"] and "content-filter" in by_span["agent"]["content"]
-    for message in trace.messages:
-        if message.source_step.endswith(":span_start"):
-            details = json.loads(message.content)
-            assert details["event"] == "start"
-            assert set(details).isdisjoint({"end_time", "status_code", "finish_reason", "error", "output_choices"})
+    assert [m.source_step for m in trace.messages] == ["helper:span", "llm:span", "step:span", "agent:span"]
+    helper, llm, _, agent = trace.messages
+    assert "Generated title" in helper.content and not helper.judgable
+    assert "[Input]\nsystem: Policy\nuser: Read status" in llm.content
+    assert "[Output]" in llm.content
+    assert llm.judgable and "[Finish reason]\nai_security_guard_input" in llm.content
+    assert agent.judgable and "[Finish reason]\ncontent-filter" in agent.content
+    assert [node["span_id"] for node in source_bundle(trace.model_dump())["nodes"]] == ["agent", "step", "helper", "llm"]
     assert "internal metadata" not in json.dumps(unified)
     assert fingerprint(trace) == fingerprint(trace.model_copy(update={"deepagent": None}))
 
@@ -79,14 +71,13 @@ def test_deepagent_reconstructs_model_history_and_keeps_unknown_outcome():
     native = {"messages": [start], "outcome": "failed"}
     trace, other = parse_upload(json.dumps([payload, native]).encode(), "mixed.json")
     assert trace.outcome == "unknown" and other.outcome == "failed"
-    dialogue = [m for m in trace.messages if m.source_step.endswith((":span_input", ":span_output"))]
-    assert [m.role for m in dialogue] == ["user", "assistant", "tool", "assistant"]
-    assert "read_status" in dialogue[1].content
-    assert dialogue[2].content == "tool_call_id: call_1\nready"
-    assert dialogue[3].content == "Ready"
-    runtime = next(m for m in trace.messages if m.source_step == "tool-run:span")
-    assert runtime.step < dialogue[2].step and runtime.judgable
-    assert json.loads(runtime.content)["output"] == {"status": "ready"}
+    first, tool, second, agent = trace.messages
+    assert [m.role for m in trace.messages] == ["assistant", "tool", "assistant", "tool"]
+    assert "[Input]\nuser: Read status" in first.content and "read_status" in first.content
+    assert tool.source_step == "tool-run:span" and tool.judgable
+    assert '[Output]\n{"status": "ready"}' in tool.content
+    assert "[Input]\ntool: tool_call_id: call_1\nready" in second.content
+    assert "[Output]\nReady" in second.content and "[Output]" not in agent.content
     with pytest.raises(ValueError, match="DeepAgent.*result.spans"):
         parse_upload(json.dumps(export([])).encode(), "empty.json")
 
@@ -102,10 +93,10 @@ def test_deepagent_keeps_overlapping_agent_conversations_separate():
              response=completion("Second answer", "stop")),
     ])
     [trace] = parse_upload(json.dumps(payload).encode(), "agent.json")
-    assert [m.source_step for m in trace.messages if m.role == "system"] == [
-        "second-model:span_input", "first-model:span_input",
-    ]
-    assert [m.content for m in trace.messages if m.role == "assistant"] == ["Second answer", "First answer"]
+    first, second = [m for m in trace.messages if m.role == "assistant"]
+    assert [m.source_step for m in (first, second)] == ["second-model:span", "first-model:span"]
+    assert "[Input]\nsystem: Record status\n\n[Output]\nSecond answer" in first.content
+    assert "[Input]\nsystem: Record status\n\n[Output]\nFirst answer" in second.content
 
 
 def test_deepagent_orders_parent_starts_before_children_and_preserves_overlaps():
@@ -117,16 +108,14 @@ def test_deepagent_orders_parent_starts_before_children_and_preserves_overlaps()
         span("early", "TOOL", 11, 17, parent="agent", request={"query": "read"}, response={"value": "early result"}),
     ])
     [trace] = parse_upload(json.dumps(payload).encode(), "agent.json")
-    assert [m.source_step for m in trace.messages] == [
-        "orphan:span_start", "agent:span_start", "skewed:span_start", "early:span_start", "skewed:span",
-        "orphan:span", "early:span", "late:span_start", "late:span", "agent:span",
-    ]
-    events = {m.source_step: json.loads(m.content) for m in trace.messages}
-    assert events["skewed:span_start"]["start_time"] == 5
-    assert events["orphan:span_start"]["parent_span_id"] == "missing"
-    assert events["early:span_start"]["input"] == {"query": "read"}
-    assert "output" not in events["early:span_start"]
-    assert events["early:span"]["output"] == {"value": "early result"}
+    bundle = source_bundle(trace.model_dump())
+    assert [node["span_id"] for node in bundle["nodes"]] == ["orphan", "agent", "skewed", "early", "late"]
+    assert [m.source_step for m in trace.messages] == ["skewed:span", "orphan:span", "early:span", "late:span", "agent:span"]
+    assert '"parent_span_id": "missing"' in trace.messages[1].content
+    assert '[Input]\n{"query": "read"}\n\n[Output]\n{"value": "early result"}' in trace.messages[2].content
+    assert all('"start_time"' not in m.content for m in trace.messages)
+    assert bundle["nodes"][2]["duration_us"] == 8
+    assert bundle["nodes"][2]["status_code"] == "1"
 
 
 def test_deepagent_rejects_a_cycle_in_the_parent_chain():
@@ -146,7 +135,8 @@ def test_deepagent_upload_starts_diagnosis_and_appears_in_library(tmp_path, prov
     settings = Settings(data_dir=tmp_path, base_url=url, model="fixture", api_key="test", max_retries=0, timeout=5)
     content = json.dumps(payload).encode()
     [projected] = parse_upload(content, "deepagent.json")
-    state["trigger_step"] = next(m.step for m in projected.messages if m.content == "issue_refund()")
+    state["trigger_step"] = next(m.step for m in projected.messages if "[Output]\nissue_refund()" in m.content)
+    state["critical_step"] = state["trigger_step"]
     files = {"files": ("deepagent.json", content, "application/json")}
     with TestClient(create_app(settings)) as client:
         imported = client.post("/api/import", files=files)
@@ -155,6 +145,7 @@ def test_deepagent_upload_starts_diagnosis_and_appears_in_library(tmp_path, prov
         preview = client.post("/api/import/preview", files=files).json()
         assert preview["files"][0]["formats"] == ["deepagent"]
         assert preview["rows"][0]["outcome"] == "failed"
+        assert preview["rows"][0]["steps"] == 2
         response = client.post("/api/tasks", json={"name": "DeepAgent diagnosis", "preview_id": preview["id"], "start": True})
         assert response.status_code == 200, response.text
         task_id, run_id = (response.json()[key] for key in ("task_id", "run_id"))
@@ -171,8 +162,9 @@ def test_deepagent_upload_starts_diagnosis_and_appears_in_library(tmp_path, prov
         assert detail["trace"]["data"]["deepagent"] == {"trace_id": "trace-1", "span_count": 2}
         run_id = detail["job"]["result"]["provenance"]["run_id"]
         unified = json.loads((tmp_path / "trajdebug/runs" / run_id / "input.json").read_text(encoding="utf-8"))
-        assert any('"span_id":"agent"' in message["content"] for message in unified["messages"])
-        assert any('"span_id":"llm"' in message["content"] for message in unified["messages"])
+        assert len(unified["messages"]) == 2
+        assert '"span_id": "llm"' in unified["messages"][0]["content"]
+        assert '"span_id": "agent"' in unified["messages"][1]["content"]
         library = client.get("/api/trace-library?input_format=deepagent").json()
         assert [(row["id"], row["input_format"], row["diagnosis"]) for row in library["items"]] == [
             (trace_id, "deepagent", "completed"),
@@ -209,11 +201,9 @@ def test_reimport_restores_raw_spans_on_matching_trace(tmp_path, through_task):
     assert response.headers["content-disposition"].startswith("attachment;")
     assert response.json()["spans"] == payload["result"]["spans"]
     assert response.json()["message_sources"] == [
-        {"step": 0, "span_id": "agent", "field": "span_start"},
-        {"step": 1, "span_id": "agent", "field": "span_input"},
-        {"step": 2, "span_id": "risk", "field": "span_start"},
-        {"step": 3, "span_id": "risk", "field": "span"},
-        {"step": 4, "span_id": "agent", "field": "span"},
+        {"step": 0, "span_id": "risk", "field": "span"},
+        {"step": 1, "span_id": "agent", "field": "span"},
     ]
+    assert [node["span_id"] for node in response.json()["nodes"]] == ["agent", "risk"]
     assert store.jobs() == [existing_job]
     assert client.get("/api/trace-library").json()["total"] == 1

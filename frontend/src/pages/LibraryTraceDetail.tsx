@@ -22,20 +22,21 @@ export default function LibraryTraceDetail({id, params}: {id: string; params: UR
       <a href={back}>返回轨迹库</a></> : '正在读取轨迹…'}
   </div>
 
-  const {title, outcome, messages, otel, input_format, source, task_description} = trace.data
+  const {title, outcome, messages, otel, input_format, source, task_description, deepagent} = trace.data
   const tasks = new Map(history?.tasks.map(task => [task.id, task]))
   return <>
     <div className="ws-breadcrumb"><a href={back}>轨迹库</a><span>/</span><span>轨迹详情</span></div>
     <div className="ws-heading">
       <div><div className="ws-heading-title"><h1>{title}</h1><Badge value={outcome}>{businessOutcomes[outcome as keyof typeof businessOutcomes]}</Badge></div>
-        <p>{formatLabel(input_format ?? (otel ? 'otel_genai' : 'messages'))} · {messages.length} 条消息{source ? ` · ${sourceLabel(source)}` : ''}</p></div>
+        <p>{formatLabel(input_format ?? (otel ? 'otel_genai' : 'messages'))} · {deepagent ? `${deepagent.span_count} 个调用` : `${messages.length} 条消息`}{source ? ` · ${sourceLabel(source)}` : ''}</p></div>
       <a className="secondary" href={back}><ArrowLeft size={15}/>返回轨迹库</a>
     </div>
     {task_description ? <details className="ws-trace-context"><summary>轨迹任务说明</summary><p>{task_description}</p></details> : null}
     <OTelOverview trace={trace}/>
-    <DeepAgentOverview key={trace.id} trace={trace}/>
+    {input_format === 'deepagent' && !deepagent ? <p className="ws-info">重新上传原文件后可查看 DeepAgent 调用节点。</p> : null}
     <div className="library-detail-grid">
-      <TraceViewer key={id} messages={messages} criticalStep={null} selection={null} otel={otel}/>
+      {deepagent ? <DeepAgentOverview key={id} trace={trace} criticalStep={null} selection={null}/>
+        : <TraceViewer key={id} messages={messages} criticalStep={null} selection={null} otel={otel}/>}
       <section className="ws-surface library-history" aria-busy={!history && !historyError}>
         <h2>诊断记录</h2>
         {historyError ? <div role="alert" className="error-inline">{historyError} <button className="text-button" onClick={refresh}>重试</button></div> :

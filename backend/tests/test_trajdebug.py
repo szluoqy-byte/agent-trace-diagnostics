@@ -168,7 +168,7 @@ def provider():
                          "semantic_status": "active", "chain_explanation": "Unapproved refund completed."}
             else:
                 stage = "attribution"
-                value = {"critical_step": 3, "rationale": "Fixture intentionally chooses outside the upstream pool."}
+                value = {"critical_step": state.get("critical_step", 3), "rationale": "Fixture selects a critical step."}
             calls.append({"stage": stage, "request": request,
                           "headers": {key.lower(): value for key, value in self.headers.items()}})
             response = {"id": "fixture", "object": "chat.completion", "created": 0, "model": "fixture", "choices": [{"index": 0, "message": {"role": "assistant", "content": json.dumps(value)}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}}
