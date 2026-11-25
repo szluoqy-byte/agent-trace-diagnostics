@@ -47,8 +47,18 @@ export default function TrajectoryDetail({id,traceId,params}:{id:string;traceId:
   function next(target:string|null,direction:number){if(!target)return;query.delete('focus');if(navigation.index>=0)query.set('page',String(Math.floor((navigation.index+direction)/size)+1));go(tracePath(id,target,query))}
   async function diagnose(){await action(()=>post<ActionResult>(`/tasks/${id}/runs/${runId}/actions`,{action:'diagnose',trace_ids:[traceId]}),'本条轨迹已加入诊断队列')}
   async function feedback(){await action(()=>post(`/jobs/${job!.id}/feedback`),'改进建议任务已提交，生成后会自动展示')}
+  async function regenerate(){
+    if (!job) return
+    await action(()=>post(`/jobs/${job.id}/regenerate`),'本条轨迹已加入重新诊断队列')
+  }
+  async function regenerateFeedback(){
+    if (!job || job.feedback?.status !== 'completed') return
+    const feedbackId = job.feedback.id
+    await action(()=>post(`/jobs/${job.id}/feedback/regenerate`,{feedback_id:feedbackId}),'已提交重新生成改进建议')
+  }
   const canRun=!readonly&&(!job||job.status==='failed')
   const blocked=trace.data.outcome==='unknown'
+  const canRegenerate=!readonly&&!draft&&!blocked&&job?.mode==='live'&&job.status==='completed'
   return <><div className="ws-breadcrumb"><a href="#/tasks">分析任务</a><span>/</span><a href={'#'+taskPath(id,query)} onClick={e=>{e.preventDefault();back()}}>{task.name}</a><span>/</span><span>{trace.data.title}</span></div><div className="ws-heading ws-detail-heading"><div><div className="ws-heading-title"><h1>{trace.data.title}</h1><Badge value={trace.data.outcome}>{trace.data.outcome==='failed'?'业务失败':trace.data.outcome==='succeeded'?'业务成功':'结果未知'}</Badge><Badge value={job?.status??'pending'}>{diagnosisStatus[job?.status??'pending']}</Badge></div><p>{draft?'任务草稿':`第 ${run?.number??'—'} 次分析`} · {trace.data.deepagent ? `${trace.data.deepagent.span_count} 个调用` : `${trace.data.messages.length} 条消息`} · {formatLabel(trace.data.input_format ?? (trace.data.otel ? 'otel_genai' : 'messages'))}</p></div><div className="ws-detail-nav"><button className="secondary" onClick={back}><ArrowLeft size={15}/>返回任务</button><span>{navigation.index>=0?`筛选结果 ${navigation.index+1} / ${navigation.total}`:'该轨迹不符合当前筛选条件'}</span><button className="secondary" disabled={!navigation.previous_id} onClick={()=>next(navigation.previous_id,-1)}><ChevronLeft size={15}/>上一条</button><button className="secondary" disabled={!navigation.next_id} onClick={()=>next(navigation.next_id,1)}>下一条<ChevronRight size={15}/></button></div></div>
   {patternTask&&patternRun?<div className="ws-warning pattern-source-banner">
     <a href={patternTaskPath(patternTask,patternRun)+(params.get('pattern_id')?'&'+new URLSearchParams({pattern_id:params.get('pattern_id')!}):'')}>返回失败模式分析</a>
@@ -68,6 +78,7 @@ export default function TrajectoryDetail({id,traceId,params}:{id:string;traceId:
   <div className="ws-diagnostic-grid">{trace.data.deepagent
     ? <DeepAgentOverview key={`${runId}-${traceId}`} trace={trace} criticalStep={critical} selection={selection}/>
     : <TraceViewer key={`${runId}-${traceId}`} messages={trace.data.messages} criticalStep={critical} selection={selection} otel={trace.data.otel}/>}
-    <Inspector draft={draft} key={`${runId}-${traceId}-${job?.id??'pending'}`} job={inspectorJob} report={report} onJump={e=>setSelection({...e})} onReview={()=>setDialog('review')} onFeedback={job&&!readonly?feedback:undefined}/></div>
+    <Inspector draft={draft} key={`${runId}-${traceId}-${job?.id??'pending'}`} job={inspectorJob} report={report} onJump={e=>setSelection({...e})} onReview={()=>setDialog('review')} onFeedback={job&&!readonly?feedback:undefined}
+      busy={busy} onRegenerate={canRegenerate?regenerate:undefined} onRegenerateFeedback={job&&!readonly?regenerateFeedback:undefined}/></div>
   {dialog==='review'&&job?.result?.attribution&&!readonly?<ReviewDialog job={job} messages={trace.data.messages} onClose={close} onDone={()=>{close();refresh();notify('复核已保存')}}/>:null}{dialog==='export'&&job?<ExportDialog job={job} onClose={close}/>:null}</>
 }

@@ -32,6 +32,10 @@ class BatchRequest(Contract):
     mode: str = "live"
 
 
+class FeedbackRegeneration(Contract):
+    feedback_id: str = Field(min_length=1, max_length=64)
+
+
 def create_app(settings=None, *, frontend_dir=None):
     settings = settings or Settings()
     store = Store(settings.data_dir)
@@ -209,6 +213,14 @@ def create_app(settings=None, *, frontend_dir=None):
             raise HTTPException(409, reason)
         return write(lambda:store.enqueue_feedback(job_id))
 
+    @app.post('/api/jobs/{job_id}/feedback/regenerate')
+    def regenerate_feedback(job_id: str, body: FeedbackRegeneration):
+        current = require_job(job_id)
+        eligible, reason = feedback_availability(current, job_settings(store, settings, job_id))
+        if not eligible:
+            raise HTTPException(409, reason)
+        return write(lambda:store.enqueue_feedback(job_id, regenerate_from=body.feedback_id))
+
     @app.get('/api/jobs/{job_id}/feedback/export')
     def export_feedback(job_id: str):
         require_job(job_id)
@@ -258,6 +270,17 @@ def create_app(settings=None, *, frontend_dir=None):
             return store.job(ids[0])
         frozen = (store.job_config(job_id) or snapshot(execution)) if job["mode"] == "live" else None
         return store.enqueue(job["trace_id"], job["mode"], config=frozen)
+
+    @app.post('/api/jobs/{job_id}/regenerate')
+    def regenerate(job_id: str):
+        current = require_job(job_id)
+        trace = require_trace(current['trace_id'])['data']
+        if trace['outcome'] == 'unknown':
+            raise HTTPException(422, '轨迹缺少业务结果，请先补齐结果')
+        if not job_settings(store, settings, job_id).ready:
+            raise HTTPException(409, '原诊断使用的模型配置不可用，请使用当前默认模型重新分析')
+        new_id = write(lambda:store.regenerate_attempt(job_id))
+        return require_job(new_id)
 
     @app.post("/api/jobs/{job_id}/reviews")
     def review(job_id: str, body: Review):

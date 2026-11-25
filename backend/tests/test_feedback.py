@@ -183,6 +183,27 @@ def test_parse_failure_can_retry_without_rerunning_diagnosis(tmp_path, provider)
         assert [r['status'] for r in app.state.store.feedback_history(job['id'])] == ['completed', 'failed']
 
 
+def test_feedback_regeneration_creates_a_new_result_without_changing_diagnosis(tmp_path, provider):
+    url, calls, state = provider
+    settings = Settings(data_dir=tmp_path, base_url=url, model='fixture', api_key='test', max_retries=0)
+    app = create_app(settings)
+    job, _ = seed_job(app.state.store, settings)
+    path = f"/api/jobs/{job['id']}/feedback"
+    with TestClient(app) as client:
+        assert client.post(path).status_code == 200
+        original = wait_feedback(client, job['id'])
+        assert original['status'] == 'completed'
+        state['hint'] = 'Confirm the approval record before issuing the refund.'
+        response = client.post(path+'/regenerate', json={'feedback_id':original['id']})
+        assert response.status_code == 200, response.text
+        assert response.json()['id'] != original['id']
+        assert client.post(path+'/regenerate', json={'feedback_id':original['id']}).status_code == 409
+        regenerated = wait_feedback(client, job['id'])
+        assert regenerated['result']['hint_sentence'] == state['hint'] and len(calls) == 2
+        assert app.state.store.feedback_history(job['id']) == [regenerated, original]
+        assert app.state.store.job(job['id'])['result'] == job['result']
+
+
 @pytest.mark.parametrize('problem', ['running', 'demo', 'success', 'no_critical', 'missing', 'input_changed', 'final_changed', 'old_version', 'no_model'])
 def test_ineligible_feedback_is_rejected_without_creating_a_task(tmp_path, problem):
     settings = Settings(data_dir=tmp_path, base_url='http://127.0.0.1:9/v1', model='fixture')

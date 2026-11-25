@@ -11,7 +11,7 @@ from .llm import ModelError
 from .trajdebug import ENGINE_VERSION, UPSTREAM_COMMIT, present_report, to_unified, verify_upstream
 
 
-async def diagnose(trace, settings, progress):
+async def diagnose(trace, settings, progress, *, fresh_cache=False):
     verify_upstream()
     if not settings.ready:
         raise ModelError("请配置模型接口后重启服务")
@@ -25,7 +25,10 @@ async def diagnose(trace, settings, progress):
     headers = config.pop("headers", {})
     cache_config = {key: value for key, value in config.items() if key != "cluster_json_mode"}
     cache_config["headers"] = headers
-    namespace = hashlib.sha256(json.dumps([unified, cache_config, UPSTREAM_COMMIT], sort_keys=True).encode()).hexdigest()
+    cache_key = [unified, cache_config, UPSTREAM_COMMIT]
+    if fresh_cache:
+        cache_key.append(run_id)
+    namespace = hashlib.sha256(json.dumps(cache_key, sort_keys=True).encode()).hexdigest()
     config["cache_dir"] = str(settings.data_dir / "trajdebug" / "cache" / namespace)
     (directory / "settings.json").write_text(json.dumps(config), encoding="utf-8")
     env = {**os.environ, "OPENAI_API_KEY": settings.api_key or "EMPTY",

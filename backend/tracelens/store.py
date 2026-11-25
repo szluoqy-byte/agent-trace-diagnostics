@@ -164,12 +164,15 @@ class Store(TaskStore, PatternStore):
         with self.connect() as db:
             return self.row(db.execute("SELECT * FROM feedback_runs WHERE job_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1", (job_id,)).fetchone())
 
-    def enqueue_feedback(self, job_id):
+    def enqueue_feedback(self, job_id, *, regenerate_from=None):
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             self.assert_job_writable(job_id, db)
             latest = db.execute("SELECT * FROM feedback_runs WHERE job_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1", (job_id,)).fetchone()
-            if latest and latest['status'] in {'queued', 'running', 'completed'}:
+            if regenerate_from is not None:
+                if not latest or latest['id'] != regenerate_from or latest['status'] != 'completed':
+                    raise ValueError('改进建议已更新，请刷新后重试')
+            elif latest and latest['status'] in {'queued', 'running', 'completed'}:
                 return self.row(latest)
             feedback_id, stamp = uuid.uuid4().hex, now()
             db.execute("INSERT INTO feedback_runs VALUES (?, ?, 'queued', NULL, NULL, ?, ?)", (feedback_id, job_id, stamp, stamp))

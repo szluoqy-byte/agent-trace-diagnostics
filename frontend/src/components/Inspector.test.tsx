@@ -34,6 +34,27 @@ it('keeps legacy reports separate from current native diagnosis', () => {
   expect(screen.queryByRole('button',{name:'人工复核并记录验证计划'})).toBeNull()
 })
 
+it('regenerates diagnostics or feedback according to the active tab', () => {
+  const regenerate = vi.fn(async () => {})
+  const regenerateFeedback = vi.fn(async () => {})
+  const withFeedback: Job = {...job,feedback_eligible:true,feedback:{id:'suggestion',job_id:job.id,
+    status:'completed',error:null,created_at:job.created_at,updated_at:job.updated_at}}
+  const props = {report,onJump:vi.fn(),onReview:vi.fn(),onRegenerate:regenerate,onRegenerateFeedback:regenerateFeedback}
+  const {rerender} = render(<Inspector job={withFeedback} {...props}/>)
+  for (const tab of [/诊断结论/, /错误实例/, /触发证据/]) {
+    fireEvent.click(screen.getByRole('tab',{name:tab}))
+    fireEvent.click(screen.getByRole('button',{name:'重新生成本条轨迹诊断'}))
+  }
+  expect(regenerate).toHaveBeenCalledTimes(3)
+  fireEvent.click(screen.getByRole('tab',{name:'改进建议'}))
+  fireEvent.click(screen.getByRole('button',{name:'重新生成改进建议'}))
+  expect(regenerateFeedback).toHaveBeenCalledTimes(1)
+  rerender(<Inspector job={{...withFeedback,feedback:{...withFeedback.feedback!,status:'running'}}} {...props}/>)
+  expect((screen.getByRole('button',{name:'重新生成改进建议'}) as HTMLButtonElement).disabled).toBe(true)
+  rerender(<Inspector job={{...withFeedback,read_only:true}} {...props}/>)
+  expect(screen.queryByRole('button',{name:'重新生成改进建议'})).toBeNull()
+})
+
 it('shows the three attribution fields on the conclusion and preserves unknown values', () => {
   const {rerender} = render(<Inspector job={job} report={report} onJump={vi.fn()} onReview={vi.fn()}/>)
   expect(screen.getByText('责任归属')).toBeTruthy()

@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS run_items (
  PRIMARY KEY(run_id,trace_id));
 CREATE TABLE IF NOT EXISTS run_attempts (
  run_id TEXT, trace_id TEXT, job_id TEXT UNIQUE REFERENCES jobs(id), attempt INTEGER,
+ fresh_cache INTEGER NOT NULL DEFAULT 0,
  PRIMARY KEY(run_id,trace_id,attempt),
  FOREIGN KEY(run_id,trace_id) REFERENCES run_items(run_id,trace_id));
 CREATE TABLE IF NOT EXISTS import_previews (id TEXT PRIMARY KEY, data TEXT, created_at TEXT);
@@ -42,6 +43,8 @@ class TaskStore:
                 db.execute('ALTER TABLE analysis_tasks ADD COLUMN draft_auto_feedback INTEGER NOT NULL DEFAULT 0')
             if not any(row['name'] == 'prompt_language' for row in db.execute('PRAGMA table_info(analysis_tasks)')):
                 db.execute("ALTER TABLE analysis_tasks ADD COLUMN prompt_language TEXT NOT NULL DEFAULT 'en'")
+            if not any(row['name'] == 'fresh_cache' for row in db.execute('PRAGMA table_info(run_attempts)')):
+                db.execute('ALTER TABLE run_attempts ADD COLUMN fresh_cache INTEGER NOT NULL DEFAULT 0')
             if db.execute("SELECT 1 FROM workspace_meta WHERE key='task_migration_v1'").fetchone():
                 return
             traces = db.execute('SELECT id FROM traces ORDER BY created_at,id').fetchall()
@@ -65,7 +68,8 @@ class TaskStore:
                         group = groups[trace['id']]
                         offset = index-(count-len(group))
                         if offset >= 0:
-                            db.execute('INSERT INTO run_attempts VALUES (?,?,?,1)', (run_id, trace['id'], group[offset]['id']))
+                            db.execute('INSERT INTO run_attempts (run_id,trace_id,job_id,attempt) VALUES (?,?,?,1)',
+                                       (run_id, trace['id'], group[offset]['id']))
             db.execute("INSERT INTO workspace_meta VALUES ('task_migration_v1', '1')")
 
     def task(self, task_id):
@@ -256,16 +260,35 @@ class TaskStore:
         return run_id
 
     @staticmethod
-    def _enqueue_item(db, run_id, trace_id):
+    def _enqueue_item(db, run_id, trace_id, *, regenerate=False):
         from .store import now
-        latest = db.execute('SELECT j.*,a.attempt FROM run_attempts a JOIN jobs j ON j.id=a.job_id WHERE a.run_id=? AND a.trace_id=? ORDER BY a.attempt DESC LIMIT 1', (run_id, trace_id)).fetchone()
-        if latest and latest['status'] != 'failed':
+        latest = db.execute('SELECT j.status,a.attempt,a.fresh_cache FROM run_attempts a JOIN jobs j ON j.id=a.job_id WHERE a.run_id=? AND a.trace_id=? ORDER BY a.attempt DESC LIMIT 1', (run_id, trace_id)).fetchone()
+        if latest and latest['status'] != ('completed' if regenerate else 'failed'):
             return None
         job_id, stamp = uuid.uuid4().hex, now()
         kind = json.loads(db.execute('SELECT data FROM traces WHERE id=?', (trace_id,)).fetchone()['data'])['kind']
         db.execute("INSERT INTO jobs VALUES (?,?,?,'queued','等待调度',0,0,NULL,NULL,?,?)", (job_id, trace_id, 'demo' if kind=='demo' else 'live', stamp, stamp))
-        db.execute('INSERT INTO run_attempts VALUES (?,?,?,?)', (run_id, trace_id, job_id, latest['attempt']+1 if latest else 1))
+        db.execute('INSERT INTO run_attempts (run_id,trace_id,job_id,attempt,fresh_cache) VALUES (?,?,?,?,?)',
+                   (run_id, trace_id, job_id, latest['attempt']+1 if latest else 1,
+                    int(regenerate or bool(latest and latest['fresh_cache']))))
         return job_id
+
+    def regenerate_attempt(self, job_id):
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            self.assert_job_writable(job_id, db)
+            attempt = db.execute('''SELECT a.run_id,a.trace_id,j.status,j.mode FROM run_attempts a
+                JOIN jobs j ON j.id=a.job_id WHERE a.job_id=?''', (job_id,)).fetchone()
+            if not attempt or attempt['status'] != 'completed' or attempt['mode'] != 'live':
+                raise ValueError('仅已完成的正式轨迹诊断可重新生成')
+            if db.execute("SELECT 1 FROM feedback_runs WHERE job_id=? AND status IN ('queued','running')", (job_id,)).fetchone():
+                raise ValueError('请等待本条轨迹的改进建议生成完成')
+            return self._enqueue_item(db, attempt['run_id'], attempt['trace_id'], regenerate=True)
+
+    def uses_fresh_diagnosis_cache(self, job_id):
+        with self.connect() as db:
+            row = db.execute('SELECT fresh_cache FROM run_attempts WHERE job_id=?', (job_id,)).fetchone()
+            return bool(row and row['fresh_cache'])
 
     def enqueue_items(self, run_id, trace_ids, action):
         created = []

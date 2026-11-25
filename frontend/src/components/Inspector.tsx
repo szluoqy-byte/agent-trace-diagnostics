@@ -4,7 +4,7 @@ import Citation from './Citation'
 import Tabs from './Tabs'
 import FeedbackPanel from './FeedbackPanel'
 import {responsibilityLabels} from '../patterns'
-import { ArrowUpRight, CircleCheck, UserRoundCheck, ScanSearch, GitBranch, Flag, ChevronRight } from 'lucide-react'
+import { ArrowUpRight, CircleCheck, UserRoundCheck, ScanSearch, GitBranch, Flag, ChevronRight, RotateCcw } from 'lucide-react'
 import type { Evidence, Instance, Job, Report } from '../types'
 
 const states: Record<string, string> = {manifest_active:'持续影响最终结果', latent_active:'未修复 · 未影响最终结果', clean_resolution:'已修复 · 未影响最终结果', costly_resolution:'已修复 · 仍有资源代价', exploration:'探索行为 · 已排除', unknown:'状态待核验'}
@@ -27,7 +27,10 @@ function AttributionFacts({category, instance}: {category?: string; instance?: I
   </dl>
 }
 
-export default function Inspector({job, report, onJump, onReview, onFeedback,draft=false}: {job:Job | null; report:Report | null; onJump:(e:Evidence)=>void; onReview:()=>void; onFeedback?:()=>Promise<void>;draft?:boolean}) {
+export default function Inspector({job, report, onJump, onReview, onFeedback, onRegenerate, onRegenerateFeedback, busy=false, draft=false}: {
+  job:Job | null; report:Report | null; onJump:(e:Evidence)=>void; onReview:()=>void; onFeedback?:()=>Promise<void>;
+  onRegenerate?:()=>Promise<void>; onRegenerateFeedback?:()=>Promise<void>; busy?:boolean; draft?:boolean
+}) {
   const [tab, setTab] = useState('conclusion')
   const [instanceFilter, setInstanceFilter] = useState('all')
   const ai = report?.attribution
@@ -50,9 +53,25 @@ export default function Inspector({job, report, onJump, onReview, onFeedback,dra
   ]
   const canInspect = !!ai && completed && !legacy
   const activeTab = canInspect ? tab : 'conclusion'
+  const feedbackTab = activeTab === 'feedback'
+  const feedbackStatus = job?.feedback?.status
+  const feedbackActive = feedbackStatus === 'queued' || feedbackStatus === 'running'
+  const regenerate = feedbackTab ? (feedbackStatus === 'failed' ? onFeedback : onRegenerateFeedback) : onRegenerate
+  const canShowRegenerate = !!regenerate && completed && !job?.read_only && (!feedbackTab || !!feedbackStatus)
+  const regenerateLabel = feedbackTab ? (feedbackStatus === 'failed' ? '重试生成改进建议' : '重新生成改进建议') : '重新生成本条轨迹诊断'
+  const regenerateTips = feedbackActive ? '请等待本条轨迹的改进建议生成完成'
+    : feedbackTab ? job?.feedback_unavailable_reason || '使用当前诊断重新生成改进建议'
+    : '重新分析本条轨迹并生成诊断结论、错误实例和触发证据'
   return <section className="panel inspector">
-    <Tabs id="inspection" label="诊断内容" className="inspector-tabs"
-      items={canInspect?tabs:tabs.slice(0,1)} active={activeTab} onChange={setTab}/>
+    <div className="inspector-toolbar">
+      <Tabs id="inspection" label="诊断内容" className="inspector-tabs"
+        items={canInspect?tabs:tabs.slice(0,1)} active={activeTab} onChange={setTab}/>
+      {canShowRegenerate ? <span className="inspector-regenerate" title={regenerateTips}>
+        <button type="button" className="secondary small" aria-label={regenerateLabel}
+          disabled={busy || feedbackActive || (feedbackTab && !job?.feedback_eligible)}
+          onClick={() => void regenerate?.()}><RotateCcw size={15} aria-hidden="true"/></button>
+      </span> : null}
+    </div>
     <div className="inspector-scroll" role="tabpanel" id={`inspection-panel-${activeTab}`}
       aria-labelledby={`inspection-tab-${activeTab}`}>
     {legacy ? <div className="empty inspector-empty"><GitBranch size={36}/><h3>历史版本诊断</h3><p>该结果保留在历史记录中。重新诊断后，可在这里查看错误实例与生命周期。</p><p className="muted">原始报告仍可导出。</p></div> : !ai || !completed ? <div className="empty inspector-empty"><ScanSearch size={36}/><h3>{job?.status === 'failed' ? '诊断失败' : job?.status === 'queued' ? '等待诊断' : job?.status === 'running' ? '正在诊断' : '尚未诊断'}</h3><p>{uiText(job?.error) || (job?.status === 'failed' ? '可通过「重试诊断」重新提交。' : job ? '诊断完成后将在此显示结果。' : draft?'请返回任务详情启动分析。':'启动诊断后，可在此查看结论和引用证据。')}</p></div> : tab === 'feedback' && job ? <FeedbackPanel key={job.feedback?.id ?? job.id} job={job} onGenerate={onFeedback}/> : tab === 'instances' ? <><div className="section-title"><h2>错误生命周期</h2><span className="muted">按错误实例展示</span></div><div className="instance-filters"><button className={instanceFilter === 'all' ? 'active' : ''} aria-pressed={instanceFilter==='all'} onClick={() => setInstanceFilter('all')}>全部 {instances.length}</button><button className={instanceFilter === 'responsible' ? 'active' : ''} aria-pressed={instanceFilter==='responsible'} onClick={() => setInstanceFilter('responsible')}>影响最终结果 {instances.filter(i => i.terminal_relevant).length}</button></div>{filtered.map(item => <InstanceCard key={item.id} item={item} report={report!} onJump={onJump}/>)}{!filtered.length ? <p className="muted">没有符合当前筛选条件的错误实例。</p> : null}</> : tab === 'evidence' ? <><div className="section-title"><h2>逐步触发证据</h2><span className="muted">查看引用视图或对照原文</span></div>{report?.triggers.map(t => <article className="trigger-block" key={t.id}><div className="trigger-title"><code>{t.id}</code><span>{references[t.category] ?? t.category}</span><button className="text-button" onClick={() => onJump({step:t.step,quote:''})}>#{t.step}</button></div><div className="taxonomy">{t.taxonomy_tag}</div><p>{t.description}</p><label className="evidence-label">错误行为或环境异常</label><Citation evidence={t.commitment} views={report?.compression_views} onJump={onJump}/><label className="evidence-label">相关约束或参考依据</label><Citation evidence={t.reference} views={report?.compression_views} onJump={onJump}/></article>)}{!report?.triggers.length ? <p className="muted">本次诊断未检出错误触发点。</p> : null}</> : <>

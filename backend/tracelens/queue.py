@@ -64,7 +64,10 @@ class JobQueue:
                     report = demo_report()
                 else:
                     execution = job_settings(self.store,self.settings,job['id'])
-                    report = await diagnose(trace, execution, progress)
+                    if self.store.uses_fresh_diagnosis_cache(job['id']):
+                        report = await diagnose(trace, execution, progress, fresh_cache=True)
+                    else:
+                        report = await diagnose(trace, execution, progress)
                 self.store.update(job["id"], status="completed", stage="诊断完成", progress=100, result=report)
                 self.schedule_feedback()
             except asyncio.CancelledError:
