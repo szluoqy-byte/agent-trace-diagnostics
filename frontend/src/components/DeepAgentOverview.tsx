@@ -31,7 +31,7 @@ interface DeepAgentSource {
   message_sources: {step: number; span_id: string; field: string}[]
 }
 
-const callTabs = [{id:'calls', label:'调用列表'}, {id:'timeline', label:'调用时序'}]
+const callTabs = [{id:'timeline', label:'调用时序'}, {id:'calls', label:'调用列表'}]
 
 function capturedText(raw: unknown): string | null {
   let value = raw
@@ -117,7 +117,7 @@ export default function DeepAgentOverview({trace, criticalStep, selection}: {
 }) {
   const path = `/traces/${trace.id}/deepagent`
   const tabsId = useId()
-  const [tab, setTab] = useState('calls')
+  const [tab, setTab] = useState(callTabs[0].id)
   const [focusedSpan, setFocusedSpan] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [limit, setLimit] = useState(20)

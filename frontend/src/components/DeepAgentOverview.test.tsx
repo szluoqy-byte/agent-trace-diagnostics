@@ -29,6 +29,7 @@ it('shows a single call with duration, recorded input, output and status fields'
   const {rerender} = render(<DeepAgentOverview trace={trace} criticalStep={0} selection={null}/>)
   expect(screen.getByText('2 个调用')).toBeTruthy()
   expect(screen.getByRole('link').getAttribute('href')).toBe('/api/traces/trace/deepagent?download=true')
+  fireEvent.click(screen.getByRole('tab', {name:'调用列表'}))
   expect((await screen.findByText('#1 Model call')).closest('details')).toBeTruthy()
   expect(screen.getByText('#2 Safety check')).toBeTruthy()
   expect(screen.getByText('4.8 s')).toBeTruthy()
@@ -52,14 +53,13 @@ it('shows a single call with duration, recorded input, output and status fields'
   expect(record.querySelector('mark')?.textContent).toBe('Blocked request')
 })
 
-it('opens a call from its timeline bar and preserves the original call number', async () => {
+it('defaults to the first tab, the timeline, and opens calls by their original number', async () => {
   vi.mocked(api).mockResolvedValue(rawSource)
   render(<DeepAgentOverview trace={trace} criticalStep={0} selection={null}/>)
-  expect(await screen.findByText('#1 Model call')).toBeTruthy()
-  expect(screen.getByRole('tabpanel', {name:'调用列表'})).toBeTruthy()
-  fireEvent.click(screen.getByRole('tab', {name:'调用时序'}))
+  expect(screen.getAllByRole('tab').map(tab => tab.textContent)).toEqual(['调用时序', '调用列表'])
+  expect(screen.getByRole('tab', {name:'调用时序'}).getAttribute('aria-selected')).toBe('true')
   const timeline = screen.getByRole('tabpanel', {name:'调用时序'})
-  expect(within(timeline).getByRole('button', {name:/#1 Model call.*关键调用/})).toBeTruthy()
+  expect(await within(timeline).findByRole('button', {name:/#1 Model call.*关键调用/})).toBeTruthy()
   const child = within(timeline).getByRole('button', {name:/#2 Safety check.*开始于 \+1.2 s.*29.74 ms/})
   expect(child.querySelector('.deepagent-waterfall-bar')).not.toBeNull()
   fireEvent.click(child)
