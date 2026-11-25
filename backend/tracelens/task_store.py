@@ -43,6 +43,8 @@ class TaskStore:
                 db.execute('ALTER TABLE analysis_tasks ADD COLUMN draft_auto_feedback INTEGER NOT NULL DEFAULT 0')
             if not any(row['name'] == 'prompt_language' for row in db.execute('PRAGMA table_info(analysis_tasks)')):
                 db.execute("ALTER TABLE analysis_tasks ADD COLUMN prompt_language TEXT NOT NULL DEFAULT 'en'")
+            if not any(row['name'] == 'diagnosis_mode' for row in db.execute('PRAGMA table_info(analysis_tasks)')):
+                db.execute("ALTER TABLE analysis_tasks ADD COLUMN diagnosis_mode TEXT NOT NULL DEFAULT 'trajdebug'")
             if not any(row['name'] == 'fresh_cache' for row in db.execute('PRAGMA table_info(run_attempts)')):
                 db.execute('ALTER TABLE run_attempts ADD COLUMN fresh_cache INTEGER NOT NULL DEFAULT 0')
             if db.execute("SELECT 1 FROM workspace_meta WHERE key='task_migration_v1'").fetchone():
@@ -238,8 +240,11 @@ class TaskStore:
             ).fetchone()[0]:
                 raise ValueError('所选轨迹已删除，请刷新后重试')
             task_id = uuid.uuid4().hex
-            db.execute('INSERT INTO analysis_tasks (id,name,agent,version,goal,prompt_language,created_at,draft_auto_feedback) VALUES (?,?,?,?,?,?,?,?)',
-                       (task_id, *(fields[k] for k in ('name','agent','version','goal','prompt_language')), now(), int(auto_feedback)))
+            db.execute('''INSERT INTO analysis_tasks
+                (id,name,agent,version,goal,prompt_language,created_at,draft_auto_feedback,diagnosis_mode)
+                VALUES (?,?,?,?,?,?,?,?,?)''',
+                (task_id, *(fields[k] for k in ('name','agent','version','goal','prompt_language')),
+                 now(), int(auto_feedback), fields.get('diagnosis_mode', 'trajdebug')))
             for i, trace_id in enumerate(ids):
                 db.execute('INSERT INTO task_traces VALUES (?,?,?)', (task_id, trace_id, i))
             run_id = self._start_run(db, task_id, config, auto_feedback) if config is not None else None
@@ -328,6 +333,7 @@ class TaskStore:
                       CASE WHEN json_type(t.data,'$.otel')='object' THEN 'otel_genai' ELSE 'messages' END) input_format,
              j.id job_id,COALESCE(j.status,'pending') diagnosis,j.stage,j.progress,j.error,j.updated_at,
              a.attempt attempts,j.mode,json_extract(j.result,'$.schema_version') schema_version,
+             json_extract(j.result,'$.algorithm') algorithm,
              json_extract(j.result,'$.attribution.critical_step') critical_step,
              json_extract(j.result,'$.attribution.category') category,
              json_extract(j.result,'$.attribution.summary') summary,
@@ -341,7 +347,9 @@ class TaskStore:
             WHERE x.run_id=? ORDER BY x.position
             """, (run_id,))]
         for row in rows:
-            row['feedback_applicable'] = row['diagnosis']=='completed' and row['mode']=='live' and row['schema_version']==2 and row['outcome']=='failed' and row['critical_step'] is not None
+            row['feedback_applicable'] = (row['diagnosis']=='completed' and row['mode']=='live'
+                and row['schema_version']==2 and row['algorithm']!='AgentDebugX'
+                and row['outcome']=='failed' and row['critical_step'] is not None)
             row['attempts'] = row['attempts'] or 0
         return rows
 

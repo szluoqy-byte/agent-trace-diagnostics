@@ -1,10 +1,11 @@
+import type {DiagnosisMode} from './types'
 import {createContext, useContext, useEffect, useState} from 'react'
 import {api} from './api'
 import type {Config, Job, Trace} from './types'
 
 export type Counts = Record<string,number>
 export interface AnalysisRun {id:string; task_id:string; number:number; created_at:string; auto_feedback:boolean; config:Record<string,unknown>; counts:Counts; status:string; read_only:boolean; categories:{name:string;count:number}[]}
-export interface AnalysisTask {id:string; kind?:'diagnosis'|'failure_patterns'; name:string; agent:string; version:string; goal:string; prompt_language?:'en'|'zh'; created_at:string; runs:AnalysisRun[]; latest_run_id:string|null; input_count:number; formats:string[]; counts:Counts; status:string; draft_auto_feedback?:boolean; categories:{name:string;count:number}[]}
+export interface AnalysisTask {id:string; kind?:'diagnosis'|'failure_patterns'; name:string; agent:string; version:string; goal:string; prompt_language?:'en'|'zh'; diagnosis_mode?:DiagnosisMode; created_at:string; runs:AnalysisRun[]; latest_run_id:string|null; input_count:number; formats:string[]; counts:Counts; status:string; draft_auto_feedback?:boolean; categories:{name:string;count:number}[]}
 export interface TaskRow {id:string; title:string; task_id:string; source:string; dataset:string; kind:string; outcome:string; input_format:string; steps:number; position:number; job_id:string|null; diagnosis:string; stage:string|null; progress:number|null; error:string|null; attempts:number; critical_step:number|null; category:string|null; summary:string|null; feedback_status:string|null; feedback_error:string|null; feedback_applicable:boolean; review_status:string|null}
 export interface RunPage {items:TaskRow[]; total:number; page:number; pages:number; page_size:number; counts:Counts; categories:{name:string;count:number}[]; read_only:boolean; status:string}
 export interface TraceDetail {trace:Trace; job:Job|null; read_only:boolean; attempts:{id:string;status:string;stage:string;error:string|null;created_at:string;attempt:number}[]; navigation:{index:number;total:number;previous_id:string|null;next_id:string|null}}

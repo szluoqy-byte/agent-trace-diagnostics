@@ -1,0 +1,358 @@
+--- a/agentdebug/diagnose/attribute/attribution.py
++++ b/agentdebug/diagnose/attribute/attribution.py
+@@ -35,6 +35,7 @@
+ 
+ from agentdebug.runtime import LLMClient, extract_json_block
+ from agentdebug.runtime.llm import TokenUsage
++from agentdebug.runtime.prompt_templates import diagnostic_prompt
+ from agentdebug.schema import (
+     AgentEvent,
+     AgentTrajectory,
+@@ -394,7 +395,7 @@
+         system_prompt = (
+             _ATTR_SYSTEM_PROMPT_WITH_ACTION
+             if self.propose_corrected_action
+-            else _ATTR_SYSTEM_PROMPT
++            else diagnostic_prompt(self.llm, 'global.system', _ATTR_SYSTEM_PROMPT)
+         )
+         messages = [
+             {'role': 'system', 'content': system_prompt},
+@@ -519,24 +520,29 @@
+             f'{(str(e.output) if e.output is not None else str(e.input or ""))}'
+             f'{(" | ERROR: " + str(e.error)) if e.error else ""}'
+             for e in rendered_events
+-        ) or '(empty conversation)'
++        ) or diagnostic_prompt(self.llm, 'common.empty_events', '(empty conversation)')
++        ground_truth = _ground_truth_text(trajectory) if self.use_ground_truth_context else ''
+         gt_block = (
+-            f'The Answer for the problem is: {_ground_truth_text(trajectory)}\n'
+-            if self.use_ground_truth_context and _ground_truth_text(trajectory)
++            diagnostic_prompt(self.llm, 'common.ground_truth', f'The Answer for the problem is: {ground_truth}\n',
++                              answer=ground_truth)
++            if ground_truth
+             else ''
+         )
+         ref_block = f'{self.extra_context.strip()}\n\n' if self.extra_context.strip() else ''
+-        return (
++        goal = trajectory.goal or diagnostic_prompt(self.llm, 'common.goal_unknown', '(unknown goal)')
++        semantics = diagnostic_prompt(self.llm, 'global.semantics.' + _step_semantics(trajectory),
++                                      _step_semantics_note(trajectory))
++        return diagnostic_prompt(self.llm, 'global.user', (
+             'You are analyzing an agent conversation that tried to solve '
+             'a real-world problem.\n'
+-            f'The problem is: {trajectory.goal or "(unknown goal)"}\n'
+-            f'{_step_semantics_note(trajectory)}'
++            f'The problem is: {goal}\n'
++            f'{semantics}'
+             f'{gt_block}'
+             f'{ref_block}'
+             'Identify which agent made the decisive mistake, at which step, '
+             'and why that mistake directly caused the failed outcome.\n\n'
+             f"Here's the conversation:\n\n{events_doc}\n"
+-        )
++        ), goal=goal, semantics=semantics, ground_truth=gt_block, reference=ref_block, events=events_doc)
+ 
+     def _render_finding(self, finding: FailureFinding) -> str:
+         confidence = confidence_or_default(finding.confidence)
+--- a/agentdebug/diagnose/attribute/moe.py
++++ b/agentdebug/diagnose/attribute/moe.py
+@@ -37,6 +37,7 @@
+ from typing import Any, Dict, List, Optional
+ 
+ from agentdebug.runtime import LLMClient, extract_json_block
++from agentdebug.runtime.prompt_templates import diagnostic_prompt
+ from agentdebug.schema import AgentEvent, AgentTrajectory, FailureFinding
+ from agentdebug.diagnose.attribute.attribution import (
+     AllAtOnceAttributor,
+@@ -302,13 +303,28 @@
+ )
+ 
+ 
+-def _ask(llm: LLMClient, system: str, user: str, max_tokens: int) -> str:
++def _ask(llm: LLMClient, system: str, user: str, max_tokens: int, *, stage: str) -> str:
++    system = diagnostic_prompt(llm, stage + '.system', system)
+     try:
+         return llm.complete(messages=[{'role': 'system', 'content': system},
+                                       {'role': 'user', 'content': user}],
+                             max_tokens=max_tokens).text or ''
+     except Exception:
+         return ''
++
++
++def _half_input(llm, stage, question, goal, ground_truth, events, steps, lo, mid, hi):
++    first_start, first_end = steps[lo], steps[mid]
++    second_start, second_end = steps[mid + 1], steps[hi]
++    upper = _render_span(events, first_start, first_end)
++    lower = _render_span(events, second_start, second_end)
++    return diagnostic_prompt(llm, stage + '.user', (
++        f'Goal: {goal}\n{ground_truth}'
++        f'UPPER (steps {first_start}..{first_end}):\n{upper}\n\n'
++        f'LOWER (steps {second_start}..{second_end}):\n{lower}\n\n'
++        f'{question}'
++    ), goal=goal, ground_truth=ground_truth, first_start=first_start, first_end=first_end,
++       second_start=second_start, second_end=second_end, upper=upper, lower=lower)
+ 
+ 
+ # --------------------------- Expert B-1: cascade --------------------------- #
+@@ -330,9 +346,10 @@
+     if not steps:
+         return {'agent_name': None, 'step_index': None, 'confidence': 0.0}
+     gt = _gt(trajectory) if use_gt else ''
+-    gt_block = f'The correct answer to the task is: {gt}\n' if gt else ''
++    gt_block = diagnostic_prompt(llm, 'common.ground_truth',
++                                 f'The correct answer to the task is: {gt}\n', answer=gt) if gt else ''
+     ref_block = f'{reference_hint.strip()}\n' if reference_hint.strip() else ''
+-    goal = trajectory.goal or '(unknown)'
++    goal = trajectory.goal or diagnostic_prompt(llm, 'common.goal_unknown', '(unknown)')
+     decisions: List[ProbeDecision] = []
+ 
+     lo, hi = 0, len(steps) - 1
+@@ -340,17 +357,11 @@
+         if hi - lo + 1 <= window_min:
+             break
+         mid = (lo + hi) // 2
+-        user = (
+-            f'Goal: {goal}\n{gt_block}'
+-            f'UPPER (steps {steps[lo]}..{steps[mid]}):\n'
+-            f'{_render_span(evs, steps[lo], steps[mid])}\n\n'
+-            f'LOWER (steps {steps[mid + 1]}..{steps[hi]}):\n'
+-            f'{_render_span(evs, steps[mid + 1], steps[hi])}\n\n'
+-            f'Which half contains the earliest ROOT mistake?'
+-        )
++        user = _half_input(llm, 'cascade_half', 'Which half contains the earliest ROOT mistake?',
++                           goal, gt_block, evs, steps, lo, mid, hi)
+         # Raised from 128: thinking models can burn a small budget entirely on
+         # reasoning before emitting the one-word {"half": ...} answer.
+-        probe = extract_json_block(_ask(llm, _CASCADE_HALF, user, 2000)) or {}
++        probe = extract_json_block(_ask(llm, _CASCADE_HALF, user, 2000, stage='cascade_half')) or {}
+         half = str(probe.get('half') or '').strip().lower()
+         decisions.append(
+             ProbeDecision(
+@@ -374,16 +385,20 @@
+         root_event_id = None
+     else:
+         win = set(window)
+-        cand = f'Valid component values: {candidate_labels}\n' if candidate_labels else ''
++        cand = diagnostic_prompt(llm, 'common.candidate_labels', f'Valid component values: {candidate_labels}\n',
++                                 labels=candidate_labels) if candidate_labels else ''
+         doc = '\n'.join(
+             f'Step {e.step_index} [{e.agent_name}]: '
+             f'{(str(e.output) if e.output is not None else str(e.input or ""))[:900]}'
+             f'{(" | ERROR: " + str(e.error)[:160]) if e.error else ""}'
+             for e in evs if e.step_index in win)
+-        user = (f'Goal: {goal}\n{gt_block}{ref_block}{label_hint}\n{cand}'
+-                f'Candidate steps: {window}\n\n{doc}\n\n'
+-                f'Which step here is the decisive cause, and which component?')
+-        parsed = extract_json_block(_ask(llm, _ROOT_AAO, user, max_tokens)) or {}
++        user = diagnostic_prompt(llm, 'cascade_pick.user', (
++            f'Goal: {goal}\n{gt_block}{ref_block}{label_hint}\n{cand}'
++            f'Candidate steps: {window}\n\n{doc}\n\n'
++            f'Which step here is the decisive cause, and which component?'
++        ), goal=goal, ground_truth=gt_block, reference=ref_block,
++           label_hint=label_hint, labels=cand, steps=window, events=doc)
++        parsed = extract_json_block(_ask(llm, _ROOT_AAO, user, max_tokens, stage='cascade_pick')) or {}
+         st = _as_int(parsed.get('step'))
+         root = st if st in win else window[0]
+         root_agent_hint = str(parsed.get('agent') or '').strip() or None
+@@ -421,23 +436,18 @@
+     if not steps:
+         return {'agent_name': None, 'step_index': None, 'confidence': 0.0}
+     gt = _gt(trajectory) if use_gt else ''
+-    gt_block = f'The correct answer to the task is: {gt}\n' if gt else ''
++    gt_block = diagnostic_prompt(llm, 'common.ground_truth',
++                                 f'The correct answer to the task is: {gt}\n', answer=gt) if gt else ''
+     ref_block = f'{reference_hint.strip()}\n' if reference_hint.strip() else ''
+-    goal = trajectory.goal or '(unknown)'
++    goal = trajectory.goal or diagnostic_prompt(llm, 'common.goal_unknown', '(unknown)')
+     decisions: List[ProbeDecision] = []
+ 
+     def half_probe(lo, hi):
+         mid = (lo + hi) // 2
+-        user = (
+-            f'Goal: {goal}\n{gt_block}'
+-            f'UPPER (steps {steps[lo]}..{steps[mid]}):\n'
+-            f'{_render_span(evs, steps[lo], steps[mid])}\n\n'
+-            f'LOWER (steps {steps[mid + 1]}..{steps[hi]}):\n'
+-            f'{_render_span(evs, steps[mid + 1], steps[hi])}\n\n'
+-            f'Which half contains the decisive error step?'
+-        )
++        user = _half_input(llm, 'bisect_half', 'Which half contains the decisive error step?',
++                           goal, gt_block, evs, steps, lo, mid, hi)
+         # Raised from 96: same reasoning-token risk as _CASCADE_HALF above.
+-        p = extract_json_block(_ask(llm, _NEUTRAL_HALF, user, 2000)) or {}
++        p = extract_json_block(_ask(llm, _NEUTRAL_HALF, user, 2000, stage='bisect_half')) or {}
+         return str(p.get('half') or '').strip().lower(), _as_float(p.get('confidence'), 0.5), mid
+ 
+     lo, hi = 0, len(steps) - 1
+@@ -486,12 +496,16 @@
+         root_agent_hint = None
+         root_event_id = None
+     else:
+-        cand = f'Valid component values: {candidate_labels}\n' if candidate_labels else ''
++        cand = diagnostic_prompt(llm, 'common.candidate_labels', f'Valid component values: {candidate_labels}\n',
++                                 labels=candidate_labels) if candidate_labels else ''
+         doc = _render_marked(evs, mark_steps=set(window))
+-        user = (f'Goal: {goal}\n{gt_block}{ref_block}{label_hint}\n{cand}'
+-                f'CANDIDATE steps (pick exactly one): {window}\n\n{doc}\n\n'
+-                f'Which candidate is the decisive error step?')
+-        parsed = extract_json_block(_ask(llm, _ENDGAME_PICK, user, max_tokens)) or {}
++        user = diagnostic_prompt(llm, 'bisect_pick.user', (
++            f'Goal: {goal}\n{gt_block}{ref_block}{label_hint}\n{cand}'
++            f'CANDIDATE steps (pick exactly one): {window}\n\n{doc}\n\n'
++            f'Which candidate is the decisive error step?'
++        ), goal=goal, ground_truth=gt_block, reference=ref_block,
++           label_hint=label_hint, labels=cand, steps=window, events=doc)
++        parsed = extract_json_block(_ask(llm, _ENDGAME_PICK, user, max_tokens, stage='bisect_pick')) or {}
+         st = _as_int(parsed.get('step'))
+         root = st if st in set(window) else window[len(window) // 2]
+         root_agent_hint = str(parsed.get('agent') or '').strip() or None
+@@ -648,14 +662,18 @@
+             for e in rows) or f'Step {s}: (no content)'
+     if selected is None:
+         gt = _gt(trajectory) if use_ground_truth_context else ''
+-        gt_block = f'Correct answer: {gt}\n' if gt else ''
+-        user = (f'Goal: {trajectory.goal or "(unknown)"}\n{gt_block}'
+-                f'CANDIDATE A = event {global_read.event_id}, step {a_step}, '
+-                f'agent {a_ag}:\n{_ctx(global_read)}\n\n'
+-                f'CANDIDATE B = event {structure_candidate.event_id}, '
+-                f'step {m_step}, agent {m_ag}:\n{_ctx(structure_candidate)}\n\n'
+-                f'Which candidate is the critical error event?')
+-        parsed = extract_json_block(_ask(llm, _AAOMOE_TIE, user, max_tokens)) or {}
++        gt_block = diagnostic_prompt(llm, 'common.ground_truth', f'Correct answer: {gt}\n', answer=gt) if gt else ''
++        goal = trajectory.goal or diagnostic_prompt(llm, 'common.goal_unknown', '(unknown)')
++        context_a, context_b = _ctx(global_read), _ctx(structure_candidate)
++        user = diagnostic_prompt(llm, 'arbitration.user', (
++            f'Goal: {goal}\n{gt_block}'
++            f'CANDIDATE A = event {global_read.event_id}, step {a_step}, agent {a_ag}:\n{context_a}\n\n'
++            f'CANDIDATE B = event {structure_candidate.event_id}, step {m_step}, agent {m_ag}:\n{context_b}\n\n'
++            f'Which candidate is the critical error event?'
++        ), goal=goal, ground_truth=gt_block,
++           id_a=global_read.event_id, step_a=a_step, agent_a=a_ag, context_a=context_a,
++           id_b=structure_candidate.event_id, step_b=m_step, agent_b=m_ag, context_b=context_b)
++        parsed = extract_json_block(_ask(llm, _AAOMOE_TIE, user, max_tokens, stage='arbitration')) or {}
+         choice = str(parsed.get('candidate') or '').strip().upper()
+         selected_event_id = str(parsed.get('event_id') or '').strip()
+         st = _as_int(parsed.get('step'))
+--- a/agentdebug/diagnose/profiles/deepdebug.py
++++ b/agentdebug/diagnose/profiles/deepdebug.py
+@@ -33,6 +33,7 @@
+     resolve_candidate_event,
+ )
+ from agentdebug.runtime import LLMClient, extract_json_block
++from agentdebug.runtime.prompt_templates import diagnostic_prompt
+ from agentdebug.schema import (
+     AgentEvent,
+     AgentTrajectory,
+@@ -217,12 +218,12 @@
+             if fallback is not None:
+                 evidence_references = [fallback]
+         if not summary_text:
+-            summary_text = (
++            summary_text = diagnostic_prompt(self.llm, 'refine.fallback_summary', (
+                 f'The decision at step {root_step} by {root_agent} introduced '
+                 'the earliest error that led to the failed outcome.'
+-            )
++            ), step=root_step, agent=root_agent)
+         if not suggestion:
+-            suggestion = self._fallback_suggestion(root_ev)
++            suggestion = self._fallback_suggestion(root_ev, client=self.llm)
+         evidence = [reference.quote for reference in evidence_references]
+         diagnosis = DeepDebugDiagnosis(
+             summary=summary_text,
+@@ -377,17 +378,20 @@
+             step = getattr(f, 'step_index', None)
+             agent = getattr(f, 'agent_name', None) or ''
+             evidence = '; '.join(list(getattr(f, 'evidence', []) or [])[:2])[:200]
++            suffix = diagnostic_prompt(self.llm, 'refine.prior_evidence', f' evidence: {evidence}',
++                                       evidence=evidence) if evidence else ''
+             lines.append(
+                 f'- step={step} agent={agent} mode={mode}'
+-                + (f' evidence: {evidence}' if evidence else '')
++                + suffix
+             )
+         if not lines:
+             return ''
+-        return (
++        entries = '\n'.join(lines)
++        return diagnostic_prompt(self.llm, 'refine.prior_signals', (
+             'Prior signals from cheap detectors/judge (MAY BE WRONG --- verify '
+             'against the trace before trusting; the manifested step is often '
+-            'downstream of the true cause):\n' + '\n'.join(lines)
+-        )
++            'downstream of the true cause):\n' + entries
++        ), entries=entries)
+ 
+     def _retrieve_reference(self, trajectory: AgentTrajectory):
+         """Top-1 historical reference (opt-in). Returns (ref, rendered_hint)."""
+@@ -437,13 +441,19 @@
+             for e in rows) or f'Step {root_step}: (no content)'
+         gt = str((trajectory.metadata or {}).get('ground_truth') or '').strip() \
+             if self.use_ground_truth_context else ''
+-        gt_block = f'Correct answer: {gt}\n' if gt else ''
++        gt_block = diagnostic_prompt(self.llm, 'common.ground_truth',
++                                     f'Correct answer: {gt}\n', answer=gt) if gt else ''
+         ref_block = f'{reference_hint.strip()}\n\n' if reference_hint.strip() else ''
+-        user = (f'Goal: {trajectory.goal or "(unknown)"}\n{gt_block}{ref_block}'
+-                f'The localized ROOT-CAUSE is event {root_event_id}, '
+-                f'step {root_step} ({root_agent}).\n\n'
+-                f'Context:\n{doc}\n\n'
+-                f'Write the diagnosis for step {root_step}.')
++        goal = trajectory.goal or diagnostic_prompt(self.llm, 'common.goal_unknown', '(unknown)')
++        user = diagnostic_prompt(self.llm, 'refine.user', (
++            f'Goal: {goal}\n{gt_block}{ref_block}'
++            f'The localized ROOT-CAUSE is event {root_event_id}, '
++            f'step {root_step} ({root_agent}).\n\n'
++            f'Context:\n{doc}\n\n'
++            f'Write the diagnosis for step {root_step}.'
++        ), goal=goal, ground_truth=gt_block, reference=ref_block, event_id=root_event_id,
++           step=root_step, agent=root_agent, events=doc)
++        system = diagnostic_prompt(self.llm, 'refine.system', _REFINE_PROMPT)
+         try:
+             # Raised from 512: thinking models (Gemini, o-series) can spend
+             # the entire budget on hidden reasoning tokens before writing the
+@@ -452,7 +462,7 @@
+             # gemini-3.1-pro used reasoning_tokens=7866 on the analogous
+             # AllAtOnceAttributor call).
+             text = self.llm.complete(
+-                messages=[{'role': 'system', 'content': _REFINE_PROMPT},
++                messages=[{'role': 'system', 'content': system},
+                           {'role': 'user', 'content': user}],
+                 max_tokens=16000).text or ''
+         except Exception as exc:  # pragma: no cover - defensive
+@@ -515,22 +525,22 @@
+         return None
+ 
+     @staticmethod
+-    def _fallback_suggestion(event: AgentEvent) -> str:
++    def _fallback_suggestion(event: AgentEvent, *, client=None) -> str:
+         metadata = event.metadata or {}
+         constraint = (
+             metadata.get('dropped_constraint')
+             or metadata.get('violated_constraint')
+         )
+         if constraint:
+-            return (
++            return diagnostic_prompt(client, 'refine.fallback_constraint', (
+                 f'Before executing this decision, verify the {constraint} '
+                 'constraint against the selected option and fail closed if it '
+                 'cannot be satisfied.'
+-            )
+-        return (
++            ), constraint=constraint)
++        return diagnostic_prompt(client, 'refine.fallback_suggestion', (
+             'Re-evaluate this decision against every original task constraint '
+             'and verify the corrected action before invoking any tool.'
+-        )
++        ))
+ 
+ 
+ __all__ = [
+--- /dev/null
++++ b/agentdebug/runtime/prompt_templates.py
+@@ -0,0 +1,6 @@
++"""Workbench extension point for localized diagnostic prompt templates."""
++
++
++def diagnostic_prompt(client, key: str, default: str, **values) -> str:
++    formatter = getattr(client, 'format_diagnostic_prompt', None)
++    return formatter(key, default, values) if formatter else default

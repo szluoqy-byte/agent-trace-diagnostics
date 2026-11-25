@@ -202,3 +202,11 @@
 .ws-delete-body{overflow-wrap:anywhere}
 .ws-delete-body p{margin-block:0 10px}
 .ws-delete-body p:last-child{margin-bottom:0}
+
+.diagnosis-mode-field .ws-help{margin:6px 0 12px}
+.diagnosis-mode-field select{width:100%;min-width:0}
+.diagnosis-comparison,.engine-evidence{display:grid;gap:12px;min-width:0;overflow-wrap:anywhere}
+.diagnosis-comparison h2,.engine-evidence h3,.diagnosis-comparison .instance-top h3,.engine-evidence p,.engine-evidence ul{margin:0}
+.diagnosis-comparison .instance-card{display:grid;gap:8px}
+.diagnosis-comparison .text-button,.engine-evidence .text-button{justify-self:start}
+.engine-evidence ul{padding-inline-start:20px}

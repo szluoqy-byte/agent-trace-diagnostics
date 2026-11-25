@@ -1,9 +1,12 @@
 import asyncio
 import logging
 from .demo import demo_report
+from .diagnosis import DEFAULT_MODE
+from .diagnosis.agentdebugx import diagnose_agentdebugx
+from .diagnosis.compare import diagnose_dual
 from .engine import diagnose
 from .feedback import generate_feedback, feedback_availability
-from .execution import job_settings
+from .execution import job_settings, run_settings
 from .models import Trajectory
 
 logger = logging.getLogger(__name__)
@@ -63,8 +66,15 @@ class JobQueue:
                         await asyncio.sleep(0.25)
                     report = demo_report()
                 else:
-                    execution = job_settings(self.store,self.settings,job['id'])
-                    if self.store.uses_fresh_diagnosis_cache(job['id']):
+                    config = self.store.job_config(job['id']) or {}
+                    execution = run_settings(self.store, self.settings, config)
+                    mode = config.get("diagnosis_mode", DEFAULT_MODE)
+                    fresh = self.store.uses_fresh_diagnosis_cache(job['id'])
+                    if mode == "agentdebugx":
+                        report = await diagnose_agentdebugx(trace, execution, progress)
+                    elif mode == "dual":
+                        report = await diagnose_dual(trace, execution, progress, diagnose, fresh_cache=fresh)
+                    elif fresh:
                         report = await diagnose(trace, execution, progress, fresh_cache=True)
                     else:
                         report = await diagnose(trace, execution, progress)

@@ -44,7 +44,8 @@ def create_app(settings=None, *, frontend_dir=None):
     loaded_settings = load_runtime_settings(store, settings)
     for key in RUNTIME_FIELDS:
         setattr(settings, key, getattr(loaded_settings, key))
-    store.freeze_legacy_runs(snapshot(settings))
+    execution, connection_id = active_execution(store, settings)
+    store.freeze_legacy_runs(snapshot(execution, connection_id))
     queue = JobQueue(store, settings)
 
     @asynccontextmanager
@@ -306,8 +307,11 @@ def create_app(settings=None, *, frontend_dir=None):
             raise HTTPException(422, "驳回结论时关键步骤应留空")
         trace = require_trace(job["trace_id"])["data"]
         if body.critical_step is not None:
-            if (body.critical_step >= len(trace["messages"]) or trace["messages"][body.critical_step]["role"] == "user"
-                    or trace["messages"][body.critical_step].get("judgable") is False):
+            invalid_step = body.critical_step >= len(trace["messages"])
+            if not invalid_step and job["result"].get("algorithm") != "AgentDebugX":
+                message = trace["messages"][body.critical_step]
+                invalid_step = message["role"] == "user" or message.get("judgable") is False
+            if invalid_step:
                 raise HTTPException(422, "关键步骤必须是轨迹中的可诊断消息")
         original = job["result"]["attribution"]
         if body.decision == "confirmed" and any(getattr(body, k) != original[k] for k in ("critical_step", "category", "summary")):
@@ -319,10 +323,18 @@ def create_app(settings=None, *, frontend_dir=None):
     def artifact(job_id: str, stage: str):
         job = require_job(job_id)
         result = job.get("result") or {}
-        run_id = result.get("provenance", {}).get("run_id", "")
+        engines = result.get("engine_runs") or {}
+        if stage == 'agentdebugx':
+            report = result if result.get('algorithm') == 'AgentDebugX' else (engines.get('agentdebugx') or {}).get('report')
+            if not report or not report.get('official_output'):
+                raise HTTPException(404, 'AgentDebugX 原始报告不存在')
+            return JSONResponse({"detection": report.get("engine_detection"), "diagnosis": report["official_output"]},
+                                headers={"Content-Disposition": f'attachment; filename="agentdebugx-{job_id}.json"'})
+        run_id = (result.get("provenance", {}).get("run_id")
+                  or (engines.get('trajdebug') or {}).get('provenance', {}).get('run_id', ''))
         names = {"stage_a": "input_stage_a.json", "stage_b": "input_stage_b.json", "phase1": "input_stage_c_phase1.json",
                  "phase2": "input_stage_c_phase2.json", "final": "input_final.json"}
-        if stage not in names or len(run_id) != 32 or any(c not in "0123456789abcdef" for c in run_id):
+        if stage not in names or not isinstance(run_id, str) or len(run_id) != 32 or any(c not in "0123456789abcdef" for c in run_id):
             raise HTTPException(404, "阶段产物不存在")
         path = settings.data_dir / "trajdebug" / "runs" / run_id / names[stage]
         if not path.is_file():

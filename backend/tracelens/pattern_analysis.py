@@ -65,6 +65,8 @@ def project_trace(trace, job, report, review):
         item['state'] = 'unsupported'
     elif decision == 'rejected':
         item['state'] = 'rejected'
+    elif report.get('comparison_state') and decision not in {'modified', 'confirmed'}:
+        item['state'] = 'comparison_pending'
     elif decision in {'modified', 'confirmed'} and (review.get('critical_step') != step or
             normalized(review.get('category')).casefold() != category.casefold()):
         item.update(state='review_needs_evidence', critical_step=review.get('critical_step'),

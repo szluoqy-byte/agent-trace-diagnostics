@@ -8,6 +8,8 @@ import shutil
 
 logger = logging.getLogger(__name__)
 ARTIFACT_KEY = 'deleted_artifact:'
+RUN_ID = """COALESCE(json_extract(result,'$.provenance.run_id'),
+                     json_extract(result,'$.engine_runs.trajdebug.provenance.run_id'))"""
 
 
 class DeletionStore:
@@ -57,7 +59,7 @@ class DeletionStore:
 
     @staticmethod
     def _deletable_jobs(db, condition, value):
-        jobs = db.execute(f'''SELECT id, status, json_extract(result,'$.provenance.run_id') AS run_id,
+        jobs = db.execute(f'''SELECT id, status, {RUN_ID} AS run_id,
             EXISTS (SELECT 1 FROM feedback_runs WHERE job_id=jobs.id
                 AND status IN ('queued','running')) AS feedback_active FROM jobs WHERE {condition}''',
             (value,)).fetchall()
@@ -78,8 +80,8 @@ class DeletionStore:
         run_ids = {job['run_id'] for job in jobs if isinstance(job['run_id'], str)
                    and re.fullmatch(r'[0-9a-f]{32}', job['run_id'])}
         if run_ids:
-            remaining = db.execute(f'''SELECT DISTINCT json_extract(result,'$.provenance.run_id')
-                FROM jobs WHERE json_extract(result,'$.provenance.run_id') IN ({ids})''',
+            remaining = db.execute(f'''SELECT DISTINCT {RUN_ID}
+                FROM jobs WHERE {RUN_ID} IN ({ids})''',
                 (json.dumps(sorted(run_ids)),))
             run_ids.difference_update(row[0] for row in remaining)
         db.executemany('INSERT OR IGNORE INTO workspace_meta VALUES (?,?)',

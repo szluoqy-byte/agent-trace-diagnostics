@@ -35,7 +35,7 @@ OTLP JSON / JSONL → GenAI 转换器 → 工作台轨迹与来源映射
   → 官方 messages + metadata JSON → 官方 validate_unified → 现有五阶段诊断
 ```
 
-前端文件导入直接调用转换器，无需修改官方固定数据集注册表。执行前，`to_unified` 对新增格式调用固定提交的 `data_processing/schema.py::validate_unified`；该文件原样保存并加入上游哈希清单。检测算法、提示词和阶段逻辑保持原样。
+工作台上传的文件由后端转换器处理。执行前，`to_unified` 使用固定提交的 `data_processing/schema.py::validate_unified` 校验诊断输入。后台沿用固定版本的五阶段实现，并使用任务选定的提示词语言。
 
 `step` 从 0 连续编号；assistant 可诊断，user / system / tool 不作为错误归因候选；tool 使用官方 `compress_role=compress`。annotation 为空，业务结果映射为 reward 0/1。未知结果可暂存，须明确结果后才能诊断。
 

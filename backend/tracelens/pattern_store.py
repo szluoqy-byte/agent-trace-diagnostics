@@ -106,6 +106,7 @@ class PatternStore:
         rows = db.execute("""SELECT j.id, json_extract(j.result,'$.schema_version') AS schema_version,
             json_extract(j.result,'$.engine_version') AS engine_version, json_extract(j.result,'$.model') AS model,
             json_extract(j.result,'$.attribution') AS attribution,
+            json_extract(j.result,'$.comparison.state') AS comparison_state,
             json_extract(j.result,'$.instances') AS instances,
             json_extract(j.result,'$.triggers') AS triggers,
             CASE WHEN json_type(j.result,'$.attribution.critical_step')='integer'

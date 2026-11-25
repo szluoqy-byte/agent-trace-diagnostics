@@ -39,7 +39,7 @@ export function ReviewDialog({job, messages, onClose, onDone}: {job:Job; message
   const [error, setError] = useState('')
   const editable = value.decision !== 'confirmed'
   const canChooseStep = value.decision === 'modified'
-  const steps = messages?.filter(message => message.role !== 'user' && message.judgable !== false)
+  const steps = messages?.filter(message => job.result?.algorithm === 'AgentDebugX' || message.role !== 'user' && message.judgable !== false)
   function chooseDecision(decision:string) {
     setError('')
     setValue(old=>{

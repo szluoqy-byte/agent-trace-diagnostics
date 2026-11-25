@@ -2,6 +2,14 @@
 
 REVIEW_LABELS = {"confirmed": "已确认", "modified": "已修改", "rejected": "已驳回"}
 FEEDBACK_LABELS = {"queued": "排队中", "running": "生成中", "completed": "已生成", "failed": "生成失败"}
+COMPARISON_LABELS = {
+    "aligned": "同一步骤，两路均有原文引用",
+    "same_step": "同一步骤，原文引用有缺口",
+    "different": "关键步骤不同",
+    "unresolved": "至少一路未定位",
+    "incomplete": "有一路未完成",
+    "succeeded": "业务成功",
+}
 INSTANCE_LABELS = {
     "manifest_active": "持续影响最终结果",
     "latent_active": "未修复",
@@ -28,6 +36,18 @@ def markdown_report(trace, job, reviews, feedback=None):
               "", "## 模型原始结论", "", ai["reasoning"]]
     for warning in result.get("warnings", []):
         lines += ["", "提示：" + warning]
+    if comparison := result.get("comparison"):
+        lines += ["", "## 双路诊断对照", "", COMPARISON_LABELS[comparison["state"]], ""]
+        for name, run in result.get("engine_runs", {}).items():
+            label = "标准诊断" if name == "trajdebug" else "AgentDebugX"
+            branch = result if name == comparison["primary"] else (run.get("report") or {})
+            attribution = branch.get("attribution") or {}
+            branch_step = attribution.get("critical_step")
+            title = f"#{branch_step}" if branch_step is not None else "未定位"
+            lines.append(f"- {label} · {title} · {attribution.get('summary') or run.get('error', '')}")
+            if name == "agentdebugx" and branch is not result:
+                lines.extend(evidence_lines(branch))
+                lines.extend("  - 建议 " + item for item in attribution.get("fix_suggestions", []))
     otel = trace.get("data", {}).get("otel")
     if otel:
         lines += ["", "## OTel GenAI 来源", "", f"Trace ID：{otel['trace_id']}",
@@ -39,6 +59,7 @@ def markdown_report(trace, job, reviews, feedback=None):
             locations = [f"{r['span_id']} · {r['attribute']}" + (f"[{r['message_index']}]" if r.get("message_index") is not None else "") for r in refs]
             lines.append(f"- #{message['step']}：" + "；".join(locations))
     lines += ["", "## 引用证据", ""]
+    lines.extend(evidence_lines(result))
     summary = result.get("evidence_summary")
     if summary:
         lines += [f"引用来源：原文 {summary['original']} · 压缩视图 {summary['compressed']} · 未定位 {summary['unlocated']}。", "",
@@ -82,3 +103,11 @@ def markdown_report(trace, job, reviews, feedback=None):
             lines += ['', feedback['error']]
     lines += ["", "## 运行用量", "", str(result.get("usage", {}))]
     return "\n".join(lines)
+
+
+def evidence_lines(report):
+    lines = []
+    for item in report.get("evidence", []):
+        location = f"原文 #{item.get('step')}" if item.get("matched") else "未定位"
+        lines.append(f"  - {location} · {item['quote']}")
+    return lines

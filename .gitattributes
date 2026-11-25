@@ -1,2 +1,3 @@
 backend/tracelens/_vendor/trajdebug/** text eol=lf
+backend/tracelens/_vendor/agentdebugx/** text eol=lf
 *.sh text eol=lf

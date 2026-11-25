@@ -1,5 +1,7 @@
-"""Execution settings saved with each analysis; credentials stay in the environment."""
+"""Freeze analysis settings and resolve credentials from the selected connection."""
 from dataclasses import replace
+from .diagnosis import AGENTDEBUGX_COMMIT, AGENTDEBUGX_VERSION, DEFAULT_MODE
+from .diagnosis.agentdebugx_prompts import prompt_profile
 from .trajdebug import ENGINE_VERSION, UPSTREAM_COMMIT
 
 FIELDS = ('base_url', 'model', 'prompt_language', 'max_retries', 'timeout', 'llm_concurrency', 'max_tokens', 'cluster_json_mode')
@@ -23,13 +25,20 @@ def runtime_snapshot(settings):
     return {key: getattr(settings, key) for key in RUNTIME_FIELDS}
 
 
-def snapshot(settings, connection_id=None, prompt_language=None):
+def snapshot(settings, connection_id=None, prompt_language=None, diagnosis_mode=None):
     config = {**{k: getattr(settings, k) for k in FIELDS}, 'concurrency': settings.concurrency,
               'engine': ENGINE_VERSION, 'upstream_commit': UPSTREAM_COMMIT}
     if prompt_language is not None:
         config['prompt_language'] = prompt_language
     if connection_id is not None:
         config['model_connection_id'] = connection_id
+    if diagnosis_mode is not None:
+        config['diagnosis_mode'] = diagnosis_mode
+        if diagnosis_mode != DEFAULT_MODE:
+            config.update(agentdebugx_version=AGENTDEBUGX_VERSION, agentdebugx_commit=AGENTDEBUGX_COMMIT,
+                          agentdebugx_prompt_profile=prompt_profile(config['prompt_language']))
+        if diagnosis_mode == 'agentdebugx':
+            config.update(engine=f'agentdebugx-{AGENTDEBUGX_VERSION}', upstream_commit=AGENTDEBUGX_COMMIT)
     return config
 
 

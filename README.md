@@ -2,7 +2,9 @@
 
 基于 [TrajDebug 官方代码](https://github.com/THU-KEG/TrajDebug/tree/5b04f98b1995ec758d9aba70940d17bb7d2d169b) 的本地 Agent 轨迹诊断项目。前端采用中文研发工作台，后端直接执行固定官方版本的五阶段流水线。
 
-用户流程：**分析任务列表 → 上传与校验 → 任务详情 → 单条证据与复核**。同一任务可保留多次独立分析记录。
+新建任务时可选标准诊断、AgentDebugX 或双路诊断，并选择中文或英文提示词。双路模式在单条轨迹详情中展示两路原始结论和证据对照。 [AgentDebugX 接入说明](docs/agentdebugx.md)
+
+用户流程：**分析任务列表 → 上传与校验 → 任务详情 → 单条证据与复核**。同一任务可保留多次独立分析记录。整体设计见 [系统架构](docs/architecture.md)。
 
 ## 启动
 
@@ -40,7 +42,7 @@ Pop-Location
 
 ## 使用
 
-从顶部的「轨迹库」可跨任务筛选已有轨迹、查看原文和历史诊断，也可跨页勾选轨迹新建分析任务。保存任务时写入的轨迹会直接出现在库中。
+从左侧导航的「轨迹库」可跨任务筛选已有轨迹、查看原文和历史诊断，也可跨页勾选轨迹新建分析任务。保存任务时写入的轨迹会直接出现在库中。
 
 在诊断任务的任一轮次，或从轨迹库勾选多条轨迹后，点击「分析重复失败」可创建失败模式分析任务。确认页显示采用的诊断和排除原因。结果按重复机制列出支持样本数和证据，支持复核、重新分析和下载代表轨迹。聚合在本地使用已保存的诊断，模式占比以有可用归因的失败轨迹数为分母。
 
@@ -65,11 +67,11 @@ Pop-Location
 - C Phase 3：关键失败归因，保留官方默认 LLM 裁决与回退。
 - 可选后处理：官方 `applications/generate_feedback.py` 生成改进指令与反馈报告，不覆盖五阶段原始结果。
 
-本地新增部分仅负责格式适配、进程隔离、用量记录、队列和交互。诊断五阶段内没有加入额外约束生成、前缀复核或建议生成阶段。算法接入和冒烟通过不等于复现论文准确率。
+后台沿用固定上游的五阶段，工作台负责轨迹适配、提示词语言、进程隔离、用量记录和结果投影。算法变更及其验证见 [TrajDebug 算法优化维护日志](docs/algorithm-optimization-log.md)。
 
 ## 输入与配置
 
-优先支持官方统一格式：
+离线评估使用以下官方统一格式。工作台上传使用 DeepAgent 或 OTel GenAI 轨迹。
 
 ```json
 {
@@ -88,7 +90,7 @@ Pop-Location
 }
 ```
 
-保留原生 `judgable`、`compress_role` 和 `metadata.extra.agent_framework_description`。普通消息日志也可导入；未知结果需要在新建任务的校验步骤中声明。人工标注不会进入模型输入。
+离线路径保留原生 `judgable`、`compress_role` 和 `metadata.extra.agent_framework_description`。工作台新建任务时需要补齐未知的业务结果。人工标注独立用于评估。
 
 工作台支持 **DeepAgent 轨迹 JSON** 和 **OTel GenAI 的 OTLP JSON / JSONL**，可在新建任务或轨迹库中混合上传。适配层保留原始 span，并生成统一的调用展示数据、诊断消息和证据映射。TrajDebug 在后台消费通过统一格式校验的消息序列。标准 JSON / JSONL 用于离线评测和回归，历史轨迹可继续查看和复用。OTel 的具体采集要求见 [OTel GenAI 接入说明](docs/otel-genai.md)。
 
@@ -140,7 +142,8 @@ cd ..
 
 ## 项目文件
 
-- [架构与官方接入边界](docs/architecture.md)
+- [系统架构](docs/architecture.md)
+- [TrajDebug 接入与运行参考](docs/trajdebug-integration.md)
 - [用户旅程](docs/user-journey.md)
 - [第一轮 RSI 阶段分析](docs/rsi-round-1-analysis.md)
 - [TrajDebug 算法优化维护日志](docs/algorithm-optimization-log.md)

@@ -214,6 +214,12 @@ def test_legacy_migration_is_idempotent_and_retains_reports_reviews_feedback(tmp
     assert migrated.reviews(second['id'])[0]['data']['summary']=='retain'
     assert migrated.latest_feedback(second['id'])['result']=={'hint':'retain'}
     assert len(Store(tmp_path).tasks())==1
+    connection_id = migrated.model_connections.add(name='Workspace default', model='saved-model',
+        base_url='http://127.0.0.1:1/v1', api_key='saved-key', headers={}, make_default=True)
+    app = create_app(Settings(data_dir=tmp_path, model='environment-model', base_url=''))
+    config = app.state.store.job_config(first['id'])
+    assert config['model_connection_id'] == connection_id and config['model'] == 'saved-model'
+    assert 'api_key' not in config
 
 
 async def test_queue_uses_frozen_config_and_auto_feedback(tmp_path,monkeypatch):

@@ -87,6 +87,10 @@ def test_connection_probe_and_validation_do_not_return_secrets(tmp_path, monkeyp
             'api_key': 'probe-private-key'}
     assert client.post(PATH + '/test', json={**body, 'headers': {'X-Tenant': 'tenant-a'}}).json() == {'ok': True}
     assert str(calls[0].url) == body['base_url'] + '/chat/completions'
+    assert client.post(PATH + '/test', json={**body, 'api_key': 'wrong-secret', 'headers': {
+        'X-Tenant': 'tenant-a', 'authorization': 'Bearer probe-private-key',
+    }}).json() == {'ok': True}
+    assert calls[-1].headers.get_list('authorization') == ['Bearer probe-private-key']
     assert client.get(PATH).json() == {'items': []}
     config_id = client.post(PATH, json={**body, 'headers': {'X-Tenant': 'tenant-a'}, 'make_default': True}).json()['id']
     assert client.post(f'{PATH}/{config_id}/test').json() == {'ok': True}

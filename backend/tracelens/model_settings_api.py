@@ -8,6 +8,7 @@ import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import Field, SecretStr, field_validator
 
+from .model_headers import merge_headers
 from .models import Contract
 
 MODEL_SETTINGS_PATH = '/api/model-configurations'
@@ -85,8 +86,8 @@ async def test_connection(base_url, model, api_key, headers=None):
         url += '/chat/completions'
     try:
         async with httpx.AsyncClient(timeout=25, trust_env=False, follow_redirects=False) as client:
-            request_headers = dict(headers or {})
-            request_headers.setdefault('Authorization', 'Bearer ' + (api_key or 'EMPTY'))
+            request_headers = merge_headers({'Authorization': 'Bearer ' + (api_key or 'EMPTY'),
+                                             'Content-Type': 'application/json'}, headers)
             response = await client.post(url, headers=request_headers, json={
                 'model': model,
                 'messages': [{'role': 'user', 'content': 'Return only the JSON object {"ok": true}.'}],

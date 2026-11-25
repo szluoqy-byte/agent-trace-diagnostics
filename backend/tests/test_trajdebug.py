@@ -146,7 +146,11 @@ def provider():
                 time.sleep(2)
             if state["fail"]:
                 self.send_response(401); self.end_headers(); self.wfile.write(b'{}'); return
-            if len(messages) == 1:
+            extra = state.get("extra_reply")
+            additional = extra(system) if extra else None
+            if additional is not None:
+                stage, value = "agentdebugx", additional
+            elif len(messages) == 1:
                 stage = "compression"
                 value = {tier: {"agent": "refund complete", "env": ""} for tier in ["th1", "th2", "th3"]}
             elif system.startswith("You are an error-trigger"):
@@ -170,9 +174,15 @@ def provider():
                 stage = "attribution"
                 value = {"critical_step": state.get("critical_step", 3), "rationale": "Fixture selects a critical step."}
             calls.append({"stage": stage, "request": request,
-                          "headers": {key.lower(): value for key, value in self.headers.items()}})
+                          "headers": {key.lower(): value for key, value in self.headers.items()},
+                          "authorization": self.headers.get_all("Authorization", [])})
             response = {"id": "fixture", "object": "chat.completion", "created": 0, "model": "fixture", "choices": [{"index": 0, "message": {"role": "assistant", "content": json.dumps(value)}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}}
-            self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(json.dumps(response).encode())
+            body = json.dumps(response).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

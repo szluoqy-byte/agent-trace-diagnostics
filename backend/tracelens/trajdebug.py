@@ -1,10 +1,10 @@
 """Input/output adapter. Algorithm decisions stay in the pinned upstream code."""
 import hashlib
-import json
 from pathlib import Path
 from .models import Trajectory
 from ._vendor.trajdebug.data_processing.schema import validate_unified
 from .citation_views import EVIDENCE_PROTOCOL, compression_views, locate_quote, summarize_evidence
+from .upstream import verify_source_tree
 
 UPSTREAM_COMMIT = "5b04f98b1995ec758d9aba70940d17bb7d2d169b"
 UPSTREAM_URL = "https://github.com/THU-KEG/TrajDebug"
@@ -16,16 +16,7 @@ STAGES = [("stage_a", "多粒度压缩", 8, 25), ("stage_b", "错误触发检测
 
 
 def verify_upstream():
-    manifest = json.loads((VENDOR / "UPSTREAM.json").read_text(encoding="utf-8"))
-    for relative, expected in manifest["files"].items():
-        content = (VENDOR / relative).read_bytes()
-        if hashlib.sha256(content).hexdigest() == expected:
-            continue
-        # Older Windows checkouts can retain CRLF after pulling .gitattributes.
-        if b"\r\n" in content and hashlib.sha256(content.replace(b"\r\n", b"\n")).hexdigest() == expected:
-            continue
-        raise ValueError("TrajDebug 官方源码完整性检查失败：" + relative)
-    return manifest
+    return verify_source_tree(VENDOR, "TrajDebug")
 
 
 def to_unified(trace: Trajectory):
