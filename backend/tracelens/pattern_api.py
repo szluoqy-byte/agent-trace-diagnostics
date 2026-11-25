@@ -5,6 +5,7 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
+from sqlite3 import IntegrityError
 from fastapi.responses import Response
 from pydantic import Field, model_validator
 
@@ -79,6 +80,10 @@ def attach_pattern_routes(app, store):
             if preview['counts'].get('included', 0) < 2:
                 raise HTTPException(422, '至少需要两条有可用归因的失败轨迹')
             return store.save_pattern_run(name, task_id, preview, request_id, request_hash)
+        except IntegrityError as exc:
+            if exc.sqlite_errorname != 'SQLITE_CONSTRAINT_FOREIGNKEY':
+                raise
+            raise HTTPException(409, '来源记录已删除，请重新选择轨迹') from exc
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
 
@@ -99,7 +104,10 @@ def attach_pattern_routes(app, store):
     @router.post('/{task_id}/runs')
     def rerun(task_id: str, body: PatternSubmit):
         task = require_task(task_id)
-        last = store.pattern_runs(task_id)[0]
+        runs = store.pattern_runs(task_id)
+        if not runs:
+            raise HTTPException(404, '失败模式分析任务不存在')
+        last = runs[0]
         scope = require_run(task_id, last['id'])['scope']
         if body.scope.task_id != scope.get('task_id') or sorted(set(body.scope.trace_ids or [])) != scope['trace_ids']:
             raise HTTPException(422, '重新分析须使用原任务的样本范围')
@@ -119,6 +127,8 @@ def attach_pattern_routes(app, store):
                 page_size: Literal['10','20','50'] = '10'):
         run = require_run(task_id, run_id)
         items = store.pattern_items(run_id)
+        if not items:
+            raise HTTPException(404, '失败模式分析记录不存在')
         if pattern_id:
             pattern = next((p for p in run['result']['patterns'] if p['id'] == pattern_id), None)
             if pattern is None:

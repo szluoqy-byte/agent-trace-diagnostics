@@ -173,6 +173,8 @@ def attach_task_routes(app, store, settings, job_view):
                 result.append(task_view(task))
             else:
                 runs = store.pattern_runs(task['id'])
+                if not runs:
+                    continue
                 latest = runs[0]
                 result.append({**task, 'input_count': latest['selected'], 'status': 'completed',
                                'counts': {'eligible': latest['eligible'], 'repeated': latest['repeated']},
@@ -182,6 +184,14 @@ def attach_task_routes(app, store, settings, job_view):
     @router.get('/tasks/{task_id}')
     def task(task_id: str):
         return task_view(require_task(task_id))
+
+    @router.delete('/tasks/{task_id}')
+    def delete_task(task_id: str):
+        try:
+            checked(lambda: store.delete_task(task_id))
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return {'deleted': True}
 
     def validate_inputs(traces, *, start, execution):
         if not traces or len(traces)>500:
@@ -233,11 +243,12 @@ def attach_task_routes(app, store, settings, job_view):
                 traces.append(Trajectory.model_validate(trace['data']))
         execution, connection_id = active_execution(store, settings)
         validate_inputs(traces, start=body.start, execution=execution)
-        task_id, run_id = store.create_task({**body.model_dump(), 'name': body.name.strip(),
-                                             'prompt_language': normalize_prompt_language(body.prompt_language)},
-                                         traces=traces, trace_ids=trace_ids,
-                                         config=snapshot(execution, connection_id, body.prompt_language) if body.start else None,
-                                         auto_feedback=body.auto_feedback)
+        fields = {**body.model_dump(), 'name': body.name.strip(),
+                  'prompt_language': normalize_prompt_language(body.prompt_language)}
+        config = snapshot(execution, connection_id, body.prompt_language) if body.start else None
+        task_id, run_id = checked(lambda: store.create_task(
+            fields, traces=traces, trace_ids=trace_ids, config=config, auto_feedback=body.auto_feedback,
+        ))
         return {'task_id':task_id, 'run_id':run_id}
 
     @router.post('/tasks/{task_id}/runs')
@@ -255,7 +266,10 @@ def attach_task_routes(app, store, settings, job_view):
             require_task(task_id)
             return None, inputs(task_id), True
         run = require_run(task_id, run_id)
-        return run, store.run_rows(run_id), store.runs(task_id)[0]['id'] != run_id
+        runs = store.runs(task_id)
+        if not runs:
+            raise HTTPException(404, '分析任务不存在')
+        return run, store.run_rows(run_id), runs[0]['id'] != run_id
 
     @router.get('/tasks/{task_id}/runs/{run_id}/traces')
     def list_traces(task_id: str, run_id: str, page: int=Query(1,ge=1), page_size: int=Query(10,ge=1,le=50),

@@ -3,6 +3,7 @@ import {Plus, RefreshCw, Search, Upload} from 'lucide-react'
 import {api, dateLabel} from '../api'
 import {sourceLabel} from '../branding'
 import {openPatternCreate} from '../patterns'
+import DeleteRecord, {traceDeletionBlock} from '../components/DeleteRecord'
 import Pagination from '../components/Pagination'
 import {businessOutcomes, libraryDiagnosis, libraryLimit, libraryPath, openLibraryTask} from '../traceLibrary'
 import type {LibraryPage, LibrarySelection} from '../traceLibrary'
@@ -128,7 +129,7 @@ export default function TraceLibrary({params, selected, onSelect}: {
           disabled={!selectable.length || !allChecked && ids.size + unselected.length > libraryLimit}
           onChange={event => togglePage(event.target.checked)}/></th>
           <th scope="col">轨迹 / 来源</th><th scope="col">业务结果</th><th scope="col">诊断状态</th>
-          <th scope="col">关联任务</th><th scope="col">入库时间</th></tr></thead>
+          <th scope="col">关联任务</th><th scope="col">入库时间</th><th scope="col">操作</th></tr></thead>
         <tbody>{data?.items.map(row => {
           const known = row.outcome !== 'unknown'
           return <tr key={row.id}>
@@ -142,6 +143,9 @@ export default function TraceLibrary({params, selected, onSelect}: {
               {known ? null : <small>重新上传并填写业务结果后可用于新任务</small>}</td>
             <td><Badge value={row.diagnosis}>{libraryDiagnosis[row.diagnosis as keyof typeof libraryDiagnosis]}</Badge></td>
             <td>{row.task_count} 个</td><td>{dateLabel(row.created_at)}</td>
+            <td><DeleteRecord id={row.id} name={row.title} kind="trace" compact
+              blocked={traceDeletionBlock(row.task_count, ['queued', 'running'].includes(row.diagnosis))}
+              onDeleted={() => onSelect(selected.filter(item => item.id !== row.id))}/></td>
           </tr>
         })}</tbody>
       </table></div>

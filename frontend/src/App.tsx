@@ -71,6 +71,6 @@ export default function App(){
     library={fromLibrary?{items:selection,back:'#'+libraryPath(returnParams),onCreated:clearLibrarySelection}:undefined}/>
     :page==='task'?<TaskDetail key={id} id={id} params={url.searchParams}/>:page==='trace'?<TrajectoryDetail id={id} traceId={traceId} params={url.searchParams}/>
     :page==='library'?<TraceLibrary params={url.searchParams} selected={librarySelection} onSelect={setLibrarySelection}/>
-    :page==='library-detail'?<LibraryTraceDetail key={id} id={id} params={url.searchParams}/>
+    :page==='library-detail'?<LibraryTraceDetail key={id} id={id} params={url.searchParams} onDeleted={traceId=>setLibrarySelection(items=>items.filter(item=>item.id!==traceId))}/>
     :<div className="empty"><h1>页面不存在</h1><p>请检查链接，或返回分析任务列表。</p><a href="#/tasks">返回分析任务</a></div>}</div>:null}</main></div><footer className="app-footer"><button onClick={openSettings}><i className={'dot '+(config?.ready?'completed':'idle')}/>当前模型 {config?.model||'未配置'}<span className="footer-link">设置</span></button><span><HardDrive size={14}/>数据存储在本地 <i/>轨迹并发上限 {config?.concurrency??'—'}</span></footer></div></WorkspaceContext>
 }

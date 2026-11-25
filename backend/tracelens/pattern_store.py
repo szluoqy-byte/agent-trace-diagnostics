@@ -173,6 +173,10 @@ class PatternStore:
             replay = self._pattern_replay(db, request_id, request_hash)
             if replay:
                 return replay
+            scope = preview['scope']
+            if scope.get('run_id') and not db.execute('SELECT 1 FROM analysis_runs WHERE id=? AND task_id=?',
+                                                      (scope['run_id'], scope['task_id'])).fetchone():
+                raise ValueError('来源诊断已删除，请重新选择轨迹')
             if not task_id:
                 task_id = uuid.uuid4().hex
                 db.execute("""INSERT INTO analysis_tasks (id,name,agent,version,goal,created_at,kind)
@@ -227,7 +231,7 @@ class PatternStore:
             db.execute('BEGIN IMMEDIATE')
             latest = db.execute('SELECT id FROM pattern_runs WHERE task_id=? ORDER BY number DESC LIMIT 1',
                                 (run['task_id'],)).fetchone()
-            if latest['id'] != run['id']:
+            if not latest or latest['id'] != run['id']:
                 raise ValueError('历史聚合结果只读，请切换到最新分析')
             db.execute('INSERT INTO pattern_reviews VALUES (?,?,?,?,?,?)',
                        (uuid.uuid4().hex,run['id'],pattern_id,decision,notes,now()))

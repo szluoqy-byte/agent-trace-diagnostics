@@ -3,6 +3,7 @@ import {useCallback,useEffect,useRef,useState} from 'react'
 import {Copy,Download,Play,RotateCcw} from 'lucide-react'
 import {uiText} from '../branding'
 import {dateLabel,post} from '../api'
+import DeleteRecord from '../components/DeleteRecord'
 import {Dialog} from '../components/Dialogs'
 import Pagination from '../components/Pagination'
 import Tabs from '../components/Tabs'
@@ -35,7 +36,8 @@ export default function TaskDetail({id,params}:{id:string;params:URLSearchParams
   if(error&&!task)return <div className="empty"><h1>无法读取任务</h1><p role="alert">{error}</p><a href="#/tasks">返回任务列表</a></div>
   if(!task)return <div className="empty">正在读取任务…</div>
   const active=task.counts.running>0||task.counts.queued>0||task.counts.feedback_active>0
-  return <><div className="ws-breadcrumb"><a href="#/tasks">分析任务</a><span>/</span><span>任务详情</span></div><div className="ws-heading"><div><div className="ws-heading-title"><h1>{task.name}</h1><Badge value={run?.status??task.status}/></div>{task.agent || task.version || task.goal ? <p>{[task.agent, task.version, task.goal].filter(Boolean).join(' · ')}</p> : null}</div><div className="ws-actions">{run?<button className="secondary" onClick={()=>openPatternCreate({task_id:id,run_id:run.id},'#'+taskPath(id,query))}>分析失败模式</button>:null}<a className="secondary" href={`#/tasks/new?source=${id}`}><Copy size={15}/>复制任务</a>{run?<a className="secondary" href={`/api/tasks/${id}/runs/${run.id}/export`} download><Download size={15}/>导出本次分析</a>:null}</div></div>
+  return <><div className="ws-breadcrumb"><a href="#/tasks">分析任务</a><span>/</span><span>任务详情</span></div><div className="ws-heading"><div><div className="ws-heading-title"><h1>{task.name}</h1><Badge value={run?.status??task.status}/></div>{task.agent || task.version || task.goal ? <p>{[task.agent, task.version, task.goal].filter(Boolean).join(' · ')}</p> : null}</div><div className="ws-actions">{run?<button className="secondary" onClick={()=>openPatternCreate({task_id:id,run_id:run.id},'#'+taskPath(id,query))}>分析失败模式</button>:null}<a className="secondary" href={`#/tasks/new?source=${id}`}><Copy size={15}/>复制任务</a>{run?<a className="secondary" href={`/api/tasks/${id}/runs/${run.id}/export`} download><Download size={15}/>导出本次分析</a>:null}<DeleteRecord id={id} name={task.name} kind="diagnosis"
+    blocked={active?'仍有诊断或改进建议在排队或运行，请处理完成后再删除。':undefined} onDeleted={()=>go('/tasks',true)}/></div></div>
   <div className="ws-run-row"><div><label>分析记录 <select aria-label="选择分析记录" disabled={task.runs.length<=1} value={run?.id??''} onChange={e=>switchRun(e.target.value)}>{task.runs.length?task.runs.map(r=><option key={r.id} value={r.id}>第 {r.number} 次分析{r.id===task.latest_run_id?' · 最新':''} · {dateLabel(r.created_at)}</option>):<option value="">暂无分析记录</option>}</select></label>{run?<span className="muted">{String(run.config.model||'历史配置')} · {run.config.concurrency?`轨迹并发上限 ${run.config.concurrency}`:'未记录并发上限'}</span>:null}</div>{run?<button className="secondary" disabled={busy||active} onClick={openStart} title={active?'请等待当前分析和建议生成结束':undefined}><RotateCcw size={14}/>重新分析</button>:null}</div>
   {run?.read_only?<div className="ws-warning">第 {run.number} 次分析是历史记录，仅供查看。<button className="text-button" onClick={()=>switchRun(task.latest_run_id!)}>查看最新分析</button></div>:null}
   <TaskStats counts={run?.counts??task.counts}/>

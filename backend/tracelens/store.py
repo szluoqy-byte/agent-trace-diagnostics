@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from .models import Trajectory
+from .deletion import DeletionStore
 from .model_connections import ModelConnections
 from .task_store import TaskStore
 from .pattern_store import PatternStore
@@ -15,7 +16,7 @@ def now():
     return datetime.now(timezone.utc).isoformat()
 
 
-class Store(TaskStore, PatternStore):
+class Store(TaskStore, PatternStore, DeletionStore):
     def __init__(self, directory: Path):
         directory.mkdir(parents=True, exist_ok=True)
         self.model_connections = ModelConnections(directory)
@@ -101,9 +102,13 @@ class Store(TaskStore, PatternStore):
         with self.connect() as db:
             return self.row(db.execute("SELECT * FROM traces WHERE id=?", (trace_id,)).fetchone())
 
-    def enqueue(self, trace_id, mode, *, config=None):
+    def enqueue(self, trace_id, mode, *, config=None, retry_of=None):
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            if not db.execute("SELECT 1 FROM traces WHERE id=?", (trace_id,)).fetchone():
+                raise ValueError("轨迹已删除，请刷新后重试")
+            if retry_of is not None:
+                self.assert_job_writable(retry_of, db)
             active = db.execute("SELECT * FROM jobs WHERE trace_id=? AND status IN ('queued','running') AND NOT EXISTS(SELECT 1 FROM run_attempts WHERE job_id=jobs.id)", (trace_id,)).fetchone()
             if active:
                 return self.row(active)

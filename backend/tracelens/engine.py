@@ -17,6 +17,8 @@ async def diagnose(trace, settings, progress, *, fresh_cache=False):
         raise ModelError("请配置模型接口后重启服务")
     unified = to_unified(trace)
     run_id = uuid.uuid4().hex
+    partial = {"schema_version": 2, "algorithm": "TrajDebug", "engine_version": ENGINE_VERSION,
+               "provenance": {"commit": UPSTREAM_COMMIT, "run_id": run_id}, "stage_metrics": []}
     directory = settings.data_dir / "trajdebug" / "runs" / run_id
     directory.mkdir(parents=True)
     (directory / "input.json").write_text(json.dumps(unified, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n")
@@ -37,9 +39,8 @@ async def diagnose(trace, settings, progress, *, fresh_cache=False):
            "PYTHONPATH": str(ROOT / "backend") + os.pathsep + os.environ.get("PYTHONPATH", "")}
     process = await asyncio.create_subprocess_exec(sys.executable, "-m", "tracelens.trajdebug_worker", str(directory),
                                                  env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
-    partial = {"schema_version": 2, "algorithm": "TrajDebug", "engine_version": ENGINE_VERSION,
-               "provenance": {"commit": UPSTREAM_COMMIT, "run_id": run_id}, "stage_metrics": []}
     try:
+        await progress("准备诊断", 0, partial)
         while line := await process.stdout.readline():
             if not line.startswith(b"TRACELENS_EVENT "):
                 continue

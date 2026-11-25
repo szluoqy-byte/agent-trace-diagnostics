@@ -168,6 +168,8 @@ class TaskStore:
         if db is None:
             with self.connect() as connection:
                 return self.assert_job_writable(job_id, connection)
+        if not db.execute('SELECT 1 FROM jobs WHERE id=?', (job_id,)).fetchone():
+            raise ValueError('诊断记录已删除，请刷新后重试')
         mapping = db.execute('SELECT * FROM run_attempts WHERE job_id=?', (job_id,)).fetchone()
         if mapping:
             self._assert_latest(db, mapping['run_id'])
@@ -230,7 +232,11 @@ class TaskStore:
         from .store import now
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
-            ids = list(dict.fromkeys(trace_ids or [self._insert_trace(db, t) for t in traces]))
+            ids = list(dict.fromkeys(trace_ids if trace_ids is not None else [self._insert_trace(db, t) for t in traces]))
+            if trace_ids is not None and len(ids) != db.execute(
+                'SELECT COUNT(*) FROM traces WHERE id IN (SELECT value FROM json_each(?))', (json.dumps(ids),)
+            ).fetchone()[0]:
+                raise ValueError('所选轨迹已删除，请刷新后重试')
             task_id = uuid.uuid4().hex
             db.execute('INSERT INTO analysis_tasks (id,name,agent,version,goal,prompt_language,created_at,draft_auto_feedback) VALUES (?,?,?,?,?,?,?,?)',
                        (task_id, *(fields[k] for k in ('name','agent','version','goal','prompt_language')), now(), int(auto_feedback)))
@@ -246,6 +252,8 @@ class TaskStore:
 
     def _start_run(self, db, task_id, config, auto_feedback):
         from .store import now
+        if not db.execute('SELECT 1 FROM analysis_tasks WHERE id=?', (task_id,)).fetchone():
+            raise ValueError('分析任务已删除，请刷新后重试')
         active = db.execute("""SELECT 1 FROM run_attempts a JOIN analysis_runs r ON r.id=a.run_id
           JOIN jobs j ON j.id=a.job_id LEFT JOIN feedback_runs f ON f.job_id=j.id
           WHERE r.task_id=? AND (j.status IN ('queued','running') OR f.status IN ('queued','running')) LIMIT 1""", (task_id,)).fetchone()

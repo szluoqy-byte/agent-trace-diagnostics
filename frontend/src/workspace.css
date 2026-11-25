@@ -193,3 +193,12 @@
 .ws-layout{display:flex;flex:1;min-height:0}.ws-sidebar{width:232px;flex:0 0 232px;padding:28px 16px;background:#fbfcff;border-right:1px solid var(--border)}.ws-sidebar-nav{display:grid;gap:6px}.ws-sidebar-nav a{display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:8px;color:#5a6881;text-decoration:none;font-size:14px;line-height:1.5}.ws-sidebar-nav a:hover{background:#f0f3fc;color:var(--accent)}.ws-sidebar-nav a[aria-current="page"]{background:#edf0ff;color:var(--accent);font-weight:650}.ws-sidebar-settings{margin-top:16px;border-top:1px solid var(--border);border-radius:0!important;padding-top:22px!important}.ws-layout>.ws-main{max-width:1600px;margin:0 auto;padding:34px 40px 48px}.task-workbench .app-header{height:72px;padding:0 34px}.task-workbench .brand strong{font-size:24px}
 @media(min-width:1500px){.ws-sidebar{width:260px;flex-basis:260px;padding:34px 20px}.ws-sidebar-nav a{font-size:15px;padding:14px 16px}.ws-layout>.ws-main{padding:42px 52px 58px}.ws-main h1{font-size:28px}.ws-main h2{font-size:20px}.ws-main h3{font-size:16px}.ws-main p,.ws-main .muted{font-size:14px}.ws-main .ws-heading p{font-size:15px}.ws-main .ws-form-section{padding:30px}.ws-main .ws-table-scroll table{font-size:13px}}
 @media(max-width:800px){.ws-layout{display:flex;flex-direction:column}.ws-sidebar{width:100%;flex-basis:auto;padding:10px 16px;border-right:0;border-bottom:1px solid var(--border)}.ws-sidebar-nav{display:flex;gap:6px;overflow-x:auto}.ws-sidebar-nav a{white-space:nowrap;padding:9px 12px;font-size:13px}.ws-sidebar-settings{margin-top:0;border-top:0!important;padding-top:9px!important}.ws-layout>.ws-main{padding:24px 16px 32px}.task-workbench .app-header{height:60px;padding:0 16px}.task-workbench .brand strong{font-size:20px}}
+
+.ws-delete-link{color:#a12f35}
+.ws-delete-link:hover:not(:disabled){color:#7e2025}
+.ws-delete-confirm.primary{background:#a12f35;border-color:#a12f35;color:white}
+.ws-delete-confirm.primary:hover:not(:disabled){background:#7e2025;border-color:#7e2025}
+.ws-dialog:has(.ws-delete-body){max-width:calc(100% - 32px)}
+.ws-delete-body{overflow-wrap:anywhere}
+.ws-delete-body p{margin-block:0 10px}
+.ws-delete-body p:last-child{margin-bottom:0}

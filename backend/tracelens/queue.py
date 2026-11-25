@@ -108,10 +108,13 @@ class JobQueue:
 
     def schedule_feedback(self):
         for job_id in self.store.auto_feedback_jobs():
+            job = self.store.job(job_id)
+            if not job:
+                continue
             execution = job_settings(self.store,self.settings,job_id)
-            if feedback_availability(self.store.job(job_id),execution)[0]:
+            if feedback_availability(job,execution)[0]:
                 try:
                     self.store.enqueue_feedback(job_id)
                 except ValueError:
-                    pass  # A newer analysis may have started before scheduling.
+                    pass  # The diagnosis may have changed before scheduling.
 

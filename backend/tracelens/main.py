@@ -40,6 +40,7 @@ class FeedbackRegeneration(Contract):
 def create_app(settings=None, *, frontend_dir=None):
     settings = settings or Settings()
     store = Store(settings.data_dir)
+    store.purge_deleted_artifacts()
     loaded_settings = load_runtime_settings(store, settings)
     for key in RUNTIME_FIELDS:
         setattr(settings, key, getattr(loaded_settings, key))
@@ -107,6 +108,14 @@ def create_app(settings=None, *, frontend_dir=None):
     @app.get("/api/traces/{trace_id}")
     def trace(trace_id: str):
         return trace_with_source_summary(require_trace(trace_id))
+
+    @app.delete("/api/traces/{trace_id}")
+    def delete_trace(trace_id: str):
+        try:
+            write(lambda: store.delete_trace(trace_id))
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return {"deleted": True}
 
     @app.get("/api/traces/{trace_id}/execution")
     def trace_execution(trace_id: str):
@@ -252,7 +261,7 @@ def create_app(settings=None, *, frontend_dir=None):
             if body.mode == "live" and trace["data"]["outcome"] == "unknown":
                 raise HTTPException(422, "轨迹缺少业务结果，请重新导入并标记为业务成功或业务失败")
         frozen = snapshot(execution, connection_id) if body.mode == "live" else None
-        return {"jobs": [store.enqueue(t, body.mode, config=frozen) for t in dict.fromkeys(body.trace_ids)]}
+        return {"jobs": [write(lambda: store.enqueue(t, body.mode, config=frozen)) for t in dict.fromkeys(body.trace_ids)]}
 
     @app.post("/api/jobs/{job_id}/retry")
     def retry(job_id: str):
@@ -274,7 +283,7 @@ def create_app(settings=None, *, frontend_dir=None):
                 raise HTTPException(409, '该请求已被重试或已不再处于失败状态')
             return store.job(ids[0])
         frozen = (store.job_config(job_id) or snapshot(execution)) if job["mode"] == "live" else None
-        return store.enqueue(job["trace_id"], job["mode"], config=frozen)
+        return write(lambda: store.enqueue(job["trace_id"], job["mode"], config=frozen, retry_of=job_id))
 
     @app.post('/api/jobs/{job_id}/regenerate')
     def regenerate(job_id: str):

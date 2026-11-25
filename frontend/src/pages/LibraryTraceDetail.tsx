@@ -2,6 +2,7 @@ import {ArrowLeft} from 'lucide-react'
 import {dateLabel} from '../api'
 import {sourceLabel} from '../branding'
 import {patternTaskPath} from '../patterns'
+import DeleteRecord, {traceDeletionBlock} from '../components/DeleteRecord'
 import ExecutionTrace from '../components/ExecutionTrace'
 import {businessOutcomes, libraryDiagnosis, libraryPath} from '../traceLibrary'
 import type {LibraryHistory} from '../traceLibrary'
@@ -10,8 +11,8 @@ import {Badge, formatLabel, tracePath, useResource, useWorkspace} from '../works
 
 const poll = (history: LibraryHistory) => history.diagnoses.some(row => ['running', 'queued'].includes(row.status)) ? 2500 : 0
 
-export default function LibraryTraceDetail({id, params}: {id: string; params: URLSearchParams}) {
-  const {refresh, version} = useWorkspace()
+export default function LibraryTraceDetail({id, params, onDeleted}: {id: string; params: URLSearchParams; onDeleted: (id: string) => void}) {
+  const {go, refresh, version} = useWorkspace()
   const {data: trace, error} = useResource<Trace>(`/traces/${id}`, version)
   const {data: history, error: historyError} = useResource<LibraryHistory>(`/trace-library/${id}/history`, version, poll)
   const back = '#' + libraryPath(params)
@@ -27,7 +28,12 @@ export default function LibraryTraceDetail({id, params}: {id: string; params: UR
     <div className="ws-heading">
       <div><div className="ws-heading-title"><h1>{title}</h1><Badge value={outcome}>{businessOutcomes[outcome as keyof typeof businessOutcomes]}</Badge></div>
         <p>{formatLabel(input_format ?? (otel ? 'otel_genai' : 'messages'))} · {deepagent ? `${deepagent.span_count} 个调用` : `${messages.length} 条消息`}{source ? ` · ${sourceLabel(source)}` : ''}</p></div>
-      <a className="secondary" href={back}><ArrowLeft size={15}/>返回轨迹库</a>
+      <div className="ws-actions">
+        <a className="secondary" href={back}><ArrowLeft size={15}/>返回轨迹库</a>
+        <DeleteRecord id={id} name={title} kind="trace"
+          blocked={history ? traceDeletionBlock(history.tasks.length, history.diagnoses.some(row => ['queued', 'running'].includes(row.status))) : undefined}
+          onDeleted={() => {onDeleted(id); go(libraryPath(params), true)}}/>
+      </div>
     </div>
     {task_description ? <details className="ws-trace-context"><summary>轨迹任务说明</summary><p>{task_description}</p></details> : null}
     <div className="library-detail-grid">
