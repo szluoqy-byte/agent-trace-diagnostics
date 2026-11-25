@@ -1,12 +1,12 @@
 # OTel GenAI 数据接入
 
-这是新增的导入格式。原有 TrajDebug 统一 JSON、messages 日志、消息流 JSONL，以及已有轨迹和诊断记录继续兼容。所有格式使用同一个前端“导入轨迹”入口，可以在一批中选择不同格式的文件。
+工作台统一导入 DeepAgent 和 OTel GenAI，可在一批中混合上传两种来源。TrajDebug 统一 JSON 和标准消息日志用于离线评测，已入库的历史轨迹和诊断记录仍可查看。
 
 ## 使用
 
 1. 导出 **OTLP JSON**：顶层 `resourceSpans`，其下 `scopeSpans[].spans[]`。JSONL 每行也必须是完整的 OTLP 批次对象。同文件按 `traceId` 合并批次，每个 GenAI trace 生成一条轨迹；不同文件应分别包含完整会话。
 2. 在“导入轨迹”选择文件，声明业务运行成功或失败。Span 的 OK / ERROR 状态不会自动转换为任务结果。
-3. 检查任务、消息和导入提示。逐消息展开“OTel 来源”，查看 trace ID、span ID、属性和消息位置、原始 span、resource、scope 和源批次位置。
+3. 在“调用时序”查看各 span 的起止和重叠，点击调用查看输入和输出。在“诊断步骤”展开“OTel 来源”，查看 trace ID、span ID、属性和消息位置、原始 span、resource、scope 和源批次位置。
 4. 点击“开始诊断”，使用原有官方流程。证据跳转、人工复核、历史和报告导出继续可用。
 
 可直接上传 [OTLP GenAI 示例](../examples/otel-genai.json)。它是合成格式示例，包含两次模型调用及一次工具调用，转换为四条消息；不是论文测试集，不会自动调用模型。

@@ -346,7 +346,7 @@ def trace_with_source_summary(trace):
     return {**trace, "data": {**trace["data"], "deepagent": summary}}
 
 
-def source_nodes(spans):
+def span_display_layout(spans):
     by_id = {span["span_id"]: span for span in spans}
     try:
         ordered_ids = [span_id for span_id, event in span_timeline(by_id) if event == "start"]
@@ -355,9 +355,16 @@ def source_nodes(spans):
         ordered_ids = sorted(by_id, key=lambda span_id: (by_id[span_id]["start_time"], span_id))
     origin = min((span["start_time"] for span in by_id.values()), default=0)
     depths = {}
-    nodes = []
     for span_id in ordered_ids:
         span = by_id[span_id]
+        depth = depths.get(span.get("parent_id"), -1) + 1
+        depths[span_id] = depth
+        yield span, span["start_time"] - origin, span["end_time"] - origin, depth
+
+
+def source_nodes(spans):
+    nodes = []
+    for span, start_offset, end_offset, depth in span_display_layout(spans):
         attrs = obj(span.get("attributes"))
         kind = span_kind(span, attrs)
         duration = span.get("duration")
@@ -365,11 +372,7 @@ def source_nodes(spans):
             duration = span["end_time"] - span["start_time"]
         status_code = span.get("status_code")
         finish = finish_reason(kind, attrs, obj(span.get("span_output")))
-        start_offset = span["start_time"] - origin
-        end_offset = span["end_time"] - origin
-        depth = depths.get(span.get("parent_id"), -1) + 1
-        depths[span_id] = depth
-        nodes.append({"span_id": span_id, "title": span_title(span, kind), "kind": kind,
+        nodes.append({"span_id": span["span_id"], "title": span_title(span, kind), "kind": kind,
                       "duration_us": duration if 0 <= duration < 2**64 else None,
                       "start_offset_us": start_offset if start_offset < 2**64 else None,
                       "end_offset_us": end_offset if start_offset <= end_offset < 2**64 else None,

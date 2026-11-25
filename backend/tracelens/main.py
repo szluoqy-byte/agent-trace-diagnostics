@@ -13,7 +13,8 @@ from pydantic import Field, ValidationError
 from .config import Settings, ROOT
 from .models import Contract, Review, trajectory_format
 from .deepagent import source_bundle, trace_with_source_summary
-from .normalize import parse_upload, normalize
+from .normalize import parse_upload
+from .execution_view import execution_view
 from .store import Store
 from .queue import JobQueue
 from .trajdebug import UPSTREAM_COMMIT, UPSTREAM_URL
@@ -107,6 +108,10 @@ def create_app(settings=None, *, frontend_dir=None):
     def trace(trace_id: str):
         return trace_with_source_summary(require_trace(trace_id))
 
+    @app.get("/api/traces/{trace_id}/execution")
+    def trace_execution(trace_id: str):
+        return execution_view(require_trace(trace_id)["data"])
+
     @app.get('/api/trace-library')
     def trace_library(
         page: int = Query(1, ge=1), page_size: Literal['10', '20', '50'] = '10',
@@ -155,7 +160,7 @@ def create_app(settings=None, *, frontend_dir=None):
                 total += len(content)
                 if total > 20 * 1024 * 1024 or len(content) > 10 * 1024 * 1024:
                     raise HTTPException(413, "单文件最多 10MB，每批最多 20MB")
-                parsed.extend(parse_upload(content, file.filename or "trajectory.json"))
+                parsed.extend(parse_upload(content, file.filename or "trajectory.json", workbench=True))
                 if len(parsed) > 50:
                     raise HTTPException(413, "每批最多导入 50 条轨迹")
         except (ValueError, UnicodeDecodeError, ValidationError) as e:

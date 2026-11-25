@@ -200,25 +200,37 @@ def test_ambiguous_or_malformed_telemetry_is_rejected(envelope, problem, match):
         parsed(envelope)
 
 
-def test_mixed_frontend_upload_is_atomic_idempotent_and_persists_sources(tmp_path, envelope):
+def test_mixed_frontend_upload_is_atomic_idempotent_and_persists_sources(tmp_path, envelope, deepagent_template):
     app = create_app(Settings(data_dir=tmp_path, base_url="http://127.0.0.1:9/v1", model="fixture"))
     # No lifespan: validate queue submission without making model calls.
     client = TestClient(app)
-    native = {"messages": [{"step": 0, "role": "assistant", "content": "native"}], "metadata": {"dataset": "native", "task_id": "native", "reward": 1, "annotation": {}}}
-    generic = {"messages": [{"role": "user", "content": "generic"}, {"role": "assistant", "content": "answer"}]}
+    deepagent_template["outcome"] = "succeeded"
     files = [("files", ("otel.json", json.dumps(envelope), "application/json")),
-             ("files", ("native.json", json.dumps(native), "application/json")),
-             ("files", ("messages.jsonl", "\n".join(json.dumps(m) for m in generic["messages"]), "application/x-ndjson"))]
+             ("files", ("deepagent.json", json.dumps(deepagent_template), "application/json"))]
+    raw_messages = "\n".join(json.dumps({"role": role, "content": role}) for role in ("user", "assistant"))
+    rejected = client.post("/api/import", files=[*files, ("files", ("messages.jsonl", raw_messages))])
+    assert rejected.status_code == 422 and "仅支持 DeepAgent" in rejected.json()["detail"]
+    assert client.get("/api/traces").json() == []
     response = client.post("/api/import", files=files, data={"outcome": "failed"})
     assert response.status_code == 200, response.text
     ids = response.json()["trace_ids"]
-    assert len(ids) == 3
+    assert len(ids) == 2
     assert client.post("/api/import", files=files, data={"outcome": "failed"}).json()["trace_ids"] == ids
     trace = client.get("/api/traces/" + ids[0]).json()["data"]
     assert trace["outcome"] == "failed" and trace["otel"]["spans"]
     assert client.get("/api/traces/" + ids[1]).json()["data"]["outcome"] == "succeeded"
     assert client.get(f"/api/traces/{ids[0]}/otel").json()["spans"][0]["span"] == spans(envelope)[0]
     assert client.get(f"/api/traces/{ids[1]}/otel").status_code == 404
+    otel_calls = client.get(f"/api/traces/{ids[0]}/execution").json()
+    assert [call["span_id"] for call in otel_calls["calls"]] == [span["spanId"] for span in spans(envelope)]
+    assert [call["duration_us"] for call in otel_calls["calls"]] == [
+        (int(span["endTimeUnixNano"]) - int(span["startTimeUnixNano"])) / 1000 for span in spans(envelope)
+    ]
+    assert [ref["span_id"] for ref in otel_calls["message_sources"] if ref["step"] == 2 and ref["primary"]] == [spans(envelope)[1]["spanId"]]
+    deepagent_calls = client.get(f"/api/traces/{ids[1]}/execution").json()
+    assert [call["span_id"] for call in deepagent_calls["calls"]] == ["agent", "model"]
+    assert deepagent_calls["calls"][1]["depth"] == 1
+    assert [(ref["step"], ref["span_id"]) for ref in deepagent_calls["message_sources"]] == [(0, "model"), (1, "agent")]
     queued = client.post("/api/jobs", json={"trace_ids": ids, "mode": "live"})
     assert queued.status_code == 200
     job_id = queued.json()["jobs"][0]["id"]
@@ -240,6 +252,6 @@ def test_mixed_frontend_upload_is_atomic_idempotent_and_persists_sources(tmp_pat
     modified["otel"]["warnings"].append("display-only change")
     assert fingerprint(Trajectory.model_validate(trace)) == fingerprint(Trajectory.model_validate(modified))
     before = len(client.get("/api/traces").json())
-    broken = [("files", ("valid.json", json.dumps({"messages": [{"role": "user", "content": "new"}]}))), ("files", ("bad.json", json.dumps({"resourceSpans": "invalid"})))]
+    broken = [files[0], ("files", ("bad.json", json.dumps({"resourceSpans": "invalid"})))]
     assert client.post("/api/import", files=broken).status_code == 422
     assert len(client.get("/api/traces").json()) == before

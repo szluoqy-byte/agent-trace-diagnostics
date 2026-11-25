@@ -76,7 +76,7 @@ export default function TraceLibrary({params, selected, onSelect}: {
 
   return <>
     <div className="ws-heading">
-      <div><h1>轨迹库</h1><p>导入或查找轨迹，查看诊断记录或复用到新任务。支持 DeepAgent、OTel GenAI 和标准轨迹。</p></div>
+      <div><h1>轨迹库</h1><p>导入或查找轨迹，查看诊断记录或复用到新任务。支持导入 DeepAgent 和 OTel GenAI 轨迹文件。</p></div>
       <div className="ws-actions"><input ref={importInput} hidden type="file" multiple accept=".json,.jsonl,application/json,application/x-ndjson"
         aria-label="选择要导入的轨迹文件" onChange={event => {void importFiles(Array.from(event.target.files ?? [])); event.target.value = ''}}/>
         <button className="secondary" disabled={importing} onClick={() => importInput.current?.click()}><Upload size={15}/>{importing ? '正在导入…' : '导入轨迹'}</button>

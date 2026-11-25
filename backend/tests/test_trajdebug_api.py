@@ -6,11 +6,12 @@ from test_trajdebug import pipeline_trace, provider
 from tracelens.config import Settings
 from tracelens.demo import demo_trace, demo_report
 from tracelens.main import create_app
+from tracelens.normalize import parse_upload
 
 
-def test_import_requires_an_explicit_outcome_before_native_diagnosis(tmp_path):
+def test_import_requires_an_explicit_outcome_before_native_diagnosis(tmp_path, deepagent_template):
     app = create_app(Settings(data_dir=tmp_path, base_url='http://127.0.0.1:9/v1', model='fixture'))
-    data = {'messages': [{'role':'user','content':'task'}, {'role':'assistant','content':'answer'}]}
+    data = deepagent_template
     with TestClient(app) as client:
         response = client.post('/api/import', files={'files':('x.json',json.dumps(data),'application/json')})
         trace_id = response.json()['trace_ids'][0]
@@ -54,11 +55,21 @@ def test_review_and_native_artifact_exports_keep_original_output(tmp_path):
 
 
 def test_trajectory_templates_are_downloadable(tmp_path):
-    app = create_app(Settings(data_dir=tmp_path))
+    frontend = tmp_path / 'frontend'
+    (frontend / 'assets').mkdir(parents=True)
+    (frontend / 'index.html').touch()
+    app = create_app(Settings(data_dir=tmp_path / 'data'), frontend_dir=frontend)
     with TestClient(app) as client:
-        response = client.get('/templates/trajectory-json-template.json')
-    assert response.status_code == 200
-    assert response.json()['metadata']['dataset'] == 'custom'
+        for filename, count in [
+            ('deepagent-template.json', 1),
+            ('otel-genai-template.json', 1),
+            ('otel-genai-batch-template.json', 2),
+        ]:
+            response = client.get('/templates/' + filename)
+            assert response.status_code == 200
+            assert len(parse_upload(response.content, filename, workbench=True)) == count
+        assert client.get('/templates/trajectory-json-template.json').status_code == 404
+        assert client.get('/templates/trajectory-jsonl-template.jsonl').status_code == 404
 
 
 def test_regeneration_calls_model_again_and_preserves_previous_attempt(tmp_path, provider):

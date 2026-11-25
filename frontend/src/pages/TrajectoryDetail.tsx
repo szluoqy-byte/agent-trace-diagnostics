@@ -8,9 +8,7 @@ import Citation from '../components/Citation'
 import {patternTaskPath} from '../patterns'
 import type {PatternMembers} from '../patterns'
 import Inspector from '../components/Inspector'
-import TraceViewer from '../components/TraceViewer'
-import OTelOverview from '../components/OTelOverview'
-import DeepAgentOverview from '../components/DeepAgentOverview'
+import ExecutionTrace from '../components/ExecutionTrace'
 import {Badge,diagnosisStatus,filterQuery,formatLabel,taskPath,tracePath,useResource,useWorkspace} from '../workspace'
 import type {ActionResult,AnalysisTask,TraceDetail} from '../workspace'
 
@@ -68,16 +66,13 @@ export default function TrajectoryDetail({id,traceId,params}:{id:string;traceId:
     </>:snapshotError?<span>无法读取失败模式分析使用的诊断记录。</span>:null}
   </div>:null}
   {readonly&&!draft?<div className="ws-warning">正在查看历史分析记录。可查看并导出已有结果。</div>:null}
-  <details className="ws-trace-context"><summary>轨迹任务说明及来源</summary><p>{trace.data.task_description||'未提供任务说明。'}</p><p className="muted">来源：{sourceLabel(trace.data.source)}</p></details><OTelOverview trace={trace}/>
-  {trace.data.input_format==='deepagent'&&!trace.data.deepagent?<p className="ws-info">重新上传原文件后可查看 DeepAgent 调用节点。</p>:null}
+  <details className="ws-trace-context"><summary>轨迹任务说明及来源</summary><p>{trace.data.task_description||'未提供任务说明。'}</p><p className="muted">来源：{sourceLabel(trace.data.source)}</p></details>
   <div className="ws-detail-status"><span>{uiText(job?.stage)||'尚未开始分析'}{job?.status==='running'?` · ${job.progress}%`:''}</span><div className="ws-actions">{canRun?<button className="primary small" disabled={busy||blocked} onClick={()=>void diagnose()}>{job?<RotateCcw size={14}/>:<Play size={14}/>} {job?'重试诊断':'诊断轨迹'}</button>:null}<button className="secondary small" disabled={job?.status!=='completed'} onClick={()=>setDialog('export')}><Download size={14}/>导出诊断报告</button></div></div>
   {blocked?<p className="ws-warning">该轨迹缺少业务结果。请重新上传并填写业务结果。</p>:null}
   {job?.status==='queued'||job?.status==='running'?<progress className="diagnosis-progress" max={100} value={job.progress} aria-label="诊断进度"/>:null}
   {data.attempts.length>1?<details className="ws-attempts"><summary>诊断请求记录 · {data.attempts.length} 次尝试</summary>{data.attempts.map(a=><div key={a.id}><span>第 {a.attempt} 次 · {dateLabel(a.created_at)} · {diagnosisStatus[a.status]}</span>{a.error?<small>{uiText(a.error)}</small>:null}</div>)}</details>:null}
   {report?.stage_metrics?.length?<details className="stage-details"><summary>诊断阶段与模型用量</summary><div className="stage-metrics">{report.stage_metrics.map(m=><div key={m.id}><span>{m.name}</span><span>{m.requests} 次请求</span><span>{m.seconds}s</span></div>)}</div></details>:null}
-  <div className="ws-diagnostic-grid">{trace.data.deepagent
-    ? <DeepAgentOverview key={`${runId}-${traceId}`} trace={trace} criticalStep={critical} selection={selection}/>
-    : <TraceViewer key={`${runId}-${traceId}`} messages={trace.data.messages} criticalStep={critical} selection={selection} otel={trace.data.otel}/>}
+  <div className="ws-diagnostic-grid"><ExecutionTrace key={`${runId}-${traceId}`} trace={trace} criticalStep={critical} selection={selection}/>
     <Inspector draft={draft} key={`${runId}-${traceId}-${job?.id??'pending'}`} job={inspectorJob} report={report} onJump={e=>setSelection({...e})} onReview={()=>setDialog('review')} onFeedback={job&&!readonly?feedback:undefined}
       busy={busy} onRegenerate={canRegenerate?regenerate:undefined} onRegenerateFeedback={job&&!readonly?regenerateFeedback:undefined}/></div>
   {dialog==='review'&&job?.result?.attribution&&!readonly?<ReviewDialog job={job} messages={trace.data.messages} onClose={close} onDone={()=>{close();refresh();notify('复核已保存')}}/>:null}{dialog==='export'&&job?<ExportDialog job={job} onClose={close}/>:null}</>

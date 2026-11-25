@@ -1,0 +1,32 @@
+{
+  "status": "OK",
+  "result": {
+    "totalSpans": 2,
+    "spans": [
+      {
+        "trace_id": "inventory-check",
+        "span_id": "agent",
+        "parent_id": null,
+        "span_name": "inventory_agent",
+        "ai_span_kind": "AGENT",
+        "start_time": 1000000,
+        "end_time": 1350000,
+        "duration": 350000,
+        "span_input": "{\"message\":\"查询商品 A 的可售库存\"}",
+        "span_output": "{\"info\":\"{\\\"finish\\\":\\\"stop\\\"}\",\"parts\":\"[]\"}"
+      },
+      {
+        "trace_id": "inventory-check",
+        "span_id": "model",
+        "parent_id": "agent",
+        "span_name": "chat",
+        "ai_span_kind": "LLM",
+        "start_time": 1100000,
+        "end_time": 1300000,
+        "duration": 200000,
+        "span_input": "{\"messages\":[{\"role\":\"user\",\"content\":\"查询商品 A 的可售库存\"}]}",
+        "span_output": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"库存服务未返回数量。\"},\"finish_reason\":\"stop\"}]}"
+      }
+    ]
+  }
+}

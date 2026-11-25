@@ -67,13 +67,18 @@ def normalize(data: dict, filename: str = "trajectory.json") -> Trajectory:
                       agent_framework_description=str(extra.get("agent_framework_description", "")))
 
 
-def parse_upload_item(data, filename: str) -> list[Trajectory]:
+WORKBENCH_FORMAT_ERROR = "工作台仅支持 DeepAgent 轨迹 JSON 或 OTel GenAI 轨迹文件"
+
+
+def parse_upload_item(data, filename: str, *, workbench=False) -> list[Trajectory]:
     if is_deepagent(data):
         return convert_deepagent(data, filename)
+    if workbench:
+        raise ValueError(WORKBENCH_FORMAT_ERROR)
     return [normalize(data, filename)]
 
 
-def parse_upload(content: bytes, filename: str) -> list[Trajectory]:
+def parse_upload(content: bytes, filename: str, *, workbench=False) -> list[Trajectory]:
     encoding = "utf-16" if content.startswith((BOM_UTF16_LE, BOM_UTF16_BE)) else "utf-8-sig"
     try:
         text = content.decode(encoding)
@@ -96,9 +101,9 @@ def parse_upload(content: bytes, filename: str) -> list[Trajectory]:
         traces = convert_envelopes(envelopes, filename) if envelopes else []
         for index, item in enumerate(others, 1):
             name = filename if len(data) == 1 else f"{filename}:{index}"
-            traces.extend(parse_upload_item(item, name))
+            traces.extend(parse_upload_item(item, name, workbench=workbench))
         return traces
-    return parse_upload_item(data, filename)
+    return parse_upload_item(data, filename, workbench=workbench)
 
 
 def fingerprint(trace: Trajectory) -> str:

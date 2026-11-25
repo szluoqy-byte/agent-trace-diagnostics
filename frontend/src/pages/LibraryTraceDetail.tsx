@@ -2,9 +2,7 @@ import {ArrowLeft} from 'lucide-react'
 import {dateLabel} from '../api'
 import {sourceLabel} from '../branding'
 import {patternTaskPath} from '../patterns'
-import OTelOverview from '../components/OTelOverview'
-import DeepAgentOverview from '../components/DeepAgentOverview'
-import TraceViewer from '../components/TraceViewer'
+import ExecutionTrace from '../components/ExecutionTrace'
 import {businessOutcomes, libraryDiagnosis, libraryPath} from '../traceLibrary'
 import type {LibraryHistory} from '../traceLibrary'
 import type {Trace} from '../types'
@@ -32,11 +30,8 @@ export default function LibraryTraceDetail({id, params}: {id: string; params: UR
       <a className="secondary" href={back}><ArrowLeft size={15}/>返回轨迹库</a>
     </div>
     {task_description ? <details className="ws-trace-context"><summary>轨迹任务说明</summary><p>{task_description}</p></details> : null}
-    <OTelOverview trace={trace}/>
-    {input_format === 'deepagent' && !deepagent ? <p className="ws-info">重新上传原文件后可查看 DeepAgent 调用节点。</p> : null}
     <div className="library-detail-grid">
-      {deepagent ? <DeepAgentOverview key={id} trace={trace} criticalStep={null} selection={null}/>
-        : <TraceViewer key={id} messages={messages} criticalStep={null} selection={null} otel={otel}/>}
+      <ExecutionTrace key={id} trace={trace} criticalStep={null} selection={null}/>
       <section className="ws-surface library-history" aria-busy={!history && !historyError}>
         <h2>诊断记录</h2>
         {historyError ? <div role="alert" className="error-inline">{historyError} <button className="text-button" onClick={refresh}>重试</button></div> :

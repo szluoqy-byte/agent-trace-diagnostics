@@ -159,16 +159,17 @@ def test_trace_library_deduplicates_shared_traces_and_links_history(tmp_path):
     assert client.get('/api/trace-library/missing/history').status_code == 404
 
 
-def test_preview_mixed_formats_exclusion_unknown_dedup_and_atomic_create(tmp_path):
+def test_preview_mixed_formats_exclusion_unknown_dedup_and_atomic_create(tmp_path, deepagent_template):
     app,client,_=setup(tmp_path,1)
-    native={'task_id':'native','outcome':'succeeded','messages':[{'role':'assistant','content':'ok'}]}
+    deepagent_template['outcome'] = 'succeeded'
     otel=(Path(__file__).parents[2]/'examples/otel-genai.json').read_bytes()
-    files=[('files',('native.json',json.dumps(native),'application/json')),('files',('otel.json',otel,'application/json')),('files',('bad.json','broken','application/json'))]
+    files=[('files',('deepagent.json',json.dumps(deepagent_template),'application/json')),('files',('otel.json',otel,'application/json')),
+           ('files',('old.json',json.dumps({'messages':[{'role':'assistant','content':'legacy'}]}),'application/json'))]
     response=client.post('/api/import/preview',files=files)
     assert response.status_code==200,response.text
     preview=response.json()
-    assert {r['input_format'] for r in preview['rows']}=={'messages','otel_genai'}
-    assert preview['files'][2]['errors']
+    assert {r['input_format'] for r in preview['rows']}=={'deepagent','otel_genai'}
+    assert '仅支持 DeepAgent' in preview['files'][2]['errors'][0]
     before=len(app.state.store.traces())
     body={'name':'mixed','preview_id':preview['id'],'unknown_outcome':'failed'}
     assert client.post('/api/tasks',json=body).status_code==422
@@ -179,7 +180,7 @@ def test_preview_mixed_formats_exclusion_unknown_dedup_and_atomic_create(tmp_pat
     saved=app.state.store.task_inputs(task.json()['task_id'])
     assert {t['data']['outcome'] for t in saved}=={'failed','succeeded'}
     assert any(t['data']['otel'] for t in saved)
-    duplicate=client.post('/api/import/preview',files=[('files',('a.json',json.dumps(native),'application/json')),('files',('b.json',json.dumps(native),'application/json'))]).json()
+    duplicate=client.post('/api/import/preview',files=[('files',('a.json',json.dumps(deepagent_template),'application/json')),('files',('b.json',json.dumps(deepagent_template),'application/json'))]).json()
     assert duplicate['duplicates']==1 and len(duplicate['rows'])==2
     result=client.post('/api/tasks',json={'name':'dedup','preview_id':duplicate['id'],'excluded_files':['0']})
     assert result.status_code==200
@@ -187,9 +188,9 @@ def test_preview_mixed_formats_exclusion_unknown_dedup_and_atomic_create(tmp_pat
     assert len(app.state.store.traces())==len(saved)+before
 
 
-def test_unknown_outcome_and_missing_model_cannot_start(tmp_path):
+def test_unknown_outcome_and_missing_model_cannot_start(tmp_path, deepagent_template):
     app,client,_=setup(tmp_path,1)
-    raw={'messages':[{'role':'assistant','content':'unknown'}]}
+    raw=deepagent_template
     p=client.post('/api/import/preview',files={'files':('u.json',json.dumps(raw),'application/json')}).json()
     body={'name':'unknown','preview_id':p['id']}
     assert client.post('/api/tasks',json=body).status_code==422

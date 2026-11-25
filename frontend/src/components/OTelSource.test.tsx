@@ -2,7 +2,6 @@
 import {afterEach, expect, it} from 'vitest'
 import {cleanup, fireEvent, render, screen} from '@testing-library/react'
 import TraceViewer from './TraceViewer'
-import OTelOverview from './OTelOverview'
 import type {Trace} from '../types'
 
 afterEach(cleanup)
@@ -17,11 +16,4 @@ it('expands a message source to the stored span and preserves evidence jump high
   fireEvent(details, new Event('toggle'))
   expect((await screen.findByLabelText(`原始 span ${'b'.repeat(16)}`)).textContent).toContain('"code": 2')
   expect(screen.getByText('gen_ai.output.messages[0]')).toBeTruthy()
-})
-
-it('shows the GenAI trace summary, import warnings and source download link', () => {
-  render(<OTelOverview trace={trace}/>)
-  expect(screen.getByText('1 个 span → 1 条消息')).toBeTruthy()
-  expect(screen.getByText('output missing in a later span')).toBeTruthy()
-  expect(screen.getByRole('link').getAttribute('href')).toBe('/api/traces/test/otel')
 })

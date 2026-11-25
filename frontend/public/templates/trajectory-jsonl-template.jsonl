@@ -1,1 +1,0 @@
-{"title":"示例轨迹 1","task_id":"replace-with-task-id-1","metadata":{"task_id":"replace-with-task-id-1","task_description":"请填写任务和约束。","dataset":"custom","reward":0,"annotation":{}},"messages":[{"step":0,"role":"user","content":"请填写用户请求。"},{"step":1,"role":"assistant","content":"请填写 Agent 回复或工具调用。"}]}

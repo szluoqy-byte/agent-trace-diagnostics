@@ -10,8 +10,15 @@ function MessageSources({message, spans}: {message:Message; spans:Map<string,OTe
   }) : null}</details>
 }
 
-interface Props { messages: Message[]; criticalStep: number | null; selection: Evidence | null; otel?: OTelProvenance | null }
-export default function TraceViewer({messages, criticalStep, selection, otel}: Props) {
+interface Props {
+  messages: Message[]
+  criticalStep: number | null
+  selection: Evidence | null
+  otel?: OTelProvenance | null
+  sourceCalls?: ReadonlyMap<number, string>
+  onOpenCall?: (spanId: string) => void
+}
+export default function TraceViewer({messages, criticalStep, selection, otel, sourceCalls, onOpenCall}: Props) {
   const [query, setQuery] = useState('')
   const [role, setRole] = useState('all')
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
@@ -41,12 +48,13 @@ export default function TraceViewer({messages, criticalStep, selection, otel}: P
     const index = selection?.step === message.step ? (sourceStart >= 0 && content.startsWith(quote,sourceStart) ? sourceStart : content.indexOf(quote)) : quote ? content.toLowerCase().indexOf(quote.toLowerCase()) : -1
     return quote && index >= 0 ? <>{content.slice(0,index)}<mark>{content.slice(index,index + quote.length)}</mark>{content.slice(index + quote.length)}</> : content
   }
-  return <section className="panel trace-panel">
-    <div className="panel-heading"><h2>执行轨迹 <span className="count">{messages.length} 步</span></h2><label className="search-box"><Search size={15}/><input type="search" aria-label="搜索轨迹内容" placeholder="搜索轨迹内容…" value={query} onChange={e => setQuery(e.target.value)}/></label></div>
+  return <section className="execution-messages">
+    <div className="panel-heading"><h3>诊断步骤</h3><label className="search-box"><Search size={15}/><input type="search" aria-label="搜索轨迹内容" placeholder="搜索轨迹内容…" value={query} onChange={e => setQuery(e.target.value)}/></label></div>
     <div className="role-filter"><button className={role === 'all' ? 'active' : ''} aria-pressed={role==='all'} onClick={() => setRole('all')}>全部角色</button>{['user','assistant','tool','system'].map(r => <button key={r} className={role === r ? 'active' : ''} aria-pressed={role===r} onClick={() => setRole(r)}>{r}</button>)}<span aria-live="polite">{visible.length} 条</span></div>
     <div className="messages" ref={viewport}>{visible.length ? visible.map(m => <article tabIndex={-1} data-step={m.step} id={'step-' + m.step} key={m.step} className={'message ' + (m.step === criticalStep ? 'critical ' : '') + (selection?.step === m.step ? 'focused' : '')}>
       <span className="timeline-node"/><span className="step-number">#{m.step}</span><div className="message-main"><div className="message-meta"><span className={'role role-' + m.role}>{m.role}</span>{m.name && m.name !== m.role ? <span className="muted">{m.name}</span> : null}{m.step === criticalStep ? <span className="critical-label">关键步骤</span> : null}<span className="source-step">{m.source_refs?.length ? 'OTel GenAI' : `原始 #${m.source_step}`}</span></div>
       <pre>{renderContent(m)}</pre>{m.content.length > 900 ? <button className="text-button expand-button" aria-expanded={expanded.has(m.step)} onClick={() => setExpanded(old => {const next=new Set(old); if(next.has(m.step)) next.delete(m.step); else next.add(m.step); return next})}><ChevronDown size={13}/>{expanded.has(m.step) ? '收起内容' : `展开完整内容 (${m.content.length.toLocaleString()} 字符)`}</button> : null}
+      {sourceCalls?.has(m.step) && onOpenCall ? <button type="button" className="text-button" onClick={() => onOpenCall(sourceCalls.get(m.step)!)}>查看来源调用</button> : null}
       {m.source_refs?.length ? <MessageSources message={m} spans={spans}/> : null}</div>
     </article>) : <div className="empty">没有匹配的消息<button className="secondary small" onClick={()=>{setQuery('');setRole('all')}}>清除搜索和筛选</button></div>}</div>
     <div className="panel-foot">{otel ? '步骤从 #0 开始 · 按消息历史还原 · 可展开查看原始 span' : '步骤从 #0 开始 · 原始消息顺序与内容保留'}</div>

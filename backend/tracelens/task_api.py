@@ -6,7 +6,7 @@ from fastapi.responses import Response
 from pydantic import Field
 from .models import Contract, Trajectory, trajectory_format
 from .deepagent import trace_with_source_summary
-from .normalize import parse_upload, fingerprint
+from .normalize import WORKBENCH_FORMAT_ERROR, parse_upload, fingerprint
 from .execution import active_execution, snapshot, job_settings, run_settings
 from .feedback import feedback_availability
 from .official_samples import load_official_samples
@@ -141,7 +141,7 @@ def attach_task_routes(app, store, settings, job_view):
                 raise HTTPException(413, '单文件最多 10MB，每次最多 20MB')
             parsed, errors = [], []
             try:
-                parsed = parse_upload(content, file.filename or 'trajectory.json')
+                parsed = parse_upload(content, file.filename or 'trajectory.json', workbench=True)
                 if not parsed:
                     errors.append('文件中没有可用轨迹')
             except (ValueError, UnicodeDecodeError) as exc:
@@ -211,6 +211,8 @@ def attach_task_routes(app, store, settings, job_view):
                 if file['errors']:
                     raise HTTPException(422, '请修正或排除有格式错误的文件')
                 for value in file['traces']:
+                    if trajectory_format(value) == 'messages' and not (settings.enable_validation_data and file['id'] == 'official'):
+                        raise HTTPException(422, WORKBENCH_FORMAT_ERROR)
                     t = Trajectory.model_validate(value)
                     if t.outcome=='unknown' and body.unknown_outcome:
                         t.outcome = body.unknown_outcome

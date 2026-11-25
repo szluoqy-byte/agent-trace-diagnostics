@@ -46,10 +46,10 @@ def test_full_demo_review_export_and_restart(tmp_path):
         assert client.get(f'/api/jobs/{job_id}').json()['reviews'][0]['data']['summary'] == '人工修订结论'
 
 
-def test_import_atomic_validation_and_demo_restriction(tmp_path):
+def test_import_atomic_validation_and_demo_restriction(tmp_path, deepagent_template):
     with TestClient(create_app(Settings(data_dir=tmp_path))) as client:
         before = len(client.get('/api/traces').json())
-        good = {'messages':[{'role':'user','content':'hello'}, {'role':'assistant','content':'hi'}]}
+        good = deepagent_template
         response = client.post('/api/import',files=[('files',('good.json',json.dumps(good),'application/json')),('files',('bad.json','broken','application/json'))])
         assert response.status_code == 422
         assert len(client.get('/api/traces').json()) == before
