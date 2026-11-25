@@ -9,7 +9,7 @@ from .agentdebugx import diagnose_agentdebugx
 
 
 logger = logging.getLogger(__name__)
-FAILURE = "该引擎诊断失败，请检查模型连接后重试。"
+FAILURE = "该引擎运行失败，请重试。"
 
 
 def root_evidence(report):
@@ -61,7 +61,8 @@ async def diagnose_dual(trace, settings, progress, run_standard, *, fresh_cache=
             latest[name].update(status="completed", report=report, progress=100)
         except Exception as exc:
             logger.warning("Diagnosis engine %s failed (%s)", name, type(exc).__name__)
-            latest[name].update(status="failed", error=FAILURE, progress=100)
+            error = str(exc) if isinstance(exc, ModelError) else FAILURE
+            latest[name].update(status="failed", error=error, progress=100)
         latest[name]["seconds"] = round(monotonic() - started, 2)
         progress_by_engine[name] = 100
         await publish()

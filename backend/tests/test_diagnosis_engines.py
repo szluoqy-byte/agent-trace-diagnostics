@@ -11,6 +11,7 @@ from tracelens.config import Settings
 from tracelens.diagnosis.agentdebugx import diagnose_agentdebugx, locate_engine_quote, to_agentdebugx
 from tracelens.diagnosis.agentdebugx_prompts import ZH_PROFILE, EN_PROFILE
 from tracelens.diagnosis.compare import diagnose_dual
+from tracelens.engine import diagnose
 from tracelens.main import create_app
 
 
@@ -33,10 +34,16 @@ def agentdebugx_answer(system):
 
 
 @pytest.mark.parametrize("language", ["en", "zh"])
-async def test_upstream_agentdebugx_preserves_grounding_and_language(tmp_path, language, provider):
+async def test_upstream_agentdebugx_preserves_grounding_and_language(tmp_path, language, provider, monkeypatch):
     trace = pipeline_trace()
     endpoint, requests, state = provider
     state["extra_reply"] = agentdebugx_answer
+    if language == "en":
+        endpoint += "/chat/completions/"
+    else:
+        monkeypatch.delenv("DETECTOR_HTTP_TRUST_ENV", raising=False)
+        monkeypatch.setenv("no_proxy", "")
+        monkeypatch.setenv("http_proxy", "http://127.0.0.1:1")
     settings = Settings(data_dir=tmp_path, base_url=endpoint, model="fixture", api_key="test",
                         prompt_language=language, headers={"X-Test-Tenant": "isolated"}, max_retries=0, timeout=5)
 
@@ -56,6 +63,21 @@ async def test_upstream_agentdebugx_preserves_grounding_and_language(tmp_path, l
     assert report["evidence"][0]["original_matched"]
     assert report["official_output"]["recovery"]["proposal_count"] == 1
     assert report["engine_detection"]["metadata"]["analyzer"] == "HeuristicAnalyzer"
+
+
+async def test_dual_reports_agentdebugx_http_rejection_without_provider_details(tmp_path, provider):
+    endpoint, _, state = provider
+    state.update(critical_step=1, extra_reply=agentdebugx_answer, agentdebugx_error_status=403)
+    settings = Settings(data_dir=tmp_path, base_url=endpoint, model="fixture", api_key="test", max_retries=0)
+
+    async def progress(*_):
+        pass
+
+    result = await diagnose_dual(pipeline_trace(), settings, progress, diagnose)
+    assert result["engine_runs"]["trajdebug"]["status"] == "completed"
+    bad = result["engine_runs"]["agentdebugx"]
+    assert bad["status"] == "failed" and "HTTP 403" in bad["error"]
+    assert "private gateway detail" not in json.dumps(result)
 
 
 def test_engine_input_uses_message_order_and_canonical_visibility():

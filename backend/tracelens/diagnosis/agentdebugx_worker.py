@@ -6,6 +6,8 @@ import json
 import os
 import sys
 
+import httpx
+
 from ..model_headers import merge_headers, parse_headers
 from ..prompt_language import normalize_prompt_language
 from .agentdebugx_prompts import render_diagnostic_prompt
@@ -24,8 +26,9 @@ class WorkbenchModel(OpenAICompatClient):
     """Apply connection settings and language at the upstream client boundary."""
 
     def __init__(self, settings):
+        base_url = settings["base_url"].strip().rstrip("/").removesuffix("/chat/completions").rstrip("/")
         super().__init__(
-            base_url=settings["base_url"], api_key=os.environ["OPENAI_API_KEY"], model=settings["model"],
+            base_url=base_url, api_key=os.environ["OPENAI_API_KEY"], model=settings["model"],
             timeout=settings["timeout"], max_retries=settings["max_retries"],
             default_max_tokens=min(8192, settings["max_tokens"]),
         )
@@ -34,16 +37,33 @@ class WorkbenchModel(OpenAICompatClient):
         self.max_tokens = settings["max_tokens"]
         self.calls = 0
         self.valid_responses = 0
+        self.failure = {"kind": "response"}
 
     def complete(self, messages, *, max_tokens=None, timeout=None, **kwargs):
         self.calls += 1
-        result = super().complete(
-            messages,
-            max_tokens=min(max_tokens or self.default_max_tokens, self.max_tokens),
-            timeout=min(timeout or self.timeout, self.timeout), **kwargs,
-        )
-        if extract_json_block(result.text) is not None:
-            self.valid_responses += 1
+        try:
+            result = super().complete(
+                messages,
+                max_tokens=min(max_tokens or self.default_max_tokens, self.max_tokens),
+                timeout=min(timeout or self.timeout, self.timeout), **kwargs,
+            )
+            if extract_json_block(result.text) is not None:
+                self.valid_responses += 1
+            else:
+                finish_reason = (result.raw.get("choices") or [{}])[0].get("finish_reason")
+                self.failure = {"kind": "length" if finish_reason == "length" else "response"}
+        except httpx.HTTPStatusError as exc:
+            self.failure = {"kind": "http", "status": exc.response.status_code}
+            raise
+        except httpx.TimeoutException:
+            self.failure = {"kind": "timeout"}
+            raise
+        except httpx.RequestError:
+            self.failure = {"kind": "connection"}
+            raise
+        except (AttributeError, IndexError, KeyError, TypeError, ValueError):
+            self.failure = {"kind": "response"}
+            raise
         return result
 
     def format_diagnostic_prompt(self, key, default, values):
@@ -66,7 +86,8 @@ def run(payload):
     else:
         analysis = DeepDebugAnalyzer(llm=model, prior_findings=detection.findings).analyze(trajectory)
         if not model.valid_responses:
-            raise RuntimeError("AgentDebugX received no usable model response")
+            # Upstream may catch model exceptions and fall back to heuristics.
+            return {"failure": model.failure}
         report = analysis.report
         if analysis.diagnosis:
             links = [asdict(ref) for ref in analysis.diagnosis.evidence_references]

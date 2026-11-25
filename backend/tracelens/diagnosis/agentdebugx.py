@@ -19,6 +19,22 @@ from .agentdebugx_source import verify_agentdebugx
 
 
 EVENT_TYPES = {"assistant": "llm.response", "tool": "tool.result", "user": "observation", "system": "observation"}
+WORKER_FAILURE = "AgentDebugX 运行器异常退出，请检查服务部署和日志。"
+MODEL_FAILURES = {
+    "response": "AgentDebugX 未收到可解析的 JSON 诊断结果，请检查模型的返回格式。",
+    "length": "AgentDebugX 的模型输出被截断，请检查系统设置中的单次输出上限。",
+    "timeout": "AgentDebugX 请求模型服务超时，请检查服务负载和请求超时设置。",
+    "connection": "AgentDebugX 无法连接模型服务，请核对接口地址及服务器网络。",
+}
+HTTP_FAILURES = {
+    400: "请检查模型支持的请求参数和上下文长度。",
+    401: "模型服务认证失败，请检查 API Key 或自定义认证头。",
+    403: "模型服务拒绝访问，请检查模型权限和网关访问规则。",
+    404: "模型服务未找到请求路径或模型，请核对接口地址和模型标识。",
+    413: "请求超过服务端大小限制，请检查轨迹长度和网关限制。",
+    422: "模型服务无法处理请求，请检查模型兼容性和参数。",
+    429: "模型服务已限流或额度不足，请检查账户状态。",
+}
 
 
 def deepagent_sources(trace):
@@ -164,6 +180,9 @@ async def diagnose_agentdebugx(trace, settings, progress):
            "TRACELENS_MODEL_HEADERS": json.dumps(settings.headers),
            "PYTHONIOENCODING": "utf-8",
            "PYTHONPATH": str(Path(ROOT) / "backend") + os.pathsep + os.environ.get("PYTHONPATH", "")}
+    if os.getenv("DETECTOR_HTTP_TRUST_ENV", "").strip().lower() not in {"1", "true", "yes", "on"}:
+        # Match TrajDebug's direct-connection default. httpx honors both spellings.
+        env.update(NO_PROXY="*", no_proxy="*")
     await progress("AgentDebugX 诊断", 5, {})
     process = await asyncio.create_subprocess_exec(
         sys.executable, "-m", "tracelens.diagnosis.agentdebugx_worker", env=env,
@@ -176,8 +195,17 @@ async def diagnose_agentdebugx(trace, settings, progress):
             process.kill()
             await process.wait()
     if process.returncode:
-        raise ModelError("AgentDebugX 执行失败，请检查模型配置或重试。")
-    output = json.loads(result)
+        raise ModelError(WORKER_FAILURE)
+    try:
+        output = json.loads(result)
+    except (UnicodeError, ValueError) as exc:
+        raise ModelError(WORKER_FAILURE) from exc
+    if failure := output.get("failure"):
+        if failure["kind"] == "http":
+            status = failure["status"]
+            hint = HTTP_FAILURES.get(status, "请检查模型服务和网关状态。")
+            raise ModelError(f"AgentDebugX 模型请求失败（HTTP {status}）。{hint}")
+        raise ModelError(MODEL_FAILURES.get(failure["kind"], WORKER_FAILURE))
     report = present_agentdebugx(trace, request, output, settings.model, settings.prompt_language)
     await progress("AgentDebugX 完成", 100, report)
     return report

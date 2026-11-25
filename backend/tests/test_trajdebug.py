@@ -136,18 +136,24 @@ def provider():
         def log_message(self, *_):
             pass
         def do_POST(self):
+            if self.path != "/v1/chat/completions":
+                self.send_error(404)
+                return
             request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             messages = request["messages"]
             system = messages[0]["content"]
             user = messages[-1]["content"]
             trigger_step = state.get("trigger_step", 1)
+            extra = state.get("extra_reply")
+            additional = extra(system) if extra else None
+            if additional is not None and (status := state.get("agentdebugx_error_status")):
+                self.send_error(status, "private gateway detail")
+                return
             if state["slow"]:
                 import time
                 time.sleep(2)
             if state["fail"]:
                 self.send_response(401); self.end_headers(); self.wfile.write(b'{}'); return
-            extra = state.get("extra_reply")
-            additional = extra(system) if extra else None
             if additional is not None:
                 stage, value = "agentdebugx", additional
             elif len(messages) == 1:
