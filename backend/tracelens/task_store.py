@@ -1,6 +1,8 @@
 """Persistent task scopes and analysis rounds; diagnosis artifacts stay in jobs."""
 import json
 import uuid
+from .diagnosis.review_policy import review_status
+from .diagnosis.synthesis import select_candidate
 from .models import Trajectory
 from .normalize import fingerprint
 
@@ -338,7 +340,13 @@ class TaskStore:
              json_extract(j.result,'$.attribution.category') category,
              json_extract(j.result,'$.attribution.summary') summary,
              f.status feedback_status,f.error feedback_error,
-             json_extract(v.data,'$.decision') review_status
+             json_extract(v.data,'$.decision') review_status,
+             json_extract(j.result,'$.comparison.state') comparison_state,
+             json_extract(j.result,'$.comparison.primary') comparison_primary,
+             json_extract(j.result,'$.synthesis.summary') synthesis_summary,
+             json_extract(j.result,'$.synthesis.assessments') candidate_assessments,
+             json_extract(j.result,'$.engine_runs.agentdebugx.report.attribution') candidate_attribution,
+             v.data review_data
             FROM run_items x JOIN traces t ON t.id=x.trace_id
             LEFT JOIN run_attempts a ON a.job_id=(SELECT job_id FROM run_attempts WHERE run_id=x.run_id AND trace_id=x.trace_id ORDER BY attempt DESC LIMIT 1)
             LEFT JOIN jobs j ON j.id=a.job_id
@@ -347,10 +355,28 @@ class TaskStore:
             WHERE x.run_id=? ORDER BY x.position
             """, (run_id,))]
         for row in rows:
+            comparison_state = row.pop('comparison_state')
+            primary = row.pop('comparison_primary')
+            synthesis_summary = row.pop('synthesis_summary')
+            assessments = row.pop('candidate_assessments')
+            alternative = row.pop('candidate_attribution')
+            review = row.pop('review_data')
+            if row['diagnosis'] == 'completed':
+                row['review_status'] = review_status(comparison_state, row['review_status'])
             row['feedback_applicable'] = (row['diagnosis']=='completed' and row['mode']=='live'
                 and row['schema_version']==2 and row['algorithm']!='AgentDebugX'
                 and row['outcome']=='failed' and row['critical_step'] is not None)
             row['attempts'] = row['attempts'] or 0
+            if row['diagnosis'] == 'completed' and comparison_state == 'different':
+                sources = {'trajdebug': row, 'agentdebugx': json.loads(alternative or '{}')}
+                steps = {name: source.get('critical_step') for name, source in sources.items()}
+                winner, step = select_candidate({'state': comparison_state, 'primary': primary}, steps,
+                                                json.loads(assessments or '{}'))
+                chosen = json.loads(review) if review else {
+                    'critical_step': step, 'category': sources.get(winner, {}).get('category'),
+                    'summary': synthesis_summary,
+                }
+                row.update({key: chosen.get(key) for key in ('critical_step', 'category', 'summary')})
         return rows
 
     def item_attempts(self, run_id, trace_id):

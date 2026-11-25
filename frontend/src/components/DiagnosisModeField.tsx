@@ -9,7 +9,7 @@ export const diagnosisModeLabels: Record<DiagnosisMode, string> = {
 const descriptions: Record<DiagnosisMode, string> = {
   trajdebug: '执行五阶段诊断，查看错误实例、修复状态和关键失败步骤。',
   agentdebugx: '回查根因事件，给出原文证据和恢复建议。',
-  dual: '并行运行两种诊断，对照关键步骤与原文证据。',
+  dual: '并行运行两种诊断。业务失败且两路均完成时，额外调用一次模型进行综合评估。',
 }
 
 export default function DiagnosisModeField({value, onChange, disabled}: {

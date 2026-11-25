@@ -3,10 +3,12 @@ import {uiText} from '../branding'
 import Citation from './Citation'
 import Tabs from './Tabs'
 import FeedbackPanel from './FeedbackPanel'
-import DiagnosisComparison, {AgentDebugXDetails, comparisonLabels} from './DiagnosisComparison'
+import DiagnosisComparison, {AgentDebugXDetails, engineLabels} from './DiagnosisComparison'
 import {responsibilityLabels} from '../patterns'
 import { ArrowUpRight, CircleCheck, UserRoundCheck, ScanSearch, GitBranch, Flag, ChevronRight, RotateCcw } from 'lucide-react'
-import type { Evidence, Instance, Job, Report } from '../types'
+import type { EngineName, Evidence, Instance, Job, Report } from '../types'
+
+const engineTabs = [{id:'overview',label:'综合分析'}, {id:'trajdebug',label:'TrajDebug'}, {id:'agentdebugx',label:'AgentDebugX'}]
 
 const states: Record<string, string> = {manifest_active:'持续影响最终结果', latent_active:'未修复 · 未影响最终结果', clean_resolution:'已修复 · 未影响最终结果', costly_resolution:'已修复 · 仍有资源代价', exploration:'探索行为 · 已排除', unknown:'状态待核验'}
 const references: Record<string, string> = {'cat-1':'与任务要求冲突', 'cat-2':'与可见上下文冲突', 'cat-3':'内部不一致', env:'环境异常'}
@@ -28,16 +30,29 @@ function AttributionFacts({category, instance}: {category?: string; instance?: I
   </dl>
 }
 
-export default function Inspector({job, report, onJump, onReview, onFeedback, onRegenerate, onRegenerateFeedback, busy=false, draft=false}: {
+export default function Inspector({job, report: combined, onJump, onReview, onFeedback, onRegenerate, onRegenerateFeedback, busy=false, draft=false}: {
   job:Job | null; report:Report | null; onJump:(e:Evidence)=>void; onReview:()=>void; onFeedback?:()=>Promise<void>;
   onRegenerate?:()=>Promise<void>; onRegenerateFeedback?:()=>Promise<void>; busy?:boolean; draft?:boolean
 }) {
   const [tab, setTab] = useState('conclusion')
   const [instanceFilter, setInstanceFilter] = useState('all')
+  const [engine, setEngine] = useState<EngineName | 'overview'>('overview')
+  const dual = !!combined?.engine_runs
+  const overview = dual && engine === 'overview'
+  const primary = combined?.comparison?.primary
+  const run = engine === 'overview' ? undefined : combined?.engine_runs?.[engine]
+  const report = !dual || engine === primary ? combined : run?.report ?? null
+  function selectEngine(id: string) {
+    setEngine(id as EngineName | 'overview')
+    setTab('conclusion')
+    setInstanceFilter('all')
+  }
   const ai = report?.attribution
-  const review = job?.reviews?.[0]
+  const hasSynthesis = combined?.synthesis?.status === 'completed'
+  const review = !dual || (engine === primary && !hasSynthesis) ? job?.reviews?.[0] : undefined
   const conclusion = review?.data ?? ai
   const completed = job?.status === 'completed'
+  const reviewWaived = job?.review_status === 'waived'
   const legacy = completed && report?.schema_version !== 2
   const instances = report?.instances ?? []
   const modelInstance = ai?.critical_instance_id ? instances.find(item => item.id === ai.critical_instance_id) : undefined
@@ -50,10 +65,10 @@ export default function Inspector({job, report, onJump, onReview, onFeedback, on
   const canInspect = !!ai && completed && !legacy
   const tabs = [{id:'conclusion',label:'诊断结论'}]
   if (canInspect) {
-    if (agentDebugX) tabs.push({id:'agentdebugx', label:'证据与建议'})
+    if (agentDebugX && dual) tabs.push({id:'ad-evidence',label:'原文证据'}, {id:'ad-findings',label:'检测发现'}, {id:'ad-recovery',label:'恢复建议'})
+    else if (agentDebugX) tabs.push({id:'agentdebugx', label:'证据与建议'})
     else tabs.push({id:'instances',label:'错误实例'}, {id:'evidence',label:'触发证据'}, {id:'feedback',label:'改进建议'})
   }
-  if (report?.engine_runs) tabs.push({id:'comparison',label:'双路对照'})
   const activeTab = tabs.some(item => item.id === tab) ? tab : 'conclusion'
   const items = tabs.map(item => ({...item, count:item.id === 'instances' ? instances.length
     : item.id === 'evidence' ? report?.triggers.length : undefined}))
@@ -65,26 +80,29 @@ export default function Inspector({job, report, onJump, onReview, onFeedback, on
   const regenerateLabel = feedbackTab ? (feedbackStatus === 'failed' ? '重试生成改进建议' : '重新生成改进建议') : '重新生成本条轨迹诊断'
   const regenerateTips = feedbackActive ? '请等待本条轨迹的改进建议生成完成'
     : feedbackTab ? job?.feedback_unavailable_reason || '使用当前诊断重新生成改进建议'
-    : '重新分析本条轨迹并生成诊断结论、错误实例和触发证据'
-  return <section className="panel inspector">
-    <div className="inspector-toolbar">
-      <Tabs id="inspection" label="诊断内容" className="inspector-tabs"
-        items={items} active={activeTab} onChange={setTab}/>
-      {canShowRegenerate ? <span className="inspector-regenerate" title={regenerateTips}>
+    : dual ? '重新运行本条轨迹的两路诊断与综合分析' : '重新分析本条轨迹并生成诊断结论、错误实例和触发证据'
+  const regenerateButton = canShowRegenerate ? <span className="inspector-regenerate" title={regenerateTips}>
         <button type="button" className="secondary small" aria-label={regenerateLabel}
           disabled={busy || feedbackActive || (feedbackTab && !job?.feedback_eligible)}
           onClick={() => void regenerate?.()}><RotateCcw size={15} aria-hidden="true"/></button>
-      </span> : null}
-    </div>
-    <div className="inspector-scroll" role="tabpanel" id={`inspection-panel-${activeTab}`}
-      aria-labelledby={`inspection-tab-${activeTab}`}>
-    {activeTab === 'comparison' && report ? <DiagnosisComparison report={report} jobId={job?.id} onJump={onJump}/>
+      </span> : null
+  const detailsTabs = <Tabs id="inspection" label={dual ? '引擎诊断内容' : '诊断内容'} className="inspector-tabs"
+    items={items} active={activeTab} onChange={setTab}/>
+  const reviewButton = completed && !job?.read_only && (overview ? combined?.attribution : ai && !legacy && (!dual || engine === primary && !hasSynthesis))
+    ? <div className="inspector-footer"><button className={reviewWaived ? 'secondary' : 'primary full'} onClick={onReview}><UserRoundCheck size={17}/>
+      {reviewWaived ? '仍要人工复核' : overview && primary && !hasSynthesis ? `复核 ${engineLabels[primary]} 结论` : job?.reviews?.length ? '再次复核' : '人工复核'}</button></div> : null
+  const details = <>
+    {dual && canInspect ? <div className="inspector-toolbar inspector-subtabs">{detailsTabs}</div> : null}
+    <div className="inspector-scroll" role={!dual || canInspect ? 'tabpanel' : undefined}
+      id={!dual || canInspect ? `inspection-panel-${activeTab}` : undefined}
+      aria-labelledby={!dual || canInspect ? `inspection-tab-${activeTab}` : undefined}>
+    {run?.status === 'failed' ? <div className="empty inspector-empty"><ScanSearch size={36}/><h3>该引擎诊断失败</h3><p>{uiText(run.error)}</p></div>
+    : activeTab === 'ad-evidence' && report ? <AgentDebugXDetails section="evidence" report={report} jobId={job?.id} onJump={onJump}/>
+    : activeTab === 'ad-findings' && report ? <AgentDebugXDetails section="findings" report={report} jobId={job?.id} onJump={onJump}/>
+    : activeTab === 'ad-recovery' && report ? <AgentDebugXDetails section="recovery" report={report} jobId={job?.id} onJump={onJump}/>
     : activeTab === 'agentdebugx' && report ? <AgentDebugXDetails report={report} jobId={job?.id} onJump={onJump}/>
     : legacy ? <div className="empty inspector-empty"><GitBranch size={36}/><h3>历史版本诊断</h3><p>该结果保留在历史记录中。重新诊断后，可在这里查看错误实例与生命周期。</p><p className="muted">原始报告仍可导出。</p></div> : !ai || !completed ? <div className="empty inspector-empty"><ScanSearch size={36}/><h3>{job?.status === 'failed' ? '诊断失败' : job?.status === 'queued' ? '等待诊断' : job?.status === 'running' ? '正在诊断' : '尚未诊断'}</h3><p>{uiText(job?.error) || (job?.status === 'failed' ? '可通过「重试诊断」重新提交。' : job ? '诊断完成后将在此显示结果。' : draft?'请返回任务详情启动分析。':'启动诊断后，可在此查看结论和引用证据。')}</p></div> : activeTab === 'feedback' && job ? <FeedbackPanel key={job.feedback?.id ?? job.id} job={job} onGenerate={onFeedback}/> : activeTab === 'instances' ? <><div className="section-title"><h2>错误生命周期</h2><span className="muted">按错误实例展示</span></div><div className="instance-filters"><button className={instanceFilter === 'all' ? 'active' : ''} aria-pressed={instanceFilter==='all'} onClick={() => setInstanceFilter('all')}>全部 {instances.length}</button><button className={instanceFilter === 'responsible' ? 'active' : ''} aria-pressed={instanceFilter==='responsible'} onClick={() => setInstanceFilter('responsible')}>影响最终结果 {instances.filter(i => i.terminal_relevant).length}</button></div>{filtered.map(item => <InstanceCard key={item.id} item={item} report={report!} onJump={onJump}/>)}{!filtered.length ? <p className="muted">没有符合当前筛选条件的错误实例。</p> : null}</> : activeTab === 'evidence' ? <><div className="section-title"><h2>逐步触发证据</h2><span className="muted">查看引用视图或对照原文</span></div>{report?.triggers.map(t => <article className="trigger-block" key={t.id}><div className="trigger-title"><code>{t.id}</code><span>{references[t.category] ?? t.category}</span><button className="text-button" onClick={() => onJump({step:t.step,quote:''})}>#{t.step}</button></div><div className="taxonomy">{t.taxonomy_tag}</div><p>{t.description}</p><label className="evidence-label">错误行为或环境异常</label><Citation evidence={t.commitment} views={report?.compression_views} onJump={onJump}/><label className="evidence-label">相关约束或参考依据</label><Citation evidence={t.reference} views={report?.compression_views} onJump={onJump}/></article>)}{!report?.triggers.length ? <p className="muted">本次诊断未检出错误触发点。</p> : null}</> : <>
-      <div className="section-title"><h2>{showAttribution?'关键失败归因':'诊断结果'}</h2><span className={'status-tag ' + (review ? 'green' : '')}>{review ? review.data.decision === 'rejected' ? '已驳回' : '已复核' : '待人工复核'}</span></div>
-      {report?.comparison ? <div className="diagnosis-note">
-        {comparisonLabels[report.comparison.state]}。<button type="button" className="text-button" onClick={() => setTab('comparison')}>查看双路对照</button>
-      </div> : null}
+      <div className="section-title"><h2>{showAttribution?'关键失败归因':'诊断结果'}</h2><span className={'status-tag ' + (review ? 'green' : '')}>{review ? review.data.decision === 'rejected' ? '已驳回' : '已复核' : dual && engine !== primary ? '引擎原始结论' : '待人工复核'}</span></div>
       {report?.mode === 'demo' ? <div className="diagnosis-note">此历史记录使用合成数据，未运行模型</div> : null}
       {showAttribution ? <div className="verdict-step"><Flag size={20}/><div><span>关键失败步骤</span><button className="text-button" disabled={conclusion?.critical_step == null} onClick={() => onJump({step:conclusion?.critical_step,quote:''})}>{conclusion?.critical_step == null ? '未确定' : '#' + conclusion.critical_step}<ArrowUpRight size={17}/></button></div></div> : null}
       {showAttribution && !agentDebugX ? <AttributionFacts category={conclusion?.category} instance={conclusionInstance}/> : null}
@@ -100,5 +118,22 @@ export default function Inspector({job, report, onJump, onReview, onFeedback, on
       {ai.fix_suggestions.length ? <ol className="suggestions">{ai.fix_suggestions.map((s,i) => <li key={i}>{s}</li>)}</ol> : <button className="secondary small" onClick={() => setTab('feedback')}>生成或查看改进建议</button>}</> : null}
       {report?.usage ? <div className="run-usage"><span>{report.usage.requests} 次{agentDebugX ? '模型调用' : '模型请求'}</span><span>{((report.usage.prompt_tokens + report.usage.completion_tokens) / 1000).toFixed(1)}k tokens</span>{report.usage.cache_hits ? <span>{report.usage.cache_hits} 次缓存命中</span> : null}</div> : null}
     </>}
-    </div>{ai && completed && !legacy && !job?.read_only ? <div className="inspector-footer"><button className="primary full" onClick={onReview}><UserRoundCheck size={17}/>{review ? '再次复核' : '人工复核'}</button></div> : null}</section>
+    </div>{reviewButton}</>
+  return <section className="panel inspector">
+    <div className="inspector-toolbar">
+      {dual ? <Tabs id="inspection-engine" label="诊断结果视图" className="inspector-tabs"
+        items={engineTabs} active={engine} onChange={selectEngine}/> : detailsTabs}
+      {regenerateButton}
+    </div>
+    {dual && combined ? <div className="inspector-engine-panel" role="tabpanel"
+      id={`inspection-engine-panel-${engine}`} aria-labelledby={`inspection-engine-tab-${engine}`}>
+      {overview ? <>
+        <div className="inspector-scroll">
+          <DiagnosisComparison report={combined} onJump={onJump} onEngine={selectEngine}
+            reviewWaived={reviewWaived} reviewed={!!job?.reviews?.length}/>
+          {job?.reviews?.[0] ? <div className="review-note"><CircleCheck size={15}/><div>人工复核结论<p>{job.reviews[0].data.summary}</p></div></div> : null}
+        </div>{reviewButton}
+      </> : details}
+    </div> : details}
+  </section>
 }

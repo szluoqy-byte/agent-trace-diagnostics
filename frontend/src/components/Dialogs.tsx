@@ -28,7 +28,15 @@ export function Dialog({title, onClose, children, busy=false}: {title:string; on
 }
 
 export function ReviewDialog({job, messages, onClose, onDone}: {job:Job; messages?:Message[]; onClose:()=>void; onDone:()=>void}) {
-  const original = job.result!.attribution!
+  const report = job.result!
+  const synthesis = report.synthesis?.status === 'completed' ? report.synthesis : undefined
+  const preferred = synthesis?.preferred_engine
+  const source = preferred && preferred !== report.comparison?.primary ? report.engine_runs?.[preferred]?.report : report
+  const original = synthesis ? {
+    critical_step:synthesis.critical_step, summary:synthesis.summary, category:preferred ? source?.attribution?.category ?? '' : '',
+  } : report.comparison?.state === 'different' ? {
+    critical_step:null, category:'', summary:'两路定位不同，关键步骤待人工复核。',
+  } : report.attribution!
   const saved = job.reviews?.[0]?.data
   const initial = saved ?? original
   const [value, setValue] = useState<ReviewData>({
@@ -39,7 +47,7 @@ export function ReviewDialog({job, messages, onClose, onDone}: {job:Job; message
   const [error, setError] = useState('')
   const editable = value.decision !== 'confirmed'
   const canChooseStep = value.decision === 'modified'
-  const steps = messages?.filter(message => job.result?.algorithm === 'AgentDebugX' || message.role !== 'user' && message.judgable !== false)
+  const steps = messages?.filter(message => source?.algorithm === 'AgentDebugX' || message.role !== 'user' && message.judgable !== false)
   function chooseDecision(decision:string) {
     setError('')
     setValue(old=>{

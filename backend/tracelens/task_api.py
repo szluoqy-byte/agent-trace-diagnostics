@@ -48,7 +48,8 @@ def summary(rows):
                   feedback_applicable=len(applicable), feedback_completed=sum(r.get('feedback_status')=='completed' for r in applicable),
                   feedback_failed=sum(r.get('feedback_status')=='failed' for r in applicable),
                   feedback_active=sum(r.get('feedback_status') in {'queued','running'} for r in rows),
-                  reviewed=sum(bool(r.get('review_status')) for r in rows),
+                  reviewed=sum(r.get('review_status') in {'confirmed','modified','rejected'} for r in rows),
+                  review_waived=sum(r.get('review_status')=='waived' for r in rows),
                   review_pending=sum(r['diagnosis']=='completed' and not r.get('review_status') for r in rows))
     if counts['running'] or counts['queued']:
         status = 'running'
@@ -67,7 +68,7 @@ def summary(rows):
 
 
 def filter_rows(rows, search='', diagnosis='all', business='all', review='all', category='all'):
-    if diagnosis not in {'all','pending','queued','running','completed','failed'} or business not in {'all','failed','succeeded','unknown'} or review not in {'all','pending','confirmed','modified','rejected'}:
+    if diagnosis not in {'all','pending','queued','running','completed','failed'} or business not in {'all','failed','succeeded','unknown'} or review not in {'all','pending','confirmed','modified','rejected','waived'}:
         raise HTTPException(422, '无效筛选条件')
     return [r for r in rows if (not search or search.lower() in f"{r['title']} {r['id']} {r['task_id']} {r['source']}".lower())
             and (diagnosis=='all' or r['diagnosis']==diagnosis)

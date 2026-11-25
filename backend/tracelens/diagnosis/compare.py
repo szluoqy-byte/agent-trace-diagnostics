@@ -6,6 +6,7 @@ from time import monotonic
 
 from ..llm import ModelError
 from .agentdebugx import diagnose_agentdebugx
+from .synthesis import synthesize
 
 
 logger = logging.getLogger(__name__)
@@ -73,6 +74,7 @@ async def diagnose_dual(trace, settings, progress, run_standard, *, fresh_cache=
     )
     primary = next((name for name in names if latest[name]["status"] == "completed"), None)
     if primary is None:
+        await progress("双路诊断失败", 99, {"engine_runs": latest, "synthesis": {"status": "incomplete"}})
         raise ModelError("两路诊断均失败，请检查模型连接后重试。")
     result = dict(latest[primary]["report"])
     result.update(
@@ -80,4 +82,19 @@ async def diagnose_dual(trace, settings, progress, run_standard, *, fresh_cache=
         engine_runs={name: {key: value for key, value in row.items() if key != "report" or name != primary}
                      for name, row in latest.items()},
     )
+    if result["comparison"]["state"] == "incomplete":
+        result["synthesis"] = {"status": "incomplete"}
+    else:
+        reports = {name: latest[name]["report"] for name in names}
+        if trace.outcome == "failed":
+            await progress("综合分析", 99, {"engine_runs": {
+                name: {"status": latest[name]["status"]} for name in names
+            }, "synthesis": {"status": "running"}})
+        try:
+            result["synthesis"] = await synthesize(
+                trace, reports, {name: root_evidence(report) for name, report in reports.items()}, settings, result["comparison"],
+            )
+        except Exception as exc:
+            logger.warning("Diagnosis synthesis failed (%s)", type(exc).__name__)
+            result["synthesis"] = {"status": "failed"}
     return result

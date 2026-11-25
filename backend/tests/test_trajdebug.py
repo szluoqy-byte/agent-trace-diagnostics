@@ -145,7 +145,8 @@ def provider():
             user = messages[-1]["content"]
             trigger_step = state.get("trigger_step", 1)
             extra = state.get("extra_reply")
-            additional = extra(system) if extra else None
+            request_reply = state.get("extra_request_reply")
+            additional = request_reply(system, user) if request_reply else extra(system) if extra else None
             if additional is not None and (status := state.get("agentdebugx_error_status")):
                 self.send_error(status, "private gateway detail")
                 return

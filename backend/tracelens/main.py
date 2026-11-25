@@ -22,6 +22,8 @@ from .reporting import markdown_report
 from .official_samples import load_official_samples
 from .feedback import feedback_availability
 from .execution import RUNTIME_FIELDS, active_execution, job_settings, load_runtime_settings, runtime_snapshot, snapshot
+from .diagnosis.synthesis import project_synthesis, review_target
+from .diagnosis.review_policy import job_review_status
 from .model_settings_api import MODEL_SETTINGS_PATH, attach_model_settings_routes
 from .runtime_settings_api import attach_runtime_settings_routes
 from .task_api import attach_task_routes
@@ -212,7 +214,10 @@ def create_app(settings=None, *, frontend_dir=None):
             read_only = False
         except ValueError:
             read_only = True
-        return {**current, 'reviews': store.reviews(job_id), 'feedback': store.latest_feedback(job_id),
+        reviews = store.reviews(job_id)
+        result = project_synthesis(current['result']) if current.get('result') else current.get('result')
+        return {**current, 'result': result, 'reviews': reviews, 'review_status': job_review_status(current, reviews),
+                'feedback': store.latest_feedback(job_id),
                 'feedback_eligible': eligible and not read_only, 'feedback_unavailable_reason': '历史分析记录只读' if read_only else reason,
                 'read_only': read_only}
 
@@ -305,15 +310,15 @@ def create_app(settings=None, *, frontend_dir=None):
             raise HTTPException(409, "请等待诊断完成后复核")
         if body.decision == "rejected" and body.critical_step is not None:
             raise HTTPException(422, "驳回结论时关键步骤应留空")
+        original, algorithm = review_target(job["result"])
         trace = require_trace(job["trace_id"])["data"]
         if body.critical_step is not None:
             invalid_step = body.critical_step >= len(trace["messages"])
-            if not invalid_step and job["result"].get("algorithm") != "AgentDebugX":
+            if not invalid_step and algorithm != "AgentDebugX":
                 message = trace["messages"][body.critical_step]
                 invalid_step = message["role"] == "user" or message.get("judgable") is False
             if invalid_step:
                 raise HTTPException(422, "关键步骤必须是轨迹中的可诊断消息")
-        original = job["result"]["attribution"]
         if body.decision == "confirmed" and any(getattr(body, k) != original[k] for k in ("critical_step", "category", "summary")):
             raise HTTPException(422, "结论有变动时请选择修改结论")
         write(lambda:store.add_review(job_id, body.model_dump()))
@@ -349,7 +354,8 @@ def create_app(settings=None, *, frontend_dir=None):
         trace = require_trace(job["trace_id"])
         reviews = store.reviews(job_id)
         feedback = store.latest_feedback(job_id)
-        payload = {"trace": trace_with_source_summary(trace), "job": job, "reviews": reviews,
+        job = {**job, "result": project_synthesis(job["result"])}
+        payload = {"trace": trace_with_source_summary(trace), "job": {**job, "review_status": job_review_status(job, reviews)}, "reviews": reviews,
                    "feedback": feedback, "feedback_history": store.feedback_history(job_id)}
         headers = {"Content-Disposition": f'attachment; filename="tianluo-diagnosis-{job_id[:8]}.{format}"'}
         if format == "json":

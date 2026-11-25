@@ -6,6 +6,8 @@ import json
 import re
 import unicodedata
 
+from .diagnosis.review_policy import review_status
+
 ALGORITHM_VERSION = 'critical-error-grouping-v4'
 MAPPING_VERSION = '2'
 
@@ -53,6 +55,7 @@ def project_trace(trace, job, report, review):
     instance = report.get('instance') or {}
     obj = normalized(instance.get('object'))
     decision = review.get('decision')
+    comparison_state = report.get('comparison_state')
     if trace['kind'] == 'demo' or job and job['mode'] == 'demo':
         item['state'] = 'demo'
     elif trace['outcome'] != 'failed':
@@ -65,7 +68,7 @@ def project_trace(trace, job, report, review):
         item['state'] = 'unsupported'
     elif decision == 'rejected':
         item['state'] = 'rejected'
-    elif report.get('comparison_state') and decision not in {'modified', 'confirmed'}:
+    elif comparison_state and review_status(comparison_state, decision) not in {'modified', 'confirmed', 'waived'}:
         item['state'] = 'comparison_pending'
     elif decision in {'modified', 'confirmed'} and (review.get('critical_step') != step or
             normalized(review.get('category')).casefold() != category.casefold()):

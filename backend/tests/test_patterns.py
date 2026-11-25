@@ -36,6 +36,17 @@ def begin(client, scope):
     return client.post('/api/pattern-tasks/preview', json={'scope': scope}).json()
 
 
+def test_only_aligned_dual_diagnosis_waives_review_for_patterns(tmp_path):
+    app, client, task, _ = fixture(tmp_path)
+    store = app.state.store
+    for row, state in zip(store.run_rows(task['run_id']), ('aligned', 'same_step', 'different'), strict=True):
+        report = store.job(row['job_id'])['result']
+        report['comparison'] = {'state': state, 'primary': 'trajdebug'}
+        store.update(row['job_id'], result=report)
+    preview = begin(client, {'task_id': task['task_id'], 'run_id': task['run_id']})
+    assert preview['counts'] == {'included': 1, 'comparison_pending': 2}
+
+
 def create(client, preview):
     body = {'name': '重复失败', 'scope': preview['scope'], 'snapshot_hash': preview['snapshot_hash'],
             'request_id': str(uuid4())}

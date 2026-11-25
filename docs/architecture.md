@@ -5,41 +5,77 @@
 ## 系统全景
 
 ```mermaid
-flowchart LR
-    Sources["DeepAgent · OTel GenAI"]
-    Model["OpenAI 兼容模型服务"]
+flowchart TB
+    Sources["DeepAgent · OTel GenAI 轨迹文件"]
+    UI["浏览器工作台<br/>分析任务 · 轨迹库 · 失败模式 · 系统设置"]
+    Model["OpenAI 兼容模型服务<br/>本机或远程部署"]
 
-    subgraph Local["本地工作台"]
-        UI["浏览器工作台"]
-        API["应用服务<br/>任务 · 轨迹 · 复核"]
-        Adapter["轨迹适配层<br/>格式校验 · 来源映射"]
-        Engine["后台执行<br/>TrajDebug · AgentDebugX"]
-        Compare["证据映射与结果对照"]
-        Patterns["失败模式分析"]
-        Data[("本地数据<br/>SQLite · 运行产物")]
+    subgraph Workbench["工作台服务端"]
+        API["应用服务<br/>导入 · 任务管理 · 证据查看 · 人工复核 · 导出"]
+        Adapter["轨迹适配层<br/>校验 · 统一消息 · 原文映射"]
+        Queue["任务队列<br/>轨迹级并发 · 重试 · 建议生成调度"]
+        Diagnosis["后台执行<br/>TrajDebug · AgentDebugX · 综合分析 · 改进建议"]
+        Patterns["跨轨迹失败模式分析<br/>固定样本与复核记录 · 分组统计"]
 
-        UI --> API
-        API <--> Adapter
-        API --> Engine
-        API <--> Data
-        Data --> Engine
-        Engine --> Compare --> Data
-        API --> Patterns <--> Data
+        API --> Adapter
+        API --> Patterns
+        Queue <-->|运行作业并接收结果| Diagnosis
+    end
+
+    subgraph Storage["服务端数据目录"]
+        Workspace[("工作台 SQLite<br/>轨迹 · 任务轮次 · 诊断 · 复核 · 聚合结果")]
+        Connections[("模型配置 SQLite<br/>默认连接 · API Key · 自定义 Header")]
+        Artifacts[("运行文件<br/>TrajDebug 诊断与建议产物 · 缓存")]
     end
 
     Sources --> UI
-    Engine <-->|推理请求与响应| Model
+    UI <-->|调用 API| API
+    Adapter -->|归档原始记录与来源映射| Workspace
+    API <-->|读写任务与分析记录| Workspace
+    API <-->|管理模型连接| Connections
+    Workspace <-->|领取作业并保存进度和结果| Queue
+    Connections -->|读取选定连接的凭据| Queue
+    Workspace <-->|读取诊断及复核 · 保存聚合结果| Patterns
+    Diagnosis --> Artifacts
+    Diagnosis <-->|推理请求与响应| Model
 ```
 
-## 从业务轨迹到诊断证据
+## 单轨迹诊断与综合分析
+
+```mermaid
+flowchart TB
+    Input["轨迹消息与来源映射<br/>轮次配置含模式、提示词语言和模型连接"]
+    Dispatch["诊断编排"]
+    TD["TrajDebug 独立进程<br/>触发检测 · 实例与生命周期 · 根因"]
+    AD["AgentDebugX 独立进程<br/>检测 · 根因 · 恢复建议"]
+    Evidence["映射关键步骤与引文<br/>双路任务并行执行，逐路保存状态和结果"]
+    Synthesis["双路综合分析<br/>一次模型评估 · 最终结论"]
+    Feedback["TrajDebug 改进建议进程<br/>满足条件时自动或手动触发"]
+    Report["轨迹详情<br/>综合分析优先 · 独立引擎结果 · 人工复核"]
+    Aggregate["跨轨迹分析<br/>使用符合条件的诊断与复核记录"]
+
+    Input --> Dispatch
+    Dispatch -->|标准诊断或双路| TD
+    Dispatch -->|AgentDebugX 或双路| AD
+    TD --> Evidence
+    AD --> Evidence
+    Evidence -->|逐路保存原始报告| Report
+    Evidence -->|业务失败且双路完成| Synthesis
+    Synthesis -->|保存综合结果或失败状态| Report
+    Evidence -->|符合建议生成条件| Feedback
+    Feedback --> Report
+    Report -->|选择任务轮次或库内轨迹| Aggregate
+```
 
 1. **导入与适配。** 用户在创建任务或轨迹库上传 DeepAgent、OTel GenAI 文件。适配层保留原始 span，生成调用视图所需的数据，同时还原可供诊断的线性消息序列及其来源映射。校验在本地完成。业务结果未知时需要在开始分析前补齐。只有耗时和 token，或模型并发分支无法还原为串行会话的 OTel 轨迹，会在导入时给出具体错误。
 2. **任务与执行。** 相同轨迹在库中去重，可以被多个任务复用。分析任务定义排查目标和轨迹范围。每轮分析形成独立记录，保存模型连接、提示词语言和执行参数快照。后台按轨迹排队执行，失败重试与重新生成均保留请求历史。
 3. **诊断与证据。** TrajDebug 接收统一消息，给出错误触发、实例与生命周期。AgentDebugX 将同一消息投影为带来源的事件，运行官方检测、深度归因和恢复建议。两种引擎各自保存原始输出，都能将证据跳回现有轨迹视图。
-4. **双路对照与复核。** 双路任务并行运行两个引擎，对齐关键步骤与原文引文。任务详情保留每路状态，主报告优先展示既有标准诊断结论。任一路失败时保留另一方结果。人工复核单独保存。
-5. **跨轨迹分析。** 失败模式分析固定选用的诊断和复核记录，在本地对具备可用归因的失败轨迹分组。双路报告经人工复核后再参与聚合，样本仍需满足既有归因和证据条件。
+4. **双路综合分析与复核。** 双路任务并行运行两个引擎，对齐关键步骤与原文引文。两路完成且业务失败时，使用同一轮次模型独立评估。评估输入包含两路结论、诊断过程摘要与对应轨迹原文。模型给出最终结论。当两路关键步骤不同，模型分别评估两路候选的置信度。后端核验引用，暂定置信度更高的候选并要求人工复核。置信度并列或两路证据均不足时，关键步骤待定。详情优先展示综合分析，两路原报告各自可查；任一路或综合分析失败时保留可用的引擎报告。两路定位到同一关键步骤且各有可核验的原文引用时，其关键步骤直接作为系统结果，并标记免复核。仍可主动复核，人工结论优先并单独保存。
+5. **跨轨迹分析。** 失败模式分析固定选用的诊断和复核记录，在本地对具备可用归因的失败轨迹分组。双路报告免复核或经人工确认后可参与聚合，样本仍需满足既有归因和证据条件。
 
-离线评估通过独立脚本复用后台诊断引擎，使用标准 JSON、JSONL 及固定的数据分区。评分读取独立标注和已保存的诊断结果。 [RSI 离线评估](rsi-evaluation.md)
+## 离线评估
+
+RSI 脚本独立于工作台的在线任务队列运行，当前评估入口复用 TrajDebug 后台运行器，读取标准 JSON、JSONL 和固定的数据分区。评分阶段使用独立标注与落盘的诊断结果。 [RSI 离线评估](rsi-evaluation.md)
 
 ## 关键设计决策
 

@@ -38,7 +38,9 @@ export default function TrajectoryDetail({id,traceId,params}:{id:string;traceId:
   const run=task.runs.find(r=>r.id===runId),report=job?.result??null,review=job?.reviews?.[0]?.data
   const readonly=data.read_only||!!run?.read_only
   const inspectorJob=job&&readonly?{...job,read_only:true,feedback_eligible:false,feedback_unavailable_reason:'历史分析记录只读'}:job
-  const legacy=!!report&&report.schema_version!==2,critical=legacy?null:review?review.decision==='rejected'?null:review.critical_step:report?.attribution?.critical_step??null
+  const modelStep=report?.synthesis?.status==='completed'?report.synthesis.critical_step
+    :report?.comparison?.state==='different'?null:report?.attribution?.critical_step??null
+  const legacy=!!report&&report.schema_version!==2,critical=legacy?null:review?review.decision==='rejected'?null:review.critical_step:modelStep
   const query=new URLSearchParams(params);query.delete('pattern_task');query.delete('pattern_run');query.delete('pattern_id');if(draft)query.delete('run');else query.set('run',runId!)
   const size=[10,20,50].includes(Number(params.get('page_size')))?Number(params.get('page_size')):10
   function back(){if(navigation.index>=0)query.set('page',String(Math.floor(navigation.index/size)+1));query.set('focus',traceId);go(taskPath(id,query))}

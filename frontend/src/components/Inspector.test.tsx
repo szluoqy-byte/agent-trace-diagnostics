@@ -93,3 +93,40 @@ it('confirming after editing restores original fields and rejecting clears the s
   fireEvent.change(screen.getByRole('combobox',{name:'复核决定'}),{target:{value:'rejected'}})
   expect((screen.getByRole('spinbutton',{name:'关键步骤（可留空）'}) as HTMLInputElement).value).toBe('')
 })
+
+it('opens dual synthesis first and keeps engine-specific inspection tabs', () => {
+  const ad: Report = {...report, algorithm:'AgentDebugX', triggers:[], instances:[], evidence:[{step:4,quote:'原文'}],
+    attribution:{...report.attribution!, critical_step:4, summary:'AgentDebugX 归因',fix_suggestions:['验证授权']}}
+  const dual: Report = {...report, comparison:{state:'different',primary:'trajdebug'},
+    engine_runs:{trajdebug:{status:'completed'}, agentdebugx:{status:'completed',report:ad}},
+    synthesis:{status:'completed', summary:'两路对授权步骤存在分歧',preferred_engine:'agentdebugx',critical_step:4,
+      assessments:{trajdebug:{support:'medium',reason:'支持部分结论'},agentdebugx:{support:'high',reason:'有原文'}},
+      evidence:[],model:'fixture',calls:1,prompt_tokens:1,completion_tokens:1}}
+  const jump = vi.fn()
+  render(<Inspector job={{...job,result:dual}} report={dual} onJump={jump} onReview={vi.fn()}/>)
+  expect(screen.getByRole('tab',{name:'综合分析'}).getAttribute('aria-selected')).toBe('true')
+  expect(screen.getByText('两路对授权步骤存在分歧')).toBeTruthy()
+  expect(screen.getByText('候选置信度 · 高')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button',{name:/暂定关键步骤 #4/}))
+  expect(jump).toHaveBeenLastCalledWith({step:4,quote:''})
+  fireEvent.click(screen.getByRole('tab',{name:'TrajDebug'}))
+  expect(screen.getByRole('tab',{name:'改进建议'})).toBeTruthy()
+  fireEvent.click(screen.getByRole('tab',{name:/错误实例/}))
+  expect(screen.getByText('退款授权')).toBeTruthy()
+  fireEvent.click(screen.getByRole('tab',{name:'AgentDebugX'}))
+  expect(screen.queryByRole('tab',{name:/错误实例/})).toBeNull()
+  fireEvent.click(screen.getByRole('tab',{name:'恢复建议'}))
+  expect(screen.getByText('验证授权')).toBeTruthy()
+})
+
+it('shows the waiver and keeps manual review available for aligned results', () => {
+  const dual: Report = {...report, comparison:{state:'aligned',primary:'trajdebug'},
+    engine_runs:{trajdebug:{status:'completed'},agentdebugx:{status:'completed'}}}
+  const review = vi.fn()
+  render(<Inspector job={{...job,result:dual,review_status:'waived'}} report={dual} onJump={vi.fn()} onReview={review}/>)
+  expect(screen.getByText('免复核')).toBeTruthy()
+  expect(screen.getByRole('button',{name:'一致关键步骤 #7'})).toBeTruthy()
+  expect(screen.queryByText(/候选置信度/)).toBeNull()
+  fireEvent.click(screen.getByRole('button',{name:'仍要人工复核'}))
+  expect(review).toHaveBeenCalledTimes(1)
+})
