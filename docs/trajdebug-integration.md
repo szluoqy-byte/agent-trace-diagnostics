@@ -14,7 +14,7 @@ FastAPI / SQLite 队列 → `engine.diagnose` 输入适配 → 独立 Python 子
 4. `Phase2Annotator.process_file` 逐实例复核承诺强度、有效起点、修复状态及终局联系。
 5. `Phase3Assembler.assemble_file` 保留官方默认 LLM 裁决、候选外选择和机械回退。
 
-改进建议作为独立的官方反馈任务，在诊断完成后按需运行。
+历史 TrajDebug 单路诊断可运行独立的官方反馈任务。Fast、Standard、Deep 在工作台中以轨迹为单位生成改进建议，参见 [单轨迹改进建议](feedback.md)。
 
 ## 本地适配做什么
 

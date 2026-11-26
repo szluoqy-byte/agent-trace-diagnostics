@@ -3,12 +3,12 @@ import {afterEach, expect, it, vi} from 'vitest'
 import {cleanup, fireEvent, render, screen, waitFor} from '@testing-library/react'
 import FeedbackPanel from './FeedbackPanel'
 import Inspector from './Inspector'
-import type {FeedbackRun, Job, Report} from '../types'
+import type {FeedbackResult, FeedbackRun, Job, Report} from '../types'
 
 afterEach(cleanup)
 const report:Report = {schema_version:2,algorithm:'TrajDebug',mode:'live',engine_version:'trajdebug-official-test',model:'fixture',triggers:[],instances:[],attribution:{critical_step:1,critical_instance_id:null,category:'cat-1',summary:'original conclusion',reasoning:'original reasoning',fix_suggestions:[],confidence:'unrated'}}
 const job:Job = {id:'job',trace_id:'trace',mode:'live',status:'completed',stage:'诊断完成',progress:100,attempts:1,error:null,created_at:'2026-11-18',updated_at:'2026-11-18',result:report,feedback_eligible:true}
-const feedback:FeedbackRun = {id:'feedback',job_id:'job',status:'completed',error:null,created_at:'2026-11-18',updated_at:'2026-11-18',result:{hint_sentence:'Verify approval before issuing a refund.',narrative_summary:'An unapproved refund caused the failure.',critical_step:1,alternatives:[{step:3,taxonomy_tag:'reason.InvalidInference',reason:'Unverified completion claim.',hint_sentence:'Check the tool result.'}],model:'fixture',provenance:{commit:'5b04f98b1995ec758d9aba70940d17bb7d2d169b',diagnosis_job_id:'job',feedback_run_id:'feedback'},official_report:{},usage:{requests:1,prompt_tokens:20,completion_tokens:10,cache_hits:0}}}
+const feedback = {id:'feedback',job_id:'job',status:'completed',error:null,created_at:'2026-11-18',updated_at:'2026-11-18',result:{hint_sentence:'Verify approval before issuing a refund.',narrative_summary:'An unapproved refund caused the failure.',critical_step:1,alternatives:[{step:3,taxonomy_tag:'reason.InvalidInference',reason:'Unverified completion claim.',hint_sentence:'Check the tool result.'}],model:'fixture',provenance:{commit:'5b04f98b1995ec758d9aba70940d17bb7d2d169b',diagnosis_job_id:'job',feedback_run_id:'feedback'},official_report:{},usage:{requests:1,prompt_tokens:20,completion_tokens:10,cache_hits:0}}} satisfies FeedbackRun
 
 it('submits feedback explicitly and explains the additional model call', async () => {
   const generate=vi.fn(async()=>{})
@@ -29,9 +29,9 @@ it('copies a generated hint and exposes source, alternative hints and usage', as
   const copy=vi.fn(async()=>{})
   Object.defineProperty(navigator,'clipboard',{value:{writeText:copy},configurable:true})
   render(<FeedbackPanel job={{...job,feedback}}/>)
-  expect(screen.getByText(feedback.result!.hint_sentence)).toBeTruthy()
+  expect(screen.getByText(feedback.result.hint_sentence)).toBeTruthy()
   fireEvent.click(screen.getByRole('button',{name:'复制改进指令'}))
-  await waitFor(()=>expect(copy).toHaveBeenCalledWith(feedback.result!.hint_sentence))
+  await waitFor(()=>expect(copy).toHaveBeenCalledWith(feedback.result.hint_sentence))
   expect(screen.getByRole('status').textContent).toBe('已复制改进指令')
   expect(screen.getByRole('link',{name:'改进建议 JSON'}).getAttribute('href')).toBe('/api/jobs/job/feedback/export')
   expect(screen.getByText('建议生成：1 次请求')).toBeTruthy()
@@ -58,9 +58,23 @@ it('opens the new inspector tab while preserving the original conclusion', () =>
   expect(screen.getByText('original conclusion')).toBeTruthy()
   fireEvent.click(screen.getByRole('tab',{name:'改进建议'}))
   expect(screen.getByRole('heading',{name:'改进建议'})).toBeTruthy()
-  expect(screen.getByText(feedback.result!.hint_sentence)).toBeTruthy()
-  fireEvent.click(screen.getByRole('tab',{name:'诊断结论'}))
+  expect(screen.getByText(feedback.result.hint_sentence)).toBeTruthy()
+  fireEvent.click(screen.getByRole('tab',{name:'综合分析'}))
   expect(screen.getByText('original conclusion')).toBeTruthy()
+})
+
+it('shows the trace-level recommendations and links to the evidence from the adopted step', () => {
+  const result: FeedbackResult = {scope:'trace', critical_step:2, basis:'provisional', review_id:null,
+    evidence:{id:'E1',step:2,quote:'unauthorized',summary:'Missing approval'},
+    suggestions:[{priority:'high',problem:'缺少审批',change:'提交前检查审批状态',verification:'回放无审批轨迹',evidence_ids:['E1']}],
+    model:'fixture',provenance:{diagnosis_job_id:'job',feedback_run_id:'feedback'}}
+  const jump = vi.fn()
+  render(<FeedbackPanel job={{...job,feedback:{...feedback,result}}} onJump={jump}/>)
+  expect(screen.getByText('暂定结论 · 待复核')).toBeTruthy()
+  expect(screen.getByText('提交前检查审批状态')).toBeTruthy()
+  expect(screen.getByText('回放无审批轨迹')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button',{name:'关键步骤 #2'}))
+  expect(jump).toHaveBeenCalledWith({step:2,quote:'unauthorized'})
 })
 
 it('distinguishes the original diagnosis from a modified human review', () => {

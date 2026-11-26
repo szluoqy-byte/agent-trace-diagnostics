@@ -157,12 +157,16 @@ def parse_answer(content, samples):
 
 
 async def generate_agent_suggestions(agent, goal, settings):
-    usage = {'requests': 0, 'prompt_tokens': 0, 'completion_tokens': 0}
-    language = normalize_prompt_language(settings.prompt_language)
-    prompt = f'{PROMPTS[language]}\n{SHAPE}'
     payload = {'agent': agent['agent']['name'], 'goal': goal, 'eligible_trace_count': agent['count'],
                'evidence': [{key: sample[key] for key in ('id', 'step', 'quote', 'summary', 'category')}
                             for sample in agent['samples']]}
+    return await request_suggestions(PROMPTS, payload, agent['samples'], settings)
+
+
+async def request_suggestions(prompts, payload, samples, settings):
+    usage = {'requests': 0, 'prompt_tokens': 0, 'completion_tokens': 0}
+    language = normalize_prompt_language(settings.prompt_language)
+    prompt = f'{prompts[language]}\n{SHAPE}'
 
     async def count_request(_request):
         usage['requests'] += 1
@@ -193,7 +197,7 @@ async def generate_agent_suggestions(agent, goal, settings):
                     raise ModelError('模型拒绝返回建议或触发内容过滤。', usage=usage)
                 if choice.finish_reason != 'length':
                     try:
-                        suggestions = parse_answer(choice.message.content, agent['samples'])
+                        suggestions = parse_answer(choice.message.content, samples)
                     except ValueError:
                         continue
                     return {'status': 'completed', 'suggestions': suggestions, 'usage': usage}

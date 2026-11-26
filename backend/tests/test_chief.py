@@ -170,6 +170,10 @@ def test_chief_task_uses_saved_connection_and_participates_in_synthesis(tmp_path
         monkeypatch.setattr("tracelens.queue.diagnose", fail_standard)
 
     def answer(system, user):
+        if system.startswith("Produce up to three engineering recommendations"):
+            return json.dumps({"suggestions": [{"priority": "high", "problem": "Missing approval",
+                "change": "Check approval before refunding", "verification": "Replay an unapproved refund",
+                "evidence_ids": ["E1"]}]})
         if bad_chief and "Evidence Quote JSON:" in user:
             return "Unparseable evaluation result."
         if system.startswith("Analyze the supplied run") and "Step Range:" in user:
@@ -197,7 +201,8 @@ def test_chief_task_uses_saved_connection_and_participates_in_synthesis(tmp_path
         deadline = monotonic() + 15
         while True:
             job = client.get(route).json()["job"]
-            if job["status"] in {"completed", "failed"} or monotonic() >= deadline:
+            feedback_done = mode != "chief" or (job.get("feedback") or {}).get("status") in {"completed", "failed"}
+            if job["status"] == "failed" or (job["status"] == "completed" and feedback_done) or monotonic() >= deadline:
                 break
             sleep(0.05)
         assert job["status"] == "completed", job
@@ -214,8 +219,11 @@ def test_chief_task_uses_saved_connection_and_participates_in_synthesis(tmp_path
         assert all(call["headers"]["x-tenant"] == "fixture-tenant" and call["request"]["model"] == "saved-model"
                    for call in requests)
         if mode == "chief":
-            assert report["algorithm"] == "CHIEF" and not job["feedback_eligible"]
+            assert report["algorithm"] == "CHIEF" and job["feedback_eligible"]
             assert job["review_status"] is None and report["evidence"][0]["step"] == 3
+            assert job["feedback"]["status"] == "completed"
+            assert job["feedback"]["result"]["critical_step"] == chief_step
+            assert job["feedback"]["result"]["usage"]["requests"] == 1
         else:
             chief = report["engine_runs"]["chief"]
             if bad_chief:

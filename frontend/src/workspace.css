@@ -258,7 +258,10 @@
 .synthesis-step-label{font-size:16px;font-weight:600;line-height:1.5}
 .synthesis-step-label strong{font-size:22px;font-weight:700;white-space:nowrap}
 .synthesis-step-action{display:inline-flex;align-items:center;gap:4px;color:var(--accent);font-size:13px;font-weight:600;white-space:nowrap}
-.inspector-engine-panel{display:flex;flex:1;flex-direction:column;min-height:0;min-width:0}
+.inspector-view-panel{display:flex;flex:1;flex-direction:column;min-height:0;min-width:0}
+.inspector-primary-tabs .inspector-tabs>button{font-size:14px;font-weight:600}
+.inspector-engine-tabs{background:#fbfcff}
+.inspector-toolbar.inspector-engine-tabs .inspector-tabs{min-height:44px}
 .inspector-subtabs{background:#f8f9fc}
 .inspector-toolbar.inspector-subtabs .inspector-tabs{gap:16px;min-height:44px}
 .diagnosis-comparison h2,.engine-evidence h3,.diagnosis-comparison .instance-top h3,.engine-evidence p,.engine-evidence ul{margin:0}

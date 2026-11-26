@@ -354,6 +354,7 @@ class TaskStore:
              j.id job_id,COALESCE(j.status,'pending') diagnosis,j.stage,j.progress,j.error,j.updated_at,
              a.attempt attempts,j.mode,json_extract(j.result,'$.schema_version') schema_version,
              json_extract(j.result,'$.algorithm') algorithm,
+             json_type(j.result,'$.engine_runs')='object' multi_engine,
              json_extract(j.result,'$.attribution.critical_step') critical_step,
              json_extract(j.result,'$.attribution.category') category,
              json_extract(j.result,'$.attribution.summary') summary,
@@ -384,14 +385,14 @@ class TaskStore:
             assessments = row.pop('candidate_assessments')
             alternatives = row.pop('candidate_attributions')
             review = row.pop('review_data')
+            trace_feedback = row.pop('multi_engine') or row['algorithm'] in {'AgentDebugX', 'CHIEF'}
             if row['diagnosis'] == 'completed':
                 row['review_status'] = review_status(comparison_state, row['review_status'])
-            row['feedback_applicable'] = (row['diagnosis']=='completed' and row['mode']=='live'
-                and row['schema_version']==2 and row['algorithm'] not in {'AgentDebugX', 'CHIEF'}
-                and row['outcome']=='failed' and row['critical_step'] is not None)
             row['attempts'] = row['attempts'] or 0
+            row['feedback_applicable'] = False
             if row['diagnosis'] != 'completed' or row['outcome'] != 'failed':
                 continue
+            original_step = row['critical_step']
             if review:
                 chosen = json.loads(review)
             elif comparison_state in UNSETTLED_STATES:
@@ -405,8 +406,12 @@ class TaskStore:
                     'summary': synthesis_summary if synthesis_status == 'completed' else UNRESOLVED_SUMMARY,
                 }
             else:
-                continue
+                chosen = row
             row.update({key: chosen.get(key) for key in ('critical_step', 'category', 'summary')})
+            feedback_step = row['critical_step'] if trace_feedback else original_step
+            row['feedback_applicable'] = (row['mode'] == 'live' and row['schema_version'] == 2
+                and (not trace_feedback or row['review_status'] != 'rejected')
+                and type(feedback_step) is int and 0 <= feedback_step < row['steps'])
         return rows
 
     def item_attempts(self, run_id, trace_id):

@@ -76,7 +76,7 @@ it('preselects Standard, describes when to use each level, and saves Deep', asyn
   expect(group.getByRole('radio', {name:'Standard 标准诊断', description:/^双路 · 默认推荐 .*常规问题排查/})).toBe(standard)
   expect(group.getByRole('radio', {name:'Deep 深度诊断', description:/^三路 .*复杂长轨迹/})).toBe(deep)
   expect(group.queryByText(/AgentDebugX|CHIEF|TrajDebug|RSI/)).toBeNull()
-  expect(screen.queryByRole('checkbox', {name:/自动生成改进建议/})).toBeNull()
+  expect(screen.getByRole<HTMLInputElement>('checkbox', {name:/自动生成改进建议/}).checked).toBe(false)
 
   fireEvent.click(deep)
   expect(deep.checked && !standard.checked).toBe(true)

@@ -124,12 +124,22 @@ def markdown_report(trace, job, reviews, feedback=None):
         lines += ['', '## 改进建议', '', f"生成状态：{FEEDBACK_LABELS.get(feedback['status'], '未知')}"]
         if feedback['status'] == 'completed':
             data = feedback['result']
-            lines += [f"基于模型原始诊断的关键步骤 #{data.get('critical_step')}。应用前请验证效果。", '',
-                      data['hint_sentence'], '', data.get('narrative_summary', ''), '',
-                      f"生成模型：{data.get('model', '')}"]
-            for item in data.get('alternatives', []):
-                lines += ['', f"### 替代候选 #{item.get('step')} · {item.get('taxonomy_tag', '')}", '',
-                          item.get('reason', ''), '', item.get('hint_sentence', '')]
+            if data.get('scope') == 'trace':
+                basis = {'review': '人工复核', 'synthesis': '综合结论',
+                         'provisional': '待复核的暂定结论', 'diagnosis': '诊断结论'}[data['basis']]
+                lines += [f"依据{basis}的关键步骤 #{data['critical_step']}。", '', data['evidence']['quote']]
+                for item in data['suggestions']:
+                    lines += ['', f"### {item['problem']}", '', f"建议改动：{item['change']}",
+                              f"回归验证：{item['verification']}"]
+                if not data['suggestions']:
+                    lines += ['', '现有证据不足以提出具体改进建议。']
+            else:
+                lines += [f"基于模型原始诊断的关键步骤 #{data.get('critical_step')}。应用前请验证效果。", '',
+                          data['hint_sentence'], '', data.get('narrative_summary', '')]
+                for item in data.get('alternatives', []):
+                    lines += ['', f"### 替代候选 #{item.get('step')} · {item.get('taxonomy_tag', '')}", '',
+                              item.get('reason', ''), '', item.get('hint_sentence', '')]
+            lines += ['', f"生成模型：{data.get('model', '')}"]
             lines += ['', '建议生成用量：' + str(data.get('usage', {}))]
         elif feedback.get('error'):
             lines += ['', feedback['error']]

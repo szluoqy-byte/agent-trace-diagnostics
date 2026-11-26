@@ -215,7 +215,7 @@ def create_app(settings=None, *, frontend_dir=None):
     @app.get("/api/jobs/{job_id}")
     def job(job_id: str):
         current = require_job(job_id)
-        eligible, reason = feedback_availability(current, job_settings(store, settings, job_id))
+        eligible, reason = feedback_availability(store, current, job_settings(store, settings, job_id))
         try:
             store.assert_job_writable(job_id)
             read_only = False
@@ -235,7 +235,7 @@ def create_app(settings=None, *, frontend_dir=None):
         latest = store.latest_feedback(job_id)
         if latest and latest['status'] in {'queued', 'running', 'completed'}:
             return latest
-        eligible, reason = feedback_availability(current, job_settings(store, settings, job_id))
+        eligible, reason = feedback_availability(store, current, job_settings(store, settings, job_id))
         if not eligible:
             raise HTTPException(409, reason)
         return write(lambda:store.enqueue_feedback(job_id))
@@ -243,7 +243,7 @@ def create_app(settings=None, *, frontend_dir=None):
     @app.post('/api/jobs/{job_id}/feedback/regenerate')
     def regenerate_feedback(job_id: str, body: FeedbackRegeneration):
         current = require_job(job_id)
-        eligible, reason = feedback_availability(current, job_settings(store, settings, job_id))
+        eligible, reason = feedback_availability(store, current, job_settings(store, settings, job_id))
         if not eligible:
             raise HTTPException(409, reason)
         return write(lambda:store.enqueue_feedback(job_id, regenerate_from=body.feedback_id))
@@ -254,7 +254,8 @@ def create_app(settings=None, *, frontend_dir=None):
         feedback = store.latest_feedback(job_id)
         if not feedback or feedback['status'] != 'completed':
             raise HTTPException(409, '请等待改进建议生成完成后导出')
-        report = feedback['result']['official_report']
+        result = feedback['result']
+        report = result.get('official_report', result)
         return Response(json.dumps(report, ensure_ascii=False, indent=2), media_type='application/json',
                         headers={'Content-Disposition': f'attachment; filename="tianluo-diagnosis-feedback-{job_id[:8]}.json"'})
 

@@ -36,7 +36,7 @@ export function AgentDebugXDetails({report, jobId, onJump, section = 'all'}: {
       {report.warnings?.map(warning => <p className="diagnosis-note" key={warning}>{warning}</p>)}
     </> : null}
     {section === 'all' || section === 'recovery' ? <>
-      <h3>恢复建议</h3>
+      <h3>恢复推演</h3>
       {suggestions.length ? <ul>{suggestions.map((line, index) => <li key={index}>{line}</li>)}</ul>
         : <p className="muted">本次诊断没有恢复建议。</p>}
     </> : null}

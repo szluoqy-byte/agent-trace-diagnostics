@@ -15,8 +15,6 @@ MODE_ENGINES: dict[DiagnosisMode, tuple[str, ...]] = {
     "dual": ("trajdebug", "agentdebugx"),
     "dual_chief": ("trajdebug", "agentdebugx", "chief"),
 }
-TRAJDEBUG_MODES = {mode for mode, engines in MODE_ENGINES.items() if "trajdebug" in engines}
-
 AGENTDEBUGX_VERSION = "0.5.2"
 AGENTDEBUGX_COMMIT = "e180ac2e46e4c1e468336526f67ad122ecaf34ff"
 AGENTDEBUGX_URL = "https://github.com/AgentDebugX/AgentDebugX"

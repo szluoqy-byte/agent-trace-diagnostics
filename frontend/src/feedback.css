@@ -5,4 +5,10 @@
 .inspector-toolbar .inspector-tabs>button{flex-shrink:0}
 .inspector-regenerate{display:inline-flex;flex-shrink:0;margin-inline-end:12px}
 .inspector-regenerate .secondary{display:grid;place-items:center;width:32px;height:32px;padding:0}
+.feedback-basis{display:flex;align-items:center;flex-wrap:wrap;gap:6px 14px;margin-bottom:14px;color:var(--muted)}
+.feedback-basis button{display:inline-flex;align-items:center;gap:4px}
+.feedback-suggestion{overflow-wrap:anywhere}
+.feedback-suggestion dl{display:grid;gap:4px;margin:0}
+.feedback-suggestion dt{font-weight:600}
+.feedback-suggestion dd{margin:0 0 6px;white-space:pre-wrap}
 @media(max-width:800px){.feedback-actions{gap:6px}.feedback-actions .small{font-size:11px}.inspector-tabs{padding-left:10px;padding-right:10px;gap:10px}.inspector-tabs>button{font-size:11px}}

@@ -15,6 +15,7 @@ const job: Job = {id:'job',trace_id:'trace',mode:'live',status:'completed',stage
 it('shows relocated origins and only jumps from verified quotes', () => {
   const jump=vi.fn()
   render(<Inspector job={job} report={report} onJump={jump} onReview={vi.fn()}/>)
+  fireEvent.click(screen.getByRole('tab',{name:'TrajDebug'}))
   fireEvent.click(screen.getByRole('tab',{name:/错误实例/}))
   expect(screen.getByText('初始信号 #4 → 有效错误承诺 #7')).toBeTruthy()
   fireEvent.click(screen.getByRole('button',{name:'起点 #7'}))
@@ -41,6 +42,7 @@ it('regenerates diagnostics or feedback according to the active tab', () => {
     status:'completed',error:null,created_at:job.created_at,updated_at:job.updated_at}}
   const props = {report,onJump:vi.fn(),onReview:vi.fn(),onRegenerate:regenerate,onRegenerateFeedback:regenerateFeedback}
   const {rerender} = render(<Inspector job={withFeedback} {...props}/>)
+  fireEvent.click(screen.getByRole('tab',{name:'TrajDebug'}))
   for (const tab of [/诊断结论/, /错误实例/, /触发证据/]) {
     fireEvent.click(screen.getByRole('tab',{name:tab}))
     fireEvent.click(screen.getByRole('button',{name:'重新生成本条轨迹诊断'}))
@@ -103,7 +105,10 @@ it('opens dual synthesis first and keeps engine-specific inspection tabs', () =>
       assessments:{trajdebug:{support:'medium',reason:'支持部分结论'},agentdebugx:{support:'high',reason:'有原文'}},
       evidence:[{engine:'agentdebugx',step:4,quote:'综合分析引文'}],model:'fixture',calls:1,prompt_tokens:1,completion_tokens:1}}
   const jump = vi.fn()
-  render(<Inspector job={{...job,result:dual}} report={dual} onJump={jump} onReview={vi.fn()}/>)
+  const generate = vi.fn(async () => {})
+  render(<Inspector job={{...job,result:dual,feedback_eligible:true}} report={dual} onJump={jump} onReview={vi.fn()} onFeedback={generate}/>)
+  const mainTabs = within(screen.getByRole('tablist',{name:'轨迹分析视图'}))
+  expect(mainTabs.getAllByRole('tab').map(item=>item.textContent)).toEqual(['综合分析','改进建议'])
   expect(screen.getByRole('tab',{name:'综合分析'}).getAttribute('aria-selected')).toBe('true')
   expect(screen.getByText('两路对授权步骤存在分歧')).toBeTruthy()
   expect(screen.getByRole('heading',{name:'TrajDebug'})).toBeTruthy()
@@ -117,16 +122,24 @@ it('opens dual synthesis first and keeps engine-specific inspection tabs', () =>
   fireEvent.click(screen.getByRole('button',{name:/暂定关键步骤 #4.*定位轨迹/}))
   expect(jump).toHaveBeenLastCalledWith({step:4,quote:''})
   fireEvent.click(screen.getByRole('tab',{name:'TrajDebug'}))
-  expect(screen.getByRole('tab',{name:'改进建议'})).toBeTruthy()
+  expect(within(screen.getByRole('tablist',{name:'引擎诊断内容'})).queryByRole('tab',{name:'改进建议'})).toBeNull()
   fireEvent.click(screen.getByRole('tab',{name:/错误实例/}))
   expect(screen.getByText('退款授权')).toBeTruthy()
-  fireEvent.click(screen.getByRole('tab',{name:'综合分析'}))
+  fireEvent.click(screen.getByRole('tab',{name:'结论总览'}))
   fireEvent.click(screen.getByRole('button',{name:'查看AgentDebugX详情'}))
   expect(screen.queryByRole('tab',{name:/错误实例/})).toBeNull()
   fireEvent.click(screen.getByRole('tab',{name:'原文证据'}))
   expect(screen.getByText('“原文”')).toBeTruthy()
-  fireEvent.click(screen.getByRole('tab',{name:'恢复建议'}))
+  fireEvent.click(screen.getByRole('tab',{name:'恢复推演'}))
   expect(screen.getByText('验证授权')).toBeTruthy()
+  fireEvent.click(mainTabs.getByRole('tab',{name:'改进建议'}))
+  expect(screen.queryByRole('tab',{name:'AgentDebugX'})).toBeNull()
+  expect(screen.queryByRole('tablist',{name:'引擎诊断内容'})).toBeNull()
+  expect(generate).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button',{name:'生成改进建议'}))
+  expect(generate).toHaveBeenCalledTimes(1)
+  fireEvent.click(mainTabs.getByRole('tab',{name:'综合分析'}))
+  expect(screen.getByRole('tab',{name:'AgentDebugX'}).getAttribute('aria-selected')).toBe('true')
 })
 
 it('shows only the AgentDebugX and CHIEF views for a Standard run', () => {
@@ -195,7 +208,7 @@ it('shows all three participants and can adopt and inspect the CHIEF candidate',
   expect(jump).toHaveBeenLastCalledWith({step:3,quote:''})
   fireEvent.click(screen.getByRole('button',{name:'查看CHIEF详情'}))
   expect(screen.getByText('根因 Agent · billing')).toBeTruthy()
-  expect(screen.queryByRole('tab',{name:'改进建议'})).toBeNull()
+  expect(within(screen.getByRole('tablist',{name:'引擎诊断内容'})).queryByRole('tab',{name:'改进建议'})).toBeNull()
   for (const tab of ['诊断结论', '证据与候选', '因果回溯']) {
     fireEvent.click(screen.getByRole('tab',{name:tab}))
     expect(screen.getByText('关键失败步骤')).toBeTruthy()
@@ -218,6 +231,7 @@ it('distinguishes a missing CHIEF key step from a successful trace', () => {
     attribution:{...report.attribution!,critical_step:null,critical_instance_id:null}}
   const jump = vi.fn()
   const {rerender} = render(<Inspector job={{...job,result:chief}} report={chief} onJump={jump} onReview={vi.fn()}/>)
+  fireEvent.click(screen.getByRole('tab',{name:'CHIEF'}))
   fireEvent.click(screen.getByRole('tab',{name:'证据与候选'}))
   const control = screen.getByRole<HTMLButtonElement>('button',{name:'未确定'})
   expect(control.disabled).toBe(true)

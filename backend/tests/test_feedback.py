@@ -43,6 +43,8 @@ def provider():
                                                       'reason': 'The final answer repeats the unsupported claim.',
                                                       'hint_sentence': 'Check the tool response before confirming completion.'}],
                       'cascade_analysis': [], 'narrative_summary': 'An unapproved refund caused the failure.'}
+            if 'suggestions' in body['messages'][0]['content'] and state.get('trace_answer') is not None:
+                report = state['trace_answer']
             text = 'not-json' if state['invalid'] else json.dumps(report)
             response = {'id': 'fixture', 'object': 'chat.completion', 'created': 0, 'model': 'fixture',
                         'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': text}, 'finish_reason': 'stop'}],
@@ -101,6 +103,53 @@ def wait_feedback(client, job_id):
             return feedback
         time.sleep(.025)
     raise AssertionError('Feedback did not finish')
+
+
+@pytest.mark.parametrize('mode, reviewed', [('fast', False), ('standard', False), ('deep', True)])
+def test_one_trace_feedback_uses_the_selected_conclusion(tmp_path, provider, mode, reviewed):
+    url, calls, state = provider
+    state['trace_answer'] = {'suggestions': [{'priority': 'high', 'problem': '未经审批退款',
+        'change': '发起退款前核验审批', 'verification': '回放一条无审批记录的轨迹', 'evidence_ids': ['E1']}]}
+    app = create_app(Settings(data_dir=tmp_path, base_url=url, model='fixture', prompt_language='zh'))
+    store = app.state.store
+    job, _ = seed_job(store, app.state.settings)
+    report = job['result']
+    report['algorithm'] = 'TrajDebug' if mode == 'deep' else 'AgentDebugX'
+    if mode != 'fast':
+        chief = {'algorithm': 'CHIEF', 'attribution': {**report['attribution'], 'critical_step': 2}}
+        primary = 'trajdebug' if mode == 'deep' else 'agentdebugx'
+        report['engine_runs'] = {primary: {'status': 'completed'}, 'chief': {'status': 'completed', 'report': chief}}
+        if mode == 'deep':
+            report['engine_runs']['agentdebugx'] = {'status': 'completed', 'report': {
+                'algorithm': 'AgentDebugX', 'attribution': {**report['attribution'], 'critical_step': 0}}}
+        report['comparison'] = {'state': 'different', 'primary': primary, 'engines': list(report['engine_runs'])}
+        report['synthesis'] = {'status': 'completed', 'summary': '综合评估采用步骤 #2。',
+                               'assessments': {'chief': {'support': 'high'}}}
+    store.update(job['id'], result=report)
+    if reviewed:
+        store.add_review(job['id'], {'decision': 'modified', 'critical_step': 3, 'summary': '复核采用步骤 #3。', 'category': '', 'notes': ''})
+    path = f"/api/jobs/{job['id']}/feedback"
+    expected = {'fast': (1, 'diagnosis', 'issue_refund()'), 'standard': (2, 'provisional', 'refunded'),
+                'deep': (3, 'review', 'refund complete')}[mode]
+
+    with TestClient(app) as client:
+        assert client.get(f"/api/jobs/{job['id']}").json()['feedback_eligible']
+        first = client.post(path)
+        assert first.status_code == 200
+        assert client.post(path).json()['id'] == first.json()['id']
+        run = wait_feedback(client, job['id'])
+        assert run['status'] == 'completed'
+        result = run['result']
+        assert (result['critical_step'], result['basis'], result['evidence']['quote']) == expected
+        assert result['scope'] == 'trace' and result['suggestions'] == state['trace_answer']['suggestions']
+        assert client.get(path + '/export').json() == result
+        assert len(calls) == 1
+        payload = json.loads(calls[0]['messages'][1]['content'])
+        assert len(payload['evidence']) == 1 and payload['evidence'][0]['step'] == expected[0]
+        assert 'SECRET_GOLD' not in str(payload)
+        assert '用中文' in calls[0]['messages'][0]['content']
+        assert len(store.feedback_history(job['id'])) == 1
+        assert store.job(job['id'])['result'] == report
 
 
 @pytest.mark.parametrize('otel', [False, True])

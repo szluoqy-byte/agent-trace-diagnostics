@@ -33,10 +33,6 @@ export function diagnosisDepthLabel(mode: DiagnosisMode) {
   return `${label} · ${name}`
 }
 
-export function supportsAutoFeedback(mode: DiagnosisMode) {
-  return mode === 'deep' || mode === 'trajdebug' || mode === 'dual' || mode === 'dual_chief'
-}
-
 export default function DiagnosisDepthField({value, onChange, disabled}: {
   value: DiagnosisLevel; onChange: (value: DiagnosisLevel) => void; disabled?: boolean
 }) {

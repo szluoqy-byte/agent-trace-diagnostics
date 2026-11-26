@@ -12,7 +12,7 @@ from .execution import active_execution, snapshot, job_settings, run_settings
 from .feedback import feedback_availability
 from .official_samples import load_official_samples
 from .prompt_language import normalize_prompt_language
-from .diagnosis import DEFAULT_MODE, TRAJDEBUG_MODES, DiagnosisMode
+from .diagnosis import DEFAULT_MODE, DiagnosisMode
 
 
 class TaskCreate(Contract):
@@ -258,7 +258,7 @@ def attach_task_routes(app, store, settings, job_view):
         config = snapshot(execution, connection_id, body.prompt_language, body.diagnosis_mode) if body.start else None
         task_id, run_id = checked(lambda: store.create_task(
             fields, traces=traces, trace_ids=trace_ids, config=config,
-            auto_feedback=body.auto_feedback and body.diagnosis_mode in TRAJDEBUG_MODES,
+            auto_feedback=body.auto_feedback,
         ))
         return {'task_id':task_id, 'run_id':run_id}
 
@@ -270,7 +270,7 @@ def attach_task_routes(app, store, settings, job_view):
                         start=True, execution=execution)
         mode = body.diagnosis_mode or task['diagnosis_mode']
         config = snapshot(execution, connection_id, task['prompt_language'], mode)
-        run_id = checked(lambda:store.start_run(task_id, config, body.auto_feedback and mode in TRAJDEBUG_MODES))
+        run_id = checked(lambda:store.start_run(task_id, config, body.auto_feedback))
         return {'run_id':run_id}
 
     def trace_scope(task_id, run_id):
@@ -341,7 +341,7 @@ def attach_task_routes(app, store, settings, job_view):
             latest = store.latest_feedback(job['id']) if job else None
             if latest and latest['status'] in {'queued','running','completed'}:
                 continue
-            eligible,reason = feedback_availability(job,job_settings(store,settings,job['id'])) if job else (False,'尚未完成诊断')
+            eligible,reason = feedback_availability(store,job,job_settings(store,settings,job['id'])) if job else (False,'尚未完成诊断')
             if eligible:
                 created.append(checked(lambda:store.enqueue_feedback(job['id'])))
             else:

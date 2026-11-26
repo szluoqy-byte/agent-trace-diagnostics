@@ -276,7 +276,7 @@ async def test_queue_uses_frozen_config_and_auto_feedback(tmp_path,monkeypatch):
         seen.append(('feedback',settings.model));return {'hint':'test'}
     monkeypatch.setattr('tracelens.queue.diagnose',diagnose)
     monkeypatch.setattr('tracelens.queue.generate_feedback',feedback)
-    monkeypatch.setattr('tracelens.queue.feedback_availability',lambda job,settings:(True,''))
+    monkeypatch.setattr('tracelens.queue.feedback_availability',lambda store,job,settings:(True,''))
     app.state.settings.model='changed-after-start'
     queue=JobQueue(app.state.store,app.state.settings)
     await queue.start()

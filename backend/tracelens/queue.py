@@ -11,6 +11,7 @@ from .execution import job_settings, run_settings
 from .llm import ModelError
 from .models import Trajectory
 from .task_improvements import generate_agent_suggestions
+from .trace_feedback import generate_trace_feedback, uses_trace_feedback
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +124,11 @@ class JobQueue:
         execution = self.settings
         try:
             execution = job_settings(self.store,self.settings,feedback['job_id'])
-            result = await generate_feedback(self.store.job(feedback['job_id']), execution, feedback['id'])
+            job = self.store.job(feedback['job_id'])
+            if uses_trace_feedback(job):
+                result = await generate_trace_feedback(self.store, job, execution, feedback['id'])
+            else:
+                result = await generate_feedback(job, execution, feedback['id'])
             self.store.update_feedback(feedback['id'], status='completed', result=result)
         except asyncio.CancelledError:
             self.store.update_feedback(feedback['id'], status='failed', error='服务停止，建议生成已中断，可重试')
@@ -169,7 +174,7 @@ class JobQueue:
             if not job:
                 continue
             execution = job_settings(self.store,self.settings,job_id)
-            if feedback_availability(job,execution)[0]:
+            if feedback_availability(self.store,job,execution)[0]:
                 try:
                     self.store.enqueue_feedback(job_id)
                 except ValueError:

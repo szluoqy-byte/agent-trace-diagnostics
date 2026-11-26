@@ -11,15 +11,12 @@ import sys
 from .config import ROOT
 from .llm import ModelError
 from .model_concurrency import model_slot_environment
+from .trace_feedback import trace_feedback_context, uses_trace_feedback
 from .trajdebug import UPSTREAM_COMMIT, UPSTREAM_URL, verify_upstream
 
 
 def feedback_source(job, settings):
     result = job.get('result') or {}
-    if result.get('algorithm') == 'AgentDebugX':
-        raise ValueError('AgentDebugX 的恢复建议已随诊断生成，请在诊断详情查看。')
-    if result.get('algorithm') == 'CHIEF':
-        raise ValueError('CHIEF 提供根因定位和证据，可用深度诊断（Deep）生成 TrajDebug 改进建议。')
     if job['status'] != 'completed':
         raise ValueError('请先完成诊断，再生成改进建议')
     if job['mode'] != 'live' or result.get('schema_version') != 2:
@@ -52,9 +49,12 @@ def feedback_source(job, settings):
     return directory
 
 
-def feedback_availability(job, settings):
+def feedback_availability(store, job, settings):
     try:
-        feedback_source(job, settings)
+        if uses_trace_feedback(job):
+            trace_feedback_context(store, job)
+        else:
+            feedback_source(job, settings)
         if not settings.ready:
             return False, '请先配置诊断模型后再生成改进建议'
         return True, ''
