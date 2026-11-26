@@ -390,17 +390,23 @@ class TaskStore:
                 and row['schema_version']==2 and row['algorithm'] not in {'AgentDebugX', 'CHIEF'}
                 and row['outcome']=='failed' and row['critical_step'] is not None)
             row['attempts'] = row['attempts'] or 0
-            if row['diagnosis'] == 'completed' and row['outcome'] == 'failed' and comparison_state in UNSETTLED_STATES:
+            if row['diagnosis'] != 'completed' or row['outcome'] != 'failed':
+                continue
+            if review:
+                chosen = json.loads(review)
+            elif comparison_state in UNSETTLED_STATES:
                 sources = {**json.loads(alternatives or '{}'), primary: row}
                 engines = json.loads(participants) if participants is not None else LEGACY_COMPARISON_ENGINES
                 steps = {name: (sources.get(name) or {}).get('critical_step') for name in engines}
                 winner, step = select_candidate({'state': comparison_state, 'primary': primary}, steps,
                                                 json.loads(assessments or '{}') if synthesis_status == 'completed' else {})
-                chosen = json.loads(review) if review else {
+                chosen = {
                     'critical_step': step, 'category': (sources.get(winner) or {}).get('category'),
                     'summary': synthesis_summary if synthesis_status == 'completed' else UNRESOLVED_SUMMARY,
                 }
-                row.update({key: chosen.get(key) for key in ('critical_step', 'category', 'summary')})
+            else:
+                continue
+            row.update({key: chosen.get(key) for key in ('critical_step', 'category', 'summary')})
         return rows
 
     def item_attempts(self, run_id, trace_id):

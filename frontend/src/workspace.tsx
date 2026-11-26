@@ -39,7 +39,7 @@ export function useResource<T>(path:string|null,version=0,poll:number|((data:T)=
 interface Workspace {openSettings:()=>void; config:Config|null; version:number; busy:boolean; action:<T>(work:()=>Promise<T>,message?:string,onError?:(message:string)=>void)=>Promise<T|undefined>; notify:(message:string)=>void; refresh:()=>void; go:(path:string,replace?:boolean)=>void}
 export const WorkspaceContext=createContext<Workspace|null>(null)
 export function useWorkspace(){const value=useContext(WorkspaceContext);if(!value)throw new Error('Workspace context missing');return value}
-export function filterQuery(params:URLSearchParams){const q=new URLSearchParams();for(const key of ['search','diagnosis','business','review','category']){const v=params.get(key);if(v&&v!=='all')q.set(key,v)}return q.toString()}
+export function filterQuery(params:URLSearchParams){const q=new URLSearchParams();for(const key of ['search','diagnosis','business','review']){const v=params.get(key);if(v&&v!=='all')q.set(key,v)}return q.toString()}
 export function taskPath(id:string,params:URLSearchParams){return `/tasks/${id}${params.size?'?'+params.toString():''}`}
 export function tracePath(id:string,traceId:string,params:URLSearchParams){return `/tasks/${id}/traces/${traceId}?${params}`}
 export const listScroll=new Map<string,number>()

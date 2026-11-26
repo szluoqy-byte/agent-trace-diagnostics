@@ -1,14 +1,14 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import App from './App'
 import TraceViewer from './components/TraceViewer'
 
 const fixtures = vi.hoisted(() => {
   const ids=['first','second','third',...Array.from({length:9},(_,i)=>`trace${i+4}`)]
-  const traces=ids.map((id,i)=>({id,title:`轨迹 ${id}`,created_at:'2026-11-18T06:00:00Z',dataset:'test',task_id:id,outcome:'failed',kind:'imported',source:'test',steps:i+1,position:i,job_id:null,diagnosis:'pending',attempts:0,critical_step:null,category:null,review_status:null,feedback_applicable:false,input_format:'messages'}))
+  const traces=ids.map((id,i)=>({id,title:`轨迹 ${id}`,created_at:'2026-11-18T06:00:00Z',dataset:'test',task_id:id,outcome:'failed',kind:'imported',source:'test',steps:i+1,position:i,job_id:null,diagnosis:i<2?'completed':'pending',attempts:0,critical_step:i===0?0:null,category:i===0?'fixture-taxonomy':null,review_status:null,feedback_applicable:false,input_format:'messages'}))
   const data=Object.fromEntries(traces.map((t,i)=>[t.id,{id:t.id,data:{title:t.title,task_description:'task',messages:Array.from({length:i+1},(_,step)=>({step,role:'assistant',name:'',source_step:String(step),content:`${t.id} 的原始消息 ${step}`})),annotation:{},source:'test',kind:t.kind,outcome:'failed'}}]))
-  const counts={total:12,pending:12,completed:0,business_failed:12}
+  const counts={total:12,pending:10,completed:2,business_failed:12}
   const run={id:'r1',number:1,task_id:'one',created_at:'2026-11-18T06:00:00Z',auto_feedback:false,config:{model:'fixture',concurrency:2},counts,status:'pending',read_only:false,categories:[]}
   const task={id:'one',name:'任务 one',agent:'Agent',version:'v1',goal:'排查',created_at:run.created_at,runs:[run],latest_run_id:'r1',input_count:12,formats:['messages'],counts,status:'pending',categories:[]}
   return {traces,data,task}
@@ -56,13 +56,17 @@ it('switching task trajectories repeatedly keeps one matching log and inspector'
 })
 
 it('opens the current result when an old task history URL is used', async () => {
-  window.history.replaceState(null,'','#/tasks/one?tab=history&run=old')
+  window.history.replaceState(null,'','#/tasks/one?tab=history&run=old&category=fixture-taxonomy')
   render(<App/>)
   expect(await screen.findByRole('link', {name:'轨迹 first'})).toBeTruthy()
   expect(location.hash).toBe('#/tasks/one')
   expect(screen.queryByRole('tab', {name:/分析记录/})).toBeNull()
   expect(screen.queryByRole('combobox', {name:/分析记录/})).toBeNull()
   expect(screen.getByRole('link', {name:'导出当前分析'}).getAttribute('href')).toBe('/api/tasks/one/runs/r1/export')
+  expect(screen.getByRole('columnheader', {name:'关键步骤'})).toBeTruthy()
+  expect(within(screen.getByRole('row', {name:/轨迹 first/})).getByText('#0')).toBeTruthy()
+  expect(within(screen.getByRole('row', {name:/轨迹 second/})).getByText('未定位')).toBeTruthy()
+  expect(screen.queryByText(/根因类别|fixture-taxonomy/)).toBeNull()
 })
 
 it('pagination preserves selected IDs across pages and clears them on filtering',async()=>{

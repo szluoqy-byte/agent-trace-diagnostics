@@ -102,6 +102,8 @@ def test_retries_stay_in_analysis_and_history_is_read_only(tmp_path):
     job=app.state.store.run_rows(task['run_id'])[0]['job_id']
     review={'decision':'modified','critical_step':7,'category':'人工分类','summary':'人工结论','notes':'note'}
     assert client.post(f'/api/jobs/{job}/reviews',json=review).status_code==200
+    reviewed = client.get(endpoint(task) + '/traces').json()['items'][0]
+    assert reviewed['review_status'] == 'modified' and reviewed['critical_step'] == 7
     original_result=app.state.store.job(job)['result']
     next_run=client.post(f"/api/tasks/{task['task_id']}/runs",json={}).json()['run_id']
     assert next_run!=task['run_id']
