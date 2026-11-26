@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { X, Download } from 'lucide-react'
 import { post } from '../api'
 import type { Job, Message, ReviewData } from '../types'
+import {unsettledComparison} from './DiagnosisComparison'
 
 export function Dialog({title, onClose, children, busy=false}: {title:string; onClose:()=>void; children:ReactNode; busy?:boolean}) {
   const ref = useRef<HTMLDialogElement>(null)
@@ -34,8 +35,8 @@ export function ReviewDialog({job, messages, onClose, onDone}: {job:Job; message
   const source = preferred && preferred !== report.comparison?.primary ? report.engine_runs?.[preferred]?.report : report
   const original = synthesis ? {
     critical_step:synthesis.critical_step, summary:synthesis.summary, category:preferred ? source?.attribution?.category ?? '' : '',
-  } : report.comparison?.state === 'different' ? {
-    critical_step:null, category:'', summary:'两路定位不同，关键步骤待人工复核。',
+  } : report.task_outcome !== 'succeeded' && unsettledComparison.has(report.comparison?.state ?? '') ? {
+    critical_step:null, category:'', summary:'各路定位尚未形成一致结论，关键步骤待人工复核。',
   } : report.attribution!
   const saved = job.reviews?.[0]?.data
   const initial = saved ?? original
@@ -47,7 +48,8 @@ export function ReviewDialog({job, messages, onClose, onDone}: {job:Job; message
   const [error, setError] = useState('')
   const editable = value.decision !== 'confirmed'
   const canChooseStep = value.decision === 'modified'
-  const steps = messages?.filter(message => source?.algorithm === 'AgentDebugX' || message.role !== 'user' && message.judgable !== false)
+  const freeStepChoice = source?.algorithm === 'AgentDebugX' || source?.algorithm === 'CHIEF'
+  const steps = messages?.filter(message => freeStepChoice || message.role !== 'user' && message.judgable !== false)
   function chooseDecision(decision:string) {
     setError('')
     setValue(old=>{

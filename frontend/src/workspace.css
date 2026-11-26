@@ -250,4 +250,5 @@
 .diagnosis-usage th,.diagnosis-usage td{padding:8px 12px;border-top:1px solid var(--border);text-align:right}
 .diagnosis-usage th:first-child{text-align:left}
 .diagnosis-usage thead th{font-size:12px;font-weight:500;color:var(--muted)}
+.diagnosis-cache-hits{display:block;margin-top:2px;color:var(--muted);font-size:11px;line-height:1.4}
 @media(max-width:480px){.diagnosis-usage th,.diagnosis-usage td{padding:8px 6px}}

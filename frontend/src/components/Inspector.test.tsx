@@ -150,6 +150,7 @@ it.each(['completed', 'failed'] as const)('shows the clickable agreed step with 
   render(<Inspector job={{...job,result:dual,review_status:'waived'}} report={dual} onJump={jump} onReview={vi.fn()}/>)
   expect(screen.getByText('免复核')).toBeTruthy()
   expect(screen.getByText(/部分引擎缺少可核验的原文引用/)).toBeTruthy()
+  expect(screen.getByText('历史复核参考')).toBeTruthy()
   expect(screen.queryByText('待人工复核')).toBeNull()
   fireEvent.click(screen.getByRole('button',{name:/一致关键步骤 #7.*定位轨迹/}))
   expect(jump).toHaveBeenCalledWith({step:7,quote:''})
@@ -157,7 +158,7 @@ it.each(['completed', 'failed'] as const)('shows the clickable agreed step with 
   expect(screen.getByText('免复核')).toBeTruthy()
 })
 
-it('opens CHIEF reference details and jumps to a verified source in the trace', () => {
+it('shows all three participants and can adopt and inspect the CHIEF candidate', () => {
   const source = {step:3, quote:'refund completed', matched:true, original_matched:true}
   const chief: Report = {...report, algorithm:'CHIEF', triggers:[], instances:[], evidence:[source],
     root_cause_agent:'billing', attribution:{...report.attribution!, critical_step:3, summary:'退款流程缺少审批'},
@@ -165,11 +166,19 @@ it('opens CHIEF reference details and jumps to a verified source in the trace', 
       agents:[{agent:'billing'}], data_flow:[]}], subtask_edges:[], agent_edges:[]},
       candidates:{candidate_error_steps:[{step_id:3, agent_in_step:['billing'], irrecoverability_issue:{reason:'不可撤销'},
         data_issue:{explanation:''}}]}}}
-  const combined: Report = {...report, comparison:{state:'aligned',primary:'trajdebug'},
-    engine_runs:{trajdebug:{status:'completed'}, agentdebugx:{status:'completed'}, chief:{status:'completed',report:chief}}}
+  const combined: Report = {...report, comparison:{state:'different',primary:'trajdebug',engines:['trajdebug','agentdebugx','chief']},
+    engine_runs:{trajdebug:{status:'completed'}, agentdebugx:{status:'completed'}, chief:{status:'completed',report:chief}},
+    synthesis:{status:'completed',summary:'三路对退款根因给出不同步骤。',preferred_engine:'chief',critical_step:3,
+      assessments:{trajdebug:{support:'medium',reason:'部分支持'},agentdebugx:{support:'low',reason:'证据较弱'},
+        chief:{support:'high',reason:'有原文'}},evidence:[{...source,engine:'chief'}],model:'fixture',calls:1}}
   const jump = vi.fn()
-  render(<Inspector job={{...job,result:combined,review_status:'waived'}} report={combined} onJump={jump} onReview={vi.fn()}/>)
-  expect(screen.getByText('复核参考')).toBeTruthy()
+  render(<Inspector job={{...job,result:combined}} report={combined} onJump={jump} onReview={vi.fn()}/>)
+  expect(screen.getByText('纳入综合评估 3 路')).toBeTruthy()
+  expect(screen.queryByText('历史复核参考')).toBeNull()
+  const chiefCard = screen.getByRole('heading',{name:'CHIEF'}).closest('section')!
+  expect(within(chiefCard).getByText('高')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button',{name:/暂定关键步骤 #3.*定位轨迹/}))
+  expect(jump).toHaveBeenLastCalledWith({step:3,quote:''})
   fireEvent.click(screen.getByRole('button',{name:'查看CHIEF详情'}))
   expect(screen.getByText('根因 Agent · billing')).toBeTruthy()
   expect(screen.queryByRole('tab',{name:'改进建议'})).toBeNull()
@@ -181,4 +190,16 @@ it('opens CHIEF reference details and jumps to a verified source in the trace', 
   expect(screen.getByRole('link',{name:'下载 CHIEF 原始报告'}).getAttribute('href')).toBe('/api/jobs/job/artifacts/chief')
   fireEvent.click(screen.getByRole('tab',{name:'因果回溯'}))
   expect(screen.getByText('S1 · 提交退款 · 步骤 1-3')).toBeTruthy()
+})
+
+it('shows partial multi-engine synthesis and requires review', () => {
+  const combined: Report = {...report, comparison:{state:'incomplete',primary:'trajdebug',engines:['trajdebug','agentdebugx']},
+    engine_runs:{trajdebug:{status:'completed'},agentdebugx:{status:'completed'},chief:{status:'failed',error:'模型超时'}},
+    synthesis:{status:'completed',summary:'已评估完成的两路。',preferred_engine:'trajdebug',critical_step:7,
+      assessments:{trajdebug:{support:'high',reason:'原文支持'}},evidence:[],model:'fixture',calls:1}}
+  render(<Inspector job={{...job,result:combined}} report={combined} onJump={vi.fn()} onReview={vi.fn()}/>)
+  expect(screen.getByText('纳入综合评估 2 路，部分引擎未完成。')).toBeTruthy()
+  expect(screen.getByText('待人工复核')).toBeTruthy()
+  expect(screen.queryByText('免复核')).toBeNull()
+  expect(screen.getByText('模型超时')).toBeTruthy()
 })

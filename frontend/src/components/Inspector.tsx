@@ -3,7 +3,7 @@ import {uiText} from '../branding'
 import Citation from './Citation'
 import Tabs from './Tabs'
 import FeedbackPanel from './FeedbackPanel'
-import DiagnosisComparison, {AgentDebugXDetails, engineLabels} from './DiagnosisComparison'
+import DiagnosisComparison, {AgentDebugXDetails} from './DiagnosisComparison'
 import ChiefDetails from './ChiefDetails'
 import {responsibilityLabels} from '../patterns'
 import { ArrowUpRight, CircleCheck, UserRoundCheck, ScanSearch, GitBranch, Flag, ChevronRight, RotateCcw } from 'lucide-react'
@@ -86,7 +86,7 @@ export default function Inspector({job, report: combined, onJump, onReview, onFe
   const regenerateLabel = feedbackTab ? (feedbackStatus === 'failed' ? '重试生成改进建议' : '重新生成改进建议') : '重新生成本条轨迹诊断'
   const regenerateTips = feedbackActive ? '请等待本条轨迹的改进建议生成完成'
     : feedbackTab ? job?.feedback_unavailable_reason || '使用当前诊断重新生成改进建议'
-    : includeChief ? '重新运行双路综合分析和 CHIEF 诊断'
+    : includeChief ? '重新运行本条轨迹的多路诊断与综合分析'
     : dual ? '重新运行本条轨迹的两路诊断与综合分析'
     : chief ? '重新运行本条轨迹的 CHIEF 诊断'
     : '重新分析本条轨迹并生成诊断结论、错误实例和触发证据'
@@ -99,7 +99,7 @@ export default function Inspector({job, report: combined, onJump, onReview, onFe
     items={items} active={activeTab} onChange={setTab}/>
   const reviewButton = completed && !job?.read_only && (overview ? combined?.attribution : ai && !legacy && (!dual || engine === primary && !hasSynthesis))
     ? <div className="inspector-footer"><button className={reviewWaived ? 'secondary' : 'primary full'} onClick={onReview}><UserRoundCheck size={17}/>
-      {reviewWaived ? '仍要人工复核' : overview && primary && !hasSynthesis ? `复核 ${engineLabels[primary]} 结论` : job?.reviews?.length ? '再次复核' : '人工复核'}</button></div> : null
+      {reviewWaived ? '仍要人工复核' : job?.reviews?.length ? '再次复核' : '人工复核'}</button></div> : null
   const details = <>
     {dual && canInspect ? <div className="inspector-toolbar inspector-subtabs">{detailsTabs}</div> : null}
     <div className="inspector-scroll" role={!dual || canInspect ? 'tabpanel' : undefined}

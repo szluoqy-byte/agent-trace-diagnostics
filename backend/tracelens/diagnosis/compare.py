@@ -37,8 +37,10 @@ def compare_results(trace, runs):
 
 
 async def diagnose_dual(trace, settings, progress, run_standard, *, fresh_cache=False, include_chief=False):
-    comparison_engines = ("trajdebug", "agentdebugx")
-    names = (*comparison_engines, "chief") if include_chief else comparison_engines
+    runners = {"trajdebug": run_standard, "agentdebugx": diagnose_agentdebugx}
+    if include_chief:
+        runners["chief"] = diagnose_chief
+    names = tuple(runners)
     progress_by_engine = dict.fromkeys(names, 0)
     latest = {name: {"status": "running"} for name in names}
 
@@ -75,32 +77,27 @@ async def diagnose_dual(trace, settings, progress, run_standard, *, fresh_cache=
         progress_by_engine[name] = 100
         await publish()
 
-    runs = [
-        execute("trajdebug", run_standard, **({"fresh_cache": True} if fresh_cache else {})),
-        execute("agentdebugx", diagnose_agentdebugx),
-    ]
-    if include_chief:
-        runs.append(execute("chief", diagnose_chief))
-    await asyncio.gather(*runs)
-    primary = next((name for name in names if latest[name]["status"] == "completed"), None)
+    await asyncio.gather(*(execute(name, run, **({"fresh_cache": True} if name == "trajdebug" and fresh_cache else {}))
+                           for name, run in runners.items()))
+    reports = {name: row["report"] for name, row in latest.items() if row["status"] == "completed"}
+    primary = next(iter(reports), None)
     if primary is None:
         await progress("诊断失败", 99, {"engine_runs": latest, "synthesis": {"status": "incomplete"}})
         raise ModelError("所有诊断引擎均失败，请检查模型连接后重试。"
                          if include_chief else "两路诊断均失败，请检查模型连接后重试。")
     result = dict(latest[primary]["report"])
     result.update(
-        comparison={"state": compare_results(trace, {name: latest[name] for name in comparison_engines}), "primary": primary},
+        comparison={"state": compare_results(trace, latest), "primary": primary, "engines": list(reports)},
         engine_runs={name: {key: value for key, value in row.items() if key != "report" or name != primary}
                      for name, row in latest.items()},
     )
-    if result["comparison"]["state"] == "incomplete":
+    if len(reports) < 2:
         result["synthesis"] = {"status": "incomplete"}
     else:
-        reports = {name: latest[name]["report"] for name in comparison_engines}
         if trace.outcome == "failed":
             await progress("综合分析", 99, {"engine_runs": {
                 name: {"status": latest[name]["status"]} for name in names
-            }, "synthesis": {"status": "running"}})
+            }, "comparison": result["comparison"], "synthesis": {"status": "running"}})
         started = monotonic()
         try:
             result["synthesis"] = await synthesize(

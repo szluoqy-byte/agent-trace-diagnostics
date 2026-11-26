@@ -1,16 +1,17 @@
 """Human-readable export; the raw model output is exported separately unchanged."""
 
-from .diagnosis.synthesis import SUPPORT_LABELS, project_synthesis, review_target
+from .diagnosis.synthesis import LEGACY_COMPARISON_ENGINES, SUPPORT_LABELS, project_synthesis, review_target
 from .diagnosis.review_policy import AGREEMENT_STATES, review_status
 
 REVIEW_LABELS = {"confirmed": "已确认", "modified": "已修改", "rejected": "已驳回", "waived": "免复核"}
 FEEDBACK_LABELS = {"queued": "排队中", "running": "生成中", "completed": "已生成", "failed": "生成失败"}
+ENGINE_LABELS = {"trajdebug": "TrajDebug", "agentdebugx": "AgentDebugX", "chief": "CHIEF"}
 COMPARISON_LABELS = {
-    "aligned": "同一步骤，两路均有原文引用",
+    "aligned": "同一步骤，各路均有原文引用",
     "same_step": "同一步骤，原文引用有缺口",
     "different": "关键步骤不同",
     "unresolved": "至少一路未定位",
-    "incomplete": "有一路未完成",
+    "incomplete": "部分引擎未完成",
     "succeeded": "业务成功",
 }
 INSTANCE_LABELS = {
@@ -28,6 +29,8 @@ def markdown_report(trace, job, reviews, feedback=None):
     ai = result["attribution"]
     final = reviews[0]["data"] if reviews else review_target(result)[0]
     step = final.get("critical_step")
+    comparison = result.get("comparison") or {}
+    runs = result.get("engine_runs") or {}
     lines = [f"# 天罗智能轨迹诊断 · {trace['title']}", ""]
     if result.get("mode") == "demo":
         lines += ["历史合成数据，未运行模型。", ""]
@@ -40,31 +43,33 @@ def markdown_report(trace, job, reviews, feedback=None):
     if (synthesis := result.get("synthesis", {})).get("status") == "completed":
         lines += ["## 综合分析", "", synthesis["summary"], ""]
         preferred_step = synthesis.get("critical_step")
-        comparison = result.get("comparison") or {}
         if preferred_step is not None:
             label = ("一致关键步骤" if comparison.get("state") in AGREEMENT_STATES
                      else "模型候选步骤" if reviews else "暂定关键步骤（待人工复核）")
             lines += [f"{label} #{preferred_step}", ""]
         else:
             lines += ["关键失败步骤待人工判断。", ""]
-        if comparison.get("state") == "different":
-            for engine, label in (("trajdebug", "TrajDebug"), ("agentdebugx", "AgentDebugX")):
-                assessment = synthesis["assessments"][engine]
-                branch = result if engine == comparison["primary"] else (result["engine_runs"][engine].get("report") or {})
-                candidate = (branch.get("attribution") or {}).get("critical_step")
-                lines += [f"- {label} · #{candidate} · 候选置信度 {SUPPORT_LABELS[assessment['support']]} · {assessment['reason']}"]
+        for engine, assessment in (synthesis.get("assessments") or {}).items():
+            branch = result if engine == comparison.get("primary") else (runs.get(engine, {}).get("report") or {})
+            candidate = (branch.get("attribution") or {}).get("critical_step")
+            location = f"#{candidate}" if candidate is not None else "未定位"
+            label = ENGINE_LABELS.get(engine, engine)
+            lines += [f"- {label} · {location} · 候选置信度 {SUPPORT_LABELS[assessment['support']]} · {assessment.get('reason', '')}"]
         lines += evidence_lines(synthesis) + [""]
-    status = review_status((result.get("comparison") or {}).get("state"), final.get("decision"))
+    status = review_status(comparison.get("state"), final.get("decision"))
     lines += ["## 当前结论", "", final["summary"],
               f"关键步骤：{f'#{step}' if step is not None else '未确定'} | 根因类别：{final['category']}",
               f"人工复核：{REVIEW_LABELS.get(status, '待复核')}", final.get("notes", ""),
               "", "## 模型原始结论", "", ai["reasoning"]]
     for warning in result.get("warnings", []):
         lines += ["", "提示：" + warning]
-    if comparison := result.get("comparison"):
-        lines += ["", "## 双路诊断对照", "", COMPARISON_LABELS[comparison["state"]], ""]
-        for name, run in result.get("engine_runs", {}).items():
-            label = {"trajdebug": "标准诊断", "agentdebugx": "AgentDebugX", "chief": "CHIEF（参考）"}.get(name, name)
+    if comparison:
+        lines += ["", "## 多路诊断对照" if len(runs) > 2 else "## 双路诊断对照", "", COMPARISON_LABELS[comparison["state"]], ""]
+        participants = comparison.get("engines", LEGACY_COMPARISON_ENGINES)
+        for name, run in runs.items():
+            label = ENGINE_LABELS.get(name, name)
+            if run["status"] == "completed" and name not in participants:
+                label += "（参考）"
             branch = result if name == comparison["primary"] else (run.get("report") or {})
             attribution = branch.get("attribution") or {}
             branch_step = attribution.get("critical_step")

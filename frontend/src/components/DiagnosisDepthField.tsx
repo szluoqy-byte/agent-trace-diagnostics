@@ -15,7 +15,7 @@ const options = {
   },
   dual_chief: {
     label: '高', name: '多路综合',
-    tip: '适合复杂链路。增加一路因果回溯供人工复核，预计耗时和用量最高。',
+    tip: '适合复杂链路。综合全部已完成的引擎结论与证据，预计耗时和用量最高。',
   },
   agentdebugx: {
     label: 'AgentDebugX', name: '',

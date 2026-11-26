@@ -314,7 +314,7 @@ def create_app(settings=None, *, frontend_dir=None):
         trace = require_trace(job["trace_id"])["data"]
         if body.critical_step is not None:
             invalid_step = body.critical_step >= len(trace["messages"])
-            if not invalid_step and algorithm != "AgentDebugX":
+            if not invalid_step and algorithm not in {"AgentDebugX", "CHIEF"}:
                 message = trace["messages"][body.critical_step]
                 invalid_step = message["role"] == "user" or message.get("judgable") is False
             if invalid_step:

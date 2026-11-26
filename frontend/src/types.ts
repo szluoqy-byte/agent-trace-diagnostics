@@ -1,5 +1,4 @@
-export type ComparisonEngine = 'trajdebug' | 'agentdebugx'
-export type EngineName = ComparisonEngine | 'chief'
+export type EngineName = 'trajdebug' | 'agentdebugx' | 'chief'
 export type DiagnosisMode = EngineName | 'dual' | 'dual_chief'
 export type EvidenceSupport = 'high' | 'medium' | 'low' | 'insufficient'
 export interface ModelUsage {
@@ -14,9 +13,9 @@ export type DiagnosisSynthesis = {
 } & (
   | {status: 'running' | 'incomplete' | 'not_needed' | 'insufficient'}
   | {status: 'failed'; failure?: 'http' | 'connection' | 'format' | 'empty' | 'length' | 'filtered'; http_status?: number; model?: string}
-  | {status: 'completed'; summary: string; preferred_engine: ComparisonEngine | null; critical_step: number | null;
-      assessments?: Record<ComparisonEngine, {support: EvidenceSupport; reason: string}>;
-      evidence: (Evidence & {engine: ComparisonEngine | 'trajectory'})[]; model: string; calls: number}
+  | {status: 'completed'; summary: string; preferred_engine: EngineName | null; critical_step: number | null;
+      assessments?: Partial<Record<EngineName, {support: EvidenceSupport; reason: string}>>;
+      evidence: (Evidence & {engine: EngineName | 'trajectory'})[]; model: string; calls: number}
 )
 export interface EngineRun {
   status: 'running' | 'completed' | 'failed'
@@ -28,6 +27,7 @@ export interface EngineRun {
 export interface EngineComparison {
   state: 'aligned' | 'same_step' | 'different' | 'unresolved' | 'incomplete' | 'succeeded'
   primary: EngineName
+  engines?: EngineName[]
 }
 interface EngineFinding { step_index?: number | null; failure_mode?: {mode_id?: string}; evidence?: string[] }
 export interface Config { ready: boolean; model: string; base_url: string; has_key: boolean; concurrency: number; max_retries: number; timeout: number; llm_concurrency: number; max_tokens: number; cluster_json_mode: boolean; engine: string; algorithm?: string; upstream_commit?: string; upstream_url?: string }

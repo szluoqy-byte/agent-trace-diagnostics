@@ -2,6 +2,7 @@
 
 
 AGREEMENT_STATES = {"aligned", "same_step"}
+UNSETTLED_STATES = {"different", "unresolved", "incomplete"}
 
 
 def review_status(comparison_state, decision=None):

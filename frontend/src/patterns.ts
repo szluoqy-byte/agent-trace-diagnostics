@@ -85,7 +85,7 @@ export interface PatternMembers {
 }
 
 export const patternStates: Record<string, string> = {
-  comparison_pending: '双路诊断待人工复核',
+  comparison_pending: '综合诊断待人工复核',
   included: '可用于分组', pending: '尚未完成诊断', succeeded: '业务成功', unknown: '业务结果未知',
   unsupported: '历史报告缺少分组所需信息', diagnosis_failed: '诊断失败', rejected: '复核已驳回',
   review_needs_evidence: '人工已修订，待补证', unattributed: '未定位失败归因',

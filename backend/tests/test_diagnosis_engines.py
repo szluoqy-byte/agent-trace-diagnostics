@@ -14,7 +14,7 @@ from tracelens.config import Settings
 from tracelens.diagnosis.agentdebugx import diagnose_agentdebugx, locate_engine_quote, to_agentdebugx
 from tracelens.diagnosis.agentdebugx_prompts import ZH_PROFILE, EN_PROFILE
 from tracelens.diagnosis.compare import diagnose_dual
-from tracelens.diagnosis.synthesis import SynthesisAnswer, ground_answer, parse_synthesis_answer, project_synthesis, synthesize
+from tracelens.diagnosis.synthesis import SynthesisAnswer, ground_answer, parse_synthesis_answer, project_synthesis, select_candidate, synthesize
 from tracelens.engine import diagnose
 from tracelens.main import create_app
 from tracelens.feedback import generate_feedback
@@ -42,18 +42,20 @@ def agentdebugx_answer(system):
 
 
 def dual_answer(system, user=None):
-    if system.startswith(("You synthesize two Agent", "你负责对两路 Agent 轨迹诊断做综合分析")):
-        evidence = json.loads(user)["evidence"] if user else {}
-        refs = [key for key, ref in evidence.items() if ref["role"] == "candidate"]
-        return {"summary": "Both sources show an unauthorized refund.",
+    if system.startswith(("You synthesize Agent", "你负责对 Agent 轨迹诊断做综合分析")):
+        payload = json.loads(user) if user else {}
+        engines = payload.get("conclusions", ["trajdebug", "agentdebugx"])
+        preferred = "chief" if "chief" in engines else "agentdebugx"
+        refs = [key for key, ref in payload.get("evidence", {}).items() if ref["role"] == "candidate"]
+        return {"summary": "The diagnosis concerns an unauthorized refund.",
                 "evidence_ids": refs or ["E1", "E2"],
-                "assessments": {"trajdebug": {"support": "medium", "reason": "Shows the unauthorized action."},
-                                "agentdebugx": {"support": "high", "reason": "Direct source excerpt."}}}
+                "assessments": {engine: {"support": "high" if engine == preferred else "medium",
+                                         "reason": "Direct source excerpt."} for engine in engines}}
     return agentdebugx_answer(system)
 
 
 def test_synthesis_cannot_select_candidate_with_unverified_evidence():
-    answer = SynthesisAnswer.model_validate(dual_answer("You synthesize two Agent"))
+    answer = SynthesisAnswer.model_validate(dual_answer("You synthesize Agent"))
     candidates = {"trajdebug": {"critical_step": 1}, "agentdebugx": {"critical_step": 3}}
     evidence = {"E1": {"engine": "trajdebug", "step": 1, "quote": "verified"}}
     result = ground_answer(answer, candidates, evidence, {"state":"different", "primary":"trajdebug"})
@@ -67,14 +69,17 @@ def test_synthesis_accepts_fenced_json_and_normalizes_supported_labels():
     response = {"summary":"分析结论", "evidence_ids":None,
                 "assessments":{"trajdebug":{"support":" 高 ", "reason":"有原文"},
                                "agentdebugx":{"support":"MEDIUM", "reason":"依据较弱"}}}
-    answer = parse_synthesis_answer("评估如下：\n```json\n" + json.dumps(response) + "\n```", aligned=False)
-    assert answer.assessments.trajdebug.support == "high"
-    assert answer.assessments.agentdebugx.support == "medium"
+    engines = ["trajdebug", "agentdebugx"]
+    answer = parse_synthesis_answer("评估如下：\n```json\n" + json.dumps(response) + "\n```", aligned=False, engines=engines)
+    assert answer.assessments["trajdebug"].support == "high"
+    assert answer.assessments["agentdebugx"].support == "medium"
     assert answer.evidence_ids == []
     with pytest.raises(ValueError):
-        parse_synthesis_answer('{"summary":"output one"}\n{"summary":"output two"}', aligned=True)
+        parse_synthesis_answer('{"summary":"output one"}\n{"summary":"output two"}', aligned=True, engines=engines)
     with pytest.raises(ValueError):
-        parse_synthesis_answer('{"summary":"missing assessments","evidence_ids":[]}', aligned=False)
+        parse_synthesis_answer('{"summary":"missing assessments","evidence_ids":[]}', aligned=False, engines=engines)
+    with pytest.raises(ValueError, match="participating engines"):
+        parse_synthesis_answer(json.dumps(response), aligned=False, engines=[*engines, "chief"])
 
 
 @pytest.mark.parametrize(("failure","recover"), [
@@ -167,7 +172,7 @@ def test_workspace_model_limit_can_shrink_below_occupied_slots(tmp_path):
 
 
 def test_aligned_step_is_final_and_disagreement_ties_are_unresolved():
-    answer = SynthesisAnswer.model_validate(dual_answer("You synthesize two Agent"))
+    answer = SynthesisAnswer.model_validate(dual_answer("You synthesize Agent"))
     candidates = {"trajdebug": {"critical_step": 1}, "agentdebugx": {"critical_step": 1}}
     aligned = ground_answer(answer, candidates, {}, {"state":"aligned", "primary":"trajdebug"})
     assert aligned["critical_step"] == 1
@@ -183,6 +188,15 @@ def test_aligned_step_is_final_and_disagreement_ties_are_unresolved():
     projected = project_synthesis(legacy)["synthesis"]
     assert projected["critical_step"] is None and projected["preferred_engine"] is None
     assert "confidence" not in projected and legacy["synthesis"]["confidence"] == "high"
+
+
+def test_multi_engine_ties_are_resolved_by_distinct_step_not_engine_count():
+    comparison = {"state": "different", "primary": "trajdebug"}
+    steps = {"trajdebug": 1, "agentdebugx": 1, "chief": 3}
+    assessments = {"trajdebug": {"support": "high"}, "agentdebugx": {"support": "high"}, "chief": {"support": "medium"}}
+    assert select_candidate(comparison, steps, assessments) == ("trajdebug", 1)
+    assessments["chief"]["support"] = "high"
+    assert select_candidate(comparison, steps, assessments) == (None, None)
 
 
 def test_conflict_uses_ranked_candidate_in_review_and_task_list(tmp_path):
@@ -372,7 +386,8 @@ async def test_dual_runs_in_parallel_and_preserves_primary_when_second_engine_fa
 
     monkeypatch.setattr("tracelens.diagnosis.compare.diagnose_agentdebugx", candidate)
     result = await diagnose_dual(pipeline_trace(), Settings(data_dir=tmp_path), progress, standard)
-    assert result["comparison"] == {"state": "same_step" if missing_quote else "aligned", "primary": "trajdebug"}
+    assert result["comparison"] == {"state": "same_step" if missing_quote else "aligned", "primary": "trajdebug",
+                                    "engines": ["trajdebug", "agentdebugx"]}
     assert result["engine_runs"]["agentdebugx"]["report"]["attribution"]["critical_step"] == 1
     assert "comparison" not in base
 

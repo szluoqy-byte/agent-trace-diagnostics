@@ -74,7 +74,7 @@ it('preselects low, describes all three depths, and saves the high preset as a C
   expect(low.checked).toBe(true)
   expect(group.getByRole('radio', {name:/^低/, description:/批量初筛/})).toBe(low)
   expect(group.getByRole('radio', {name:/^中/, description:/交叉验证/})).toBe(medium)
-  expect(group.getByRole('radio', {name:'高 多路综合', description:/供人工复核/})).toBe(high)
+  expect(group.getByRole('radio', {name:'高 多路综合', description:/综合全部已完成的引擎结论/})).toBe(high)
 
   fireEvent.click(high)
   expect(high.checked && !low.checked).toBe(true)

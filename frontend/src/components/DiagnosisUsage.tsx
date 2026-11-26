@@ -18,12 +18,17 @@ function elapsed(report?: Report | null) {
 }
 
 function modelUsage(report?: Report | null): Partial<ModelUsage> | undefined {
-  if (report?.usage) return report.usage
+  const usage = report?.usage
   const stages = report?.stage_metrics
-  if (!stages?.length) return undefined
-  const sum = (key: 'requests' | 'prompt_tokens' | 'completion_tokens') =>
+  if (!stages?.length) return usage
+  const sum = (key: 'requests' | 'prompt_tokens' | 'completion_tokens' | 'cache_hits') =>
     stages.every(stage => typeof stage[key] === 'number') ? stages.reduce((total, stage) => total + stage[key], 0) : undefined
-  return {requests:sum('requests'), prompt_tokens:sum('prompt_tokens'), completion_tokens:sum('completion_tokens')}
+  return {
+    requests: usage?.requests ?? sum('requests'),
+    prompt_tokens: usage?.prompt_tokens ?? sum('prompt_tokens'),
+    completion_tokens: usage?.completion_tokens ?? sum('completion_tokens'),
+    cache_hits: usage?.cache_hits ?? sum('cache_hits'),
+  }
 }
 
 function totalTokens(usage?: Partial<ModelUsage>) {
@@ -48,7 +53,6 @@ export default function DiagnosisUsage({report}: {report:Report}) {
     rows.push({
       label:'综合分析', seconds:synthesis.duration_seconds,
       usage:{requests:synthesis.requests ?? (synthesis.status === 'completed' ? synthesis.calls : undefined),
-        request_unit:synthesis.requests == null ? 'completion_calls' : undefined,
         prompt_tokens:synthesis.prompt_tokens, completion_tokens:synthesis.completion_tokens},
     })
   }
@@ -57,12 +61,15 @@ export default function DiagnosisUsage({report}: {report:Report}) {
   return <details className="diagnosis-usage">
     <summary>算法用量</summary>
     <table aria-label="算法用量">
-      <thead><tr><th scope="col">算法</th><th scope="col">请求 / 调用</th><th scope="col">耗时</th><th scope="col">Tokens</th></tr></thead>
+      <thead><tr><th scope="col">算法</th><th scope="col">请求 / 调用</th><th scope="col">耗时</th><th scope="col">本轮 Tokens</th></tr></thead>
       <tbody>{rows.map(({label,seconds,usage}) => {
         const tokens = totalTokens(usage)
         return <tr key={label}>
           <th scope="row">{label}</th>
-          <td>{usage?.requests == null ? '—' : `${integers.format(usage.requests)} 次${usage.request_unit === 'completion_calls' || label === 'AgentDebugX' ? '调用' : ''}`}</td>
+          <td>
+            {usage?.requests == null ? '—' : `${integers.format(usage.requests)} 次`}
+            {usage?.cache_hits ? <small className="diagnosis-cache-hits">缓存命中 {integers.format(usage.cache_hits)} 次</small> : null}
+          </td>
           <td>{seconds == null ? '—' : `${decimals.format(seconds)} 秒`}</td>
           <td>{tokens == null ? '—' : integers.format(tokens)}</td>
         </tr>

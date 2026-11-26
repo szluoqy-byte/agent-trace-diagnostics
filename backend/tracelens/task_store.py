@@ -1,8 +1,8 @@
 """Persistent task scopes and analysis rounds; diagnosis artifacts stay in jobs."""
 import json
 import uuid
-from .diagnosis.review_policy import review_status
-from .diagnosis.synthesis import select_candidate
+from .diagnosis.review_policy import UNSETTLED_STATES, review_status
+from .diagnosis.synthesis import LEGACY_COMPARISON_ENGINES, UNRESOLVED_SUMMARY, select_candidate
 from .models import Trajectory
 from .normalize import fingerprint
 
@@ -343,9 +343,12 @@ class TaskStore:
              json_extract(v.data,'$.decision') review_status,
              json_extract(j.result,'$.comparison.state') comparison_state,
              json_extract(j.result,'$.comparison.primary') comparison_primary,
+             json_extract(j.result,'$.comparison.engines') comparison_engines,
+             json_extract(j.result,'$.synthesis.status') synthesis_status,
              json_extract(j.result,'$.synthesis.summary') synthesis_summary,
              json_extract(j.result,'$.synthesis.assessments') candidate_assessments,
-             json_extract(j.result,'$.engine_runs.agentdebugx.report.attribution') candidate_attribution,
+             (SELECT json_group_object(key,json_extract(value,'$.report.attribution'))
+              FROM json_each(j.result,'$.engine_runs') WHERE json_extract(value,'$.status')='completed') candidate_attributions,
              v.data review_data
             FROM run_items x JOIN traces t ON t.id=x.trace_id
             LEFT JOIN run_attempts a ON a.job_id=(SELECT job_id FROM run_attempts WHERE run_id=x.run_id AND trace_id=x.trace_id ORDER BY attempt DESC LIMIT 1)
@@ -357,9 +360,11 @@ class TaskStore:
         for row in rows:
             comparison_state = row.pop('comparison_state')
             primary = row.pop('comparison_primary')
+            participants = row.pop('comparison_engines')
+            synthesis_status = row.pop('synthesis_status')
             synthesis_summary = row.pop('synthesis_summary')
             assessments = row.pop('candidate_assessments')
-            alternative = row.pop('candidate_attribution')
+            alternatives = row.pop('candidate_attributions')
             review = row.pop('review_data')
             if row['diagnosis'] == 'completed':
                 row['review_status'] = review_status(comparison_state, row['review_status'])
@@ -367,14 +372,15 @@ class TaskStore:
                 and row['schema_version']==2 and row['algorithm'] not in {'AgentDebugX', 'CHIEF'}
                 and row['outcome']=='failed' and row['critical_step'] is not None)
             row['attempts'] = row['attempts'] or 0
-            if row['diagnosis'] == 'completed' and comparison_state == 'different':
-                sources = {'trajdebug': row, 'agentdebugx': json.loads(alternative or '{}')}
-                steps = {name: source.get('critical_step') for name, source in sources.items()}
+            if row['diagnosis'] == 'completed' and row['outcome'] == 'failed' and comparison_state in UNSETTLED_STATES:
+                sources = {**json.loads(alternatives or '{}'), primary: row}
+                engines = json.loads(participants) if participants is not None else LEGACY_COMPARISON_ENGINES
+                steps = {name: (sources.get(name) or {}).get('critical_step') for name in engines}
                 winner, step = select_candidate({'state': comparison_state, 'primary': primary}, steps,
-                                                json.loads(assessments or '{}'))
+                                                json.loads(assessments or '{}') if synthesis_status == 'completed' else {})
                 chosen = json.loads(review) if review else {
-                    'critical_step': step, 'category': sources.get(winner, {}).get('category'),
-                    'summary': synthesis_summary,
+                    'critical_step': step, 'category': (sources.get(winner) or {}).get('category'),
+                    'summary': synthesis_summary if synthesis_status == 'completed' else UNRESOLVED_SUMMARY,
                 }
                 row.update({key: chosen.get(key) for key in ('critical_step', 'category', 'summary')})
         return rows

@@ -26,7 +26,8 @@ def chief_answer(system, user, *, step=1, quote="issue_refund()"):
         return f'Agent Name: agent\nStep Number: {step}\nReason for Mistake: {reason}\nEvidence Quote JSON: {json.dumps(quote)}'
     if "Candidate Error Steps:" in user:
         return (f"Candidate Error Subtasks: [S1]\nCandidate Error Agents: [agent]\n"
-                f"Candidate Error Steps:\n- step_id: {step}\n  agent_in_step: [agent]\n  confidence: 0.75")
+                f"Candidate Error Steps:\n- step_id: {step}\n  agent_in_step: [agent]\n"
+                "  data_issue:\n    source_step: 1\n    explanation: Approval was missing.\n  confidence: 0.75")
     name = "处理退款" if chinese else "Handle refund"
     if "Agents_edges:" in user:
         return f"The Subtask Name: {name}\nAgents_edges: []"
@@ -155,11 +156,18 @@ async def test_chief_reports_empty_or_out_of_range_evidence_and_skips_success(tm
 
 @pytest.mark.parametrize(("mode", "scenario"), [
     ("chief", "normal"), ("dual_chief", "normal"), ("dual_chief", "invalid_final"), ("dual_chief", "repair_subtasks"),
+    ("dual_chief", "aligned"), ("dual_chief", "trajdebug_failed"),
 ])
-def test_chief_task_uses_saved_connection_and_keeps_dual_synthesis(tmp_path, provider, mode, scenario):
+def test_chief_task_uses_saved_connection_and_participates_in_synthesis(tmp_path, provider, mode, scenario, monkeypatch):
     endpoint, requests, state = provider
     bad_chief = scenario == "invalid_final"
     subtask_prompts = []
+    chief_step = 1 if scenario == "aligned" else 3
+
+    if scenario == "trajdebug_failed":
+        async def fail_standard(*_):
+            raise ModelError("Fixture engine failure")
+        monkeypatch.setattr("tracelens.queue.diagnose", fail_standard)
 
     def answer(system, user):
         if bad_chief and "Evidence Quote JSON:" in user:
@@ -168,7 +176,7 @@ def test_chief_task_uses_saved_connection_and_keeps_dual_synthesis(tmp_path, pro
             subtask_prompts.append(user)
             if scenario == "repair_subtasks" and len(subtask_prompts) == 1:
                 return "The Subtask Name: Partial scope\nStep Range: 0-1\nThe Oracle: Check approval"
-        return chief_answer(system, user, step=3, quote="refund complete")
+        return chief_answer(system, user, step=chief_step, quote="issue_refund()" if chief_step == 1 else "refund complete")
 
     state.update(critical_step=1, extra_request_reply=answer)
     app = create_app(Settings(data_dir=tmp_path))
@@ -197,7 +205,7 @@ def test_chief_task_uses_saved_connection_and_keeps_dual_synthesis(tmp_path, pro
         if bad_chief:
             assert native.status_code == 404
         else:
-            assert native.status_code == 200 and native.json()["final"]["mistake_step"] == 3
+            assert native.status_code == 200 and native.json()["final"]["mistake_step"] == chief_step
         report = job["result"]
         task = client.get(f"/api/tasks/{task_id}").json()
         config = next(run["config"] for run in task["runs"] if run["id"] == run_id)
@@ -213,12 +221,46 @@ def test_chief_task_uses_saved_connection_and_keeps_dual_synthesis(tmp_path, pro
             if bad_chief:
                 assert chief["status"] == "failed" and chief["usage"]["requests"] == 6
             else:
-                assert chief["report"]["attribution"]["critical_step"] == 3
+                assert chief["report"]["attribution"]["critical_step"] == chief_step
                 if scenario == "repair_subtasks":
                     assert len(subtask_prompts) == 2
                     assert "The previous subtask ranges did not pass validation" in subtask_prompts[1]
                     assert chief["report"]["usage"]["requests"] == 7
                     assert native.json()["dag_graph"]["subtasks"][0]["step_range"] == "0-3"
-            assert report["synthesis"]["critical_step"] == 1 and job["review_status"] == "waived"
-            assert {item["engine"] for item in report["synthesis"]["evidence"]} == {"trajdebug", "agentdebugx"}
-        assert "CHIEF" in client.get(f"/api/jobs/{job['id']}/export?format=md").text
+            engines = {"trajdebug", "agentdebugx", "chief"}
+            if bad_chief:
+                engines.remove("chief")
+            if scenario == "trajdebug_failed":
+                engines.remove("trajdebug")
+            assert set(report["comparison"]["engines"]) == engines
+            synthesis = report["synthesis"]
+            assert synthesis["status"] == "completed"
+            assert {item["engine"] for item in synthesis["evidence"]} == engines
+            assert synthesis["critical_step"] == (1 if bad_chief else chief_step)
+            assert job["review_status"] == ("waived" if scenario == "aligned" else None)
+            entries = client.get(route.rsplit("/", 1)[0]).json()["items"]
+            assert entries[0]["critical_step"] == synthesis["critical_step"]
+            assert entries[0]["review_status"] == job["review_status"]
+            request = next(call["request"] for call in requests
+                           if call["request"]["messages"][0]["content"].startswith("You synthesize"))
+            data = json.loads(request["messages"][1]["content"])
+            assert set(data["conclusions"]) == engines
+            if "chief" in engines:
+                assert data["conclusions"]["chief"]["diagnostic_process"]["source_step"] == 1
+            if scenario == "aligned":
+                assert "assessments" not in synthesis
+            else:
+                assert set(synthesis["assessments"]) == engines
+                assert synthesis["preferred_engine"] == ("agentdebugx" if bad_chief else "chief")
+        markdown = client.get(f"/api/jobs/{job['id']}/export?format=md").text
+        assert "CHIEF" in markdown
+        if mode == "dual_chief" and not bad_chief and scenario != "aligned":
+            assert "CHIEF · #3 · 候选置信度 高" in markdown
+        if mode == "dual_chief" and scenario == "normal":
+            response = client.post(f"/api/jobs/{job['id']}/reviews", json={
+                "decision": "confirmed", "critical_step": 3, "category": "", "summary": synthesis["summary"],
+            })
+            assert response.status_code == 200, response.text
+            confirmed = client.get(route).json()["job"]
+            assert confirmed["review_status"] == "confirmed"
+            assert confirmed["reviews"][0]["data"]["critical_step"] == 3

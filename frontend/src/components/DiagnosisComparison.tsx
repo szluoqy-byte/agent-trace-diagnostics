@@ -5,12 +5,13 @@ import Citation from './Citation'
 export const engineLabels = {trajdebug: 'TrajDebug', agentdebugx: 'AgentDebugX', chief: 'CHIEF'}
 export const engines = ['trajdebug', 'agentdebugx', 'chief'] as const
 const synthesisStatusLabels = {
-  running: '正在综合两路诊断结果…',
-  incomplete: '两路均完成后才会生成综合分析。可查看各引擎状态。',
+  running: '正在综合已完成的诊断结果…',
+  incomplete: '至少两路完成后才会生成综合分析。可查看各引擎状态。',
   not_needed: '业务运行成功，无需评估失败归因。',
-  insufficient: '两路均缺少可核验的根因原文，证据不足。',
-  failed: '综合分析失败，可查看两路原始结论。',
+  insufficient: '缺少可核验的根因原文，证据不足。',
+  failed: '综合分析失败，可查看各引擎的原始结论。',
 }
+export const unsettledComparison = new Set(['different', 'unresolved', 'incomplete'])
 const supportLabels: Record<EvidenceSupport, string> = {high:'高', medium:'中', low:'低', insufficient:'证据不足'}
 const synthesisFailureLabels = {
   connection: '模型连接失败或超时',
@@ -59,7 +60,7 @@ export default function DiagnosisComparison({report, onJump, onEngine, reviewWai
   const synthesis = report.synthesis
   const sameStep = comparison?.state === 'same_step'
   const agreed = comparison?.state === 'aligned' || sameStep
-  const diverged = comparison?.state === 'different'
+  const included = comparison?.engines
   const finalStep = agreed ? report.attribution?.critical_step
     : synthesis?.status === 'completed' ? synthesis.critical_step : null
   const synthesisError = synthesis?.status === 'failed' && synthesis.failure
@@ -67,6 +68,9 @@ export default function DiagnosisComparison({report, onJump, onEngine, reviewWai
     : null
   return <div className="diagnosis-comparison">
     <div className="section-title"><h2>综合结论</h2>{reviewWaived ? <span className="status-tag green">免复核</span> : null}</div>
+    {included && included.length >= 2 && synthesis?.status !== 'not_needed' ? <p className="muted">
+      纳入综合评估 {included.length} 路{comparison?.state === 'incomplete' ? '，部分引擎未完成。' : ''}
+    </p> : null}
     {finalStep != null ? <button type="button" className="synthesis-step" onClick={() => onJump({step:finalStep, quote:''})}>
       <span className="synthesis-step-main">
         <span className="synthesis-step-label">{agreed ? '一致关键步骤' : reviewed ? '模型候选步骤' : '暂定关键步骤'} <strong>#{finalStep}</strong></span>
@@ -78,11 +82,11 @@ export default function DiagnosisComparison({report, onJump, onEngine, reviewWai
       <div className="conclusion"><strong>{synthesis.summary}</strong></div>
       {finalStep == null && !reviewed ? <p className="muted">关键步骤待人工复核。</p> : null}
     </> : agreed && finalStep != null ? <>
-      <div className="conclusion"><strong>两路均定位到该关键步骤。</strong></div>
+      <div className="conclusion"><strong>参与综合的各路均定位到该关键步骤。</strong></div>
       {synthesis?.status === 'failed' ? <p className="muted">综合说明生成失败，可查看引擎详情。
         {synthesisError ? ` ${synthesisError}。` : null}</p> : null}
     </> : <p className="muted">{synthesis ? synthesisStatusLabels[synthesis.status]
-      : comparison ? '此历史记录提供两路原始结论。重新生成诊断可生成综合分析。' : '等待引擎诊断结果…'}
+      : comparison ? '此历史记录可查看各引擎原始结论。重新生成诊断可生成综合分析。' : '等待引擎诊断结果…'}
       {synthesisError ? ` ${synthesisError}。` : null}</p>}
     {sameStep ? <p className="muted">部分引擎缺少可核验的原文引用，可点击关键步骤查看轨迹。</p> : null}
     {engines.map(engine => {
@@ -91,11 +95,11 @@ export default function DiagnosisComparison({report, onJump, onEngine, reviewWai
       const current = comparison?.primary === engine ? report : run.report
       const conclusion = current?.attribution
       const step = conclusion?.critical_step
-      const assessment = engine !== 'chief' && diverged && synthesis?.status === 'completed'
-        ? synthesis.assessments?.[engine] : undefined
+      const assessment = synthesis?.status === 'completed' ? synthesis.assessments?.[engine] : undefined
+      const legacyReference = engine === 'chief' && !included && comparison && run.status === 'completed'
       return <section key={engine} className="instance-card">
         <div className="instance-top"><h3>{engineLabels[engine]}</h3>
-          {engine === 'chief' ? <span className="mini-meta">复核参考</span> : null}
+          {legacyReference ? <span className="mini-meta">历史复核参考</span> : null}
           {!assessment ? <span className="mini-meta">{run.status === 'completed' ? '已完成' : run.status === 'failed' ? '失败' : '运行中'}</span> : null}
         </div>
         {step != null || assessment ? <div className="engine-candidate">

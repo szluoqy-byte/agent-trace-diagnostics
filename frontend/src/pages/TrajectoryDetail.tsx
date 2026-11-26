@@ -8,6 +8,7 @@ import Citation from '../components/Citation'
 import {patternTaskPath} from '../patterns'
 import type {PatternMembers} from '../patterns'
 import Inspector from '../components/Inspector'
+import {unsettledComparison} from '../components/DiagnosisComparison'
 import DiagnosisUsage from '../components/DiagnosisUsage'
 import ExecutionTrace from '../components/ExecutionTrace'
 import {Badge,diagnosisStatus,filterQuery,formatLabel,taskPath,tracePath,useResource,useWorkspace} from '../workspace'
@@ -40,7 +41,7 @@ export default function TrajectoryDetail({id,traceId,params}:{id:string;traceId:
   const readonly=data.read_only||!!run?.read_only
   const inspectorJob=job&&readonly?{...job,read_only:true,feedback_eligible:false,feedback_unavailable_reason:'历史分析记录只读'}:job
   const modelStep=report?.synthesis?.status==='completed'?report.synthesis.critical_step
-    :report?.comparison?.state==='different'?null:report?.attribution?.critical_step??null
+    :unsettledComparison.has(report?.comparison?.state??'')?null:report?.attribution?.critical_step??null
   const legacy=!!report&&report.schema_version!==2,critical=legacy?null:review?review.decision==='rejected'?null:review.critical_step:modelStep
   const query=new URLSearchParams(params);query.delete('pattern_task');query.delete('pattern_run');query.delete('pattern_id');if(draft)query.delete('run');else query.set('run',runId!)
   const size=[10,20,50].includes(Number(params.get('page_size')))?Number(params.get('page_size')):10
