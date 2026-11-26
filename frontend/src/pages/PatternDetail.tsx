@@ -1,11 +1,11 @@
 import {useCallback, useState} from 'react'
-import {Download, RotateCcw} from 'lucide-react'
+import {Download} from 'lucide-react'
 import {dateLabel, post} from '../api'
 import DeleteRecord from '../components/DeleteRecord'
 import {Dialog} from '../components/Dialogs'
 import Pagination from '../components/Pagination'
 import {Badge, useResource, useWorkspace} from '../workspace'
-import {openPatternCreate, patternStates, patternTaskPath, responsibilityLabels} from '../patterns'
+import {patternStates, patternTaskPath, responsibilityLabels} from '../patterns'
 import type {FailurePattern, PatternMembers, PatternReview, PatternRun, PatternTask} from '../patterns'
 
 const percent = new Intl.NumberFormat('zh-CN',{style:'percent',maximumFractionDigits:1})
@@ -38,11 +38,8 @@ function PatternResult({task, runId, requestedPattern}: {task: PatternTask; runI
 
   return <>
     <div className="ws-heading">
-      <div><h1>{task.name}</h1><p>失败模式分析</p></div>
+      <div><h1>{task.name}</h1><p>历史失败模式分析</p></div>
       <div className="ws-actions">
-      {run ? <button className="secondary" onClick={() => openPatternCreate(run.scope, patternTaskPath(task.id, runId), task.id)}>
-        <RotateCcw size={15}/>重新分析
-      </button> : null}
       <DeleteRecord id={task.id} name={task.name} kind="failure_patterns" onDeleted={()=>go('/tasks',true)}/>
       </div>
     </div>

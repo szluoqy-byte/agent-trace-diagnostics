@@ -18,6 +18,7 @@
 | `gen_ai.input.messages` | 从完整输入快照还原历史；后续调用必须保留已有历史作为前缀，只追加新消息，不全局删除相同文本。 |
 | `gen_ai.output.messages` | 追加一个已选中的 assistant 候选。 |
 | `role`、`name` | 支持 system / user / assistant / tool；输出未指定 name 时使用 `gen_ai.agent.name`。 |
+| `gen_ai.agent.name`、`gen_ai.agent.id` | 识别 Agent，优先使用入口 `invoke_agent` span。建议归属读取关键步骤的来源 span 或其父链。存在稳定 ID 时用于区分同名 Agent。`service.name` 保留为资源属性。 |
 | `parts` | 支持 text、tool_call、tool_call_response；以确定性的 JSON 文本保留工具调用 ID、名称、参数和结果。也兼容文本 `content`。 |
 | `gen_ai.system_instructions` | 转为 system 消息，与输入中相同的首条 system 消息合并来源。 |
 | `gen_ai.tool.definitions` | 通过已有 runtime_inputs 在该次模型决策步骤提供；后续才出现的定义不提升到全局任务描述。 |

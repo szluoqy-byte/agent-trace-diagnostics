@@ -99,10 +99,13 @@ class TaskStore:
 
     def runs(self, task_id):
         with self.connect() as db:
-            result = [dict(row) for row in db.execute('SELECT * FROM analysis_runs WHERE task_id=? ORDER BY number DESC', (task_id,))]
+            result = [dict(row) for row in db.execute('''SELECT r.*,
+                EXISTS (SELECT 1 FROM task_improvements i WHERE i.run_id=r.id AND i.status IN ('queued','running'))
+                    AS improvement_active FROM analysis_runs r WHERE r.task_id=? ORDER BY r.number DESC''', (task_id,))]
         for row in result:
             row['config'] = json.loads(row['config'])
             row['auto_feedback'] = bool(row['auto_feedback'])
+            row['improvement_active'] = bool(row['improvement_active'])
         return result
 
     def task_inputs(self, task_id):
@@ -118,6 +121,7 @@ class TaskStore:
                 json_extract(t.data,'$.source') AS source,
                 json_extract(t.data,'$.task_id') AS source_task_id,
                 json_extract(t.data,'$.outcome') AS outcome,
+                json_extract(t.data,'$.agent_identity.name') AS agent_name,
                 json_array_length(t.data,'$.messages') AS steps,
                 COALESCE(json_extract(t.data,'$.input_format'),
                          CASE WHEN json_type(t.data,'$.otel')='object' THEN 'otel_genai' ELSE 'messages' END) AS input_format,
@@ -130,8 +134,8 @@ class TaskStore:
         conditions, args = [], []
         if search:
             conditions.append('(' + ' OR '.join(f'instr(lower({field}), lower(?))>0'
-                              for field in ('title', 'id', 'source', 'dataset', 'source_task_id')) + ')')
-            args.extend([search] * 5)
+                              for field in ('title', 'id', 'source', 'dataset', 'source_task_id', 'agent_name')) + ')')
+            args.extend([search] * 6)
         for field, value in (('diagnosis', diagnosis), ('outcome', business), ('input_format', input_format)):
             if value != 'all':
                 conditions.append(f'{field}=?')
@@ -233,8 +237,9 @@ class TaskStore:
         inserted = db.execute('INSERT OR IGNORE INTO traces VALUES (?,?,?,?,?)',
                               (uuid.uuid4().hex, digest, trace.title, trace.model_dump_json(), now()))
         if not inserted.rowcount and trace.deepagent is not None:
-            db.execute("UPDATE traces SET data=json_set(data,'$.deepagent',json(?)) WHERE hash=? AND json_extract(data,'$.deepagent') IS NULL",
-                       (trace.deepagent.model_dump_json(), digest))
+            db.execute("""UPDATE traces SET data=json_set(data,'$.deepagent',json(?),'$.agent_identity',json(?))
+                       WHERE hash=? AND json_extract(data,'$.deepagent') IS NULL""",
+                       (trace.deepagent.model_dump_json(), trace.agent_identity.model_dump_json() if trace.agent_identity else 'null', digest))
         return db.execute('SELECT id FROM traces WHERE hash=?', (digest,)).fetchone()['id']
 
     def create_task(self, fields, *, traces=None, trace_ids=None, config=None, auto_feedback=False):
@@ -335,6 +340,7 @@ class TaskStore:
             SELECT t.id,t.title,t.created_at,x.position,
              json_extract(t.data,'$.dataset') dataset,json_extract(t.data,'$.task_id') task_id,
              json_extract(t.data,'$.source') source,json_extract(t.data,'$.outcome') outcome,
+             json_extract(t.data,'$.agent_identity.name') agent_name,
              json_extract(t.data,'$.kind') kind,json_array_length(t.data,'$.messages') steps,
              COALESCE(json_extract(t.data,'$.input_format'),
                       CASE WHEN json_type(t.data,'$.otel')='object' THEN 'otel_genai' ELSE 'messages' END) input_format,

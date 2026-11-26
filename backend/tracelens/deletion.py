@@ -74,6 +74,9 @@ class DeletionStore:
             db.execute('DELETE FROM pattern_runs WHERE task_id=?', (task_id,))
         else:
             run_ids = 'SELECT id FROM analysis_runs WHERE task_id=?'
+            if db.execute(f"""SELECT 1 FROM task_improvements WHERE run_id IN ({run_ids})
+                AND status IN ('queued','running') LIMIT 1""", (task_id,)).fetchone():
+                raise ValueError('仍有任务改进建议在排队或生成，请处理完成后再删除')
             job_ids = f'SELECT job_id FROM run_attempts WHERE run_id IN ({run_ids})'
             blocked = db.execute(f'''SELECT 1 FROM pattern_runs
                 WHERE json_extract(scope,'$.task_id')=?

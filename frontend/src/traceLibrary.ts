@@ -5,6 +5,7 @@ export type LibrarySelection = Pick<TraceSummary, 'id' | 'title' | 'outcome' | '
 export type LibraryRow = LibrarySelection & Pick<TraceSummary, 'created_at' | 'dataset' | 'source' | 'steps'> & {
   diagnosis: string
   task_count: number
+  agent_name?: string | null
 }
 export interface LibraryPage {
   items: LibraryRow[]

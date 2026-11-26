@@ -47,6 +47,14 @@ class RuntimeInput(Contract):
     visibility: Literal["agent_visible"]
 
 
+class AgentIdentity(Contract):
+    name: str
+    key: str
+    agent_id: str | None = None
+    span_id: str
+    field: str
+
+
 class Trajectory(Contract):
     title: str
     task_id: str
@@ -63,6 +71,7 @@ class Trajectory(Contract):
     otel: OTelProvenance | None = None
     input_format: Literal["deepagent"] | None = None
     deepagent: DeepAgentProvenance | None = None
+    agent_identity: AgentIdentity | None = None
 
     @model_validator(mode="after")
     def indices(self):
@@ -76,7 +85,7 @@ class Trajectory(Contract):
 
     def input_json(self, *, fingerprint=False):
         # Preserve the hashes of existing traces/reports when no new sources exist.
-        excluded = {"annotation", "otel", "input_format", "deepagent"}
+        excluded = {"annotation", "otel", "input_format", "deepagent", "agent_identity"}
         if fingerprint:
             excluded |= {"title", "source"}
         if not self.runtime_inputs:

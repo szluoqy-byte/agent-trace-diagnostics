@@ -211,6 +211,35 @@
 .ws-task-start{display:flex;align-items:flex-start;gap:10px}
 .ws-task-start input{margin:3px 0 0}
 .ws-task-start>div{min-width:0}
+.ws-agent-cell{min-width:105px;max-width:190px;overflow-wrap:anywhere}
+.ws-trace-agent{margin:0 0 14px;color:#536480;overflow-wrap:anywhere}
+.ws-trace-agent strong{margin-inline-start:6px;color:#273754}
+.task-improvements{display:grid;gap:14px;min-width:0}
+.task-improvements>.ws-surface{padding:18px 20px;overflow-wrap:anywhere}
+.improvement-intro{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px}
+.improvement-intro :is(h2,p),.improvement-agent :is(h3,p),.improvement-coverage p{margin:0}
+.improvement-intro p,.improvement-agent header p{margin-top:5px;color:#536480}
+.improvement-intro label{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.improvement-intro select{max-width:100%;border:1px solid var(--border);border-radius:5px;padding:6px 8px;background:var(--surface)}
+.improvement-stats,.improvement-exclusions,.improvement-item-heading{display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px}
+.improvement-stats{margin-bottom:6px}
+.improvement-exclusions{padding:0;margin:10px 0;list-style:none;color:#536480}
+.improvement-exclusions li,.improvement-priority{padding:3px 8px;border-radius:5px;background:#f1f4fc;font-size:12px}
+.improvement-agent header{margin-bottom:12px}
+.improvement-item{padding:13px 0;border-top:1px solid var(--border)}
+.improvement-item:last-child{padding-bottom:0}
+.improvement-item-heading h4{font-size:15px;margin:0}
+.improvement-item-heading small{color:#536480}
+.improvement-priority.high{color:#9f3723;background:#fff0e8}
+.improvement-priority.medium{color:#785b22;background:#fff6de}
+.improvement-item dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:6px 12px;margin:12px 0;line-height:1.65}
+.improvement-item dt{font-weight:600;color:#536480}
+.improvement-item dd{margin:0}
+.improvement-item summary{cursor:pointer;color:var(--accent)}
+.improvement-item details a{display:inline-flex;align-items:center;gap:4px}
+.improvement-item details ul{padding-inline-start:20px}
+.improvement-item blockquote{margin:6px 0 10px;padding:8px 10px;border-inline-start:2px solid #b9c7ed;background:#f7f8fd;white-space:pre-wrap}
+@media(max-width:650px){.task-improvements>.ws-surface{padding:14px}.improvement-item dl{grid-template-columns:1fr}.improvement-item dd+dt{margin-top:4px}}
 
 .diagnosis-depth-field{container-type:inline-size;min-width:0;margin:0 0 18px;padding:0;border:0}
 .diagnosis-depth-field legend{padding:0;margin-bottom:8px;font-size:13px;font-weight:600;color:#536480}

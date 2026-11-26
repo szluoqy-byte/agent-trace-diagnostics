@@ -5,6 +5,7 @@ from graphlib import CycleError, TopologicalSorter
 from heapq import heappop, heappush
 from pathlib import Path
 
+from .agent_identity import AgentOwnership
 from .models import DeepAgentProvenance, Message, Trajectory
 
 
@@ -334,6 +335,7 @@ def convert_deepagent(data, filename):
     for trace_id, group in groups.items():
         trace = convert_trace(trace_id, list(group.values()), filename, outcome)
         trace.deepagent = DeepAgentProvenance(trace_id=trace_id, spans=originals[trace_id], export_metadata=metadata)
+        trace.agent_identity = AgentOwnership({'deepagent': {'spans': list(group.values())}}).entry()
         traces.append(trace)
     return traces
 

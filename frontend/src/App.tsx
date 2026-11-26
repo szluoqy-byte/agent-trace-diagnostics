@@ -10,9 +10,7 @@ import TaskCreate from './pages/TaskCreate'
 import TaskDetail from './pages/TaskDetail'
 import TrajectoryDetail from './pages/TrajectoryDetail'
 import TraceLibrary from './pages/TraceLibrary'
-import PatternCreate from './pages/PatternCreate'
 import PatternDetail from './pages/PatternDetail'
-import type {PatternScope} from './patterns'
 import LibraryTraceDetail from './pages/LibraryTraceDetail'
 import {libraryFilterQuery,libraryPath} from './traceLibrary'
 import type {LibrarySelection} from './traceLibrary'
@@ -41,10 +39,6 @@ export default function App(){
   const page=parts[0]==='library'?(id?'library-detail':'library'):parts[0]!=='tasks'?'missing':id==='new'?'new':traceId?'trace':id?'task':'tasks'
   const patterns=parts[0]==='tasks'&&id==='patterns'
   const patternId=parts[2]
-  const patternSource=url.searchParams.get('source'), patternSourceRun=url.searchParams.get('run')
-  const patternScope:PatternScope|null=patterns&&patternId==='new'
-    ? workspaceState?.patternScope??(patternSource&&patternSourceRun?{task_id:patternSource,run_id:patternSourceRun}:null)
-    : null
   const fromLibrary=page==='new'&&url.searchParams.get('from')==='library'
   const libraryActive=parts[0]==='library'||fromLibrary
   const returnParams=new URLSearchParams(url.searchParams)
@@ -73,9 +67,7 @@ export default function App(){
     <main className="ws-main">{error||configError?<div role="alert" className="alert error"><span>{uiText(error||configError)}</span>{error?<button aria-label="关闭错误" onClick={()=>setError('')}><X size={16}/></button>:<button onClick={refresh}>重试</button>}</div>:null}{notice?<div role="status" className="alert notice ws-toast"><CircleCheck size={16}/><span>{uiText(notice)}</span><button aria-label="关闭提示" onClick={()=>setNotice('')}><X size={16}/></button></div>:null}
   {settingsPage?<SystemSettings onBack={settingsBack?closeSettings:undefined}/>:null}
   {!settingsPage||settingsBack?<div hidden={settingsPage}>
-  {patterns&&patternId==='new'?<PatternCreate key={workspaceHash} scope={patternScope} back={workspaceState?.patternBack??(patternSource?'#/tasks/'+patternSource:'#/library')}
-    taskId={url.searchParams.get('rerun')} onCreated={patternScope?.task_id||url.searchParams.has('rerun')?undefined:clearLibrarySelection}/>
-    :patterns&&patternId?<PatternDetail key={patternId} id={patternId} requestedRun={url.searchParams.get('run')} requestedPattern={url.searchParams.get('pattern_id')}/>
+  {patterns&&patternId?<PatternDetail key={patternId} id={patternId} requestedRun={url.searchParams.get('run')} requestedPattern={url.searchParams.get('pattern_id')}/>
     :page==='tasks'?<TaskList/>:page==='new'?<TaskCreate key={fromLibrary?'new-library':'new-'+(url.searchParams.get('source')||'upload')} source={fromLibrary?null:url.searchParams.get('source')}
     library={fromLibrary?{items:selection,back:'#'+libraryPath(returnParams),onCreated:clearLibrarySelection}:undefined}/>
     :page==='task'?<TaskDetail key={id} id={id} params={url.searchParams}/>:page==='trace'?<TrajectoryDetail id={id} traceId={traceId} params={url.searchParams}/>

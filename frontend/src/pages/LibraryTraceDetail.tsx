@@ -21,7 +21,7 @@ export default function LibraryTraceDetail({id, params, onDeleted}: {id: string;
       <a href={back}>返回轨迹库</a></> : '正在读取轨迹…'}
   </div>
 
-  const {title, outcome, messages, otel, input_format, source, task_description, deepagent} = trace.data
+  const {title, outcome, messages, otel, input_format, source, task_description, deepagent, agent_identity} = trace.data
   const tasks = new Map(history?.tasks.map(task => [task.id, task]))
   return <>
     <div className="ws-breadcrumb"><a href={back}>轨迹库</a><span>/</span><span>轨迹详情</span></div>
@@ -35,6 +35,7 @@ export default function LibraryTraceDetail({id, params, onDeleted}: {id: string;
           onDeleted={() => {onDeleted(id); go(libraryPath(params), true)}}/>
       </div>
     </div>
+    {agent_identity ? <p className="ws-trace-agent">入口 Agent <strong>{agent_identity.name}</strong></p> : null}
     {task_description ? <details className="ws-trace-context"><summary>轨迹任务说明</summary><p>{task_description}</p></details> : null}
     <div className="library-detail-grid">
       <ExecutionTrace key={id} trace={trace} criticalStep={null} selection={null}/>

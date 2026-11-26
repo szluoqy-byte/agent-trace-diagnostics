@@ -30,14 +30,6 @@ export interface PatternMember extends Partial<SourceDiagnosis> {
   lifecycle?: string
   tool?: string | null
 }
-export interface PatternPreview {
-  scope: PatternScope
-  snapshot_hash: string
-  counts: Record<string, number>
-  items: PatternMember[]
-  choices: Record<string, SourceDiagnosis[]>
-  engine_versions: [string, string][]
-}
 export interface FailurePattern {
   id: string
   category: string
@@ -93,12 +85,3 @@ export const patternStates: Record<string, string> = {
 }
 export const responsibilityLabels: Record<string, string> = {agent: 'Agent', env: '环境', unknown: '归属未确定'}
 export const patternTaskPath = (id: string, run?: string) => `#/tasks/patterns/${id}${run ? '?run='+run : ''}`
-
-export function openPatternCreate(scope: PatternScope, back: string, taskId?: string) {
-  const query = new URLSearchParams()
-  if (scope.task_id) query.set('source', scope.task_id)
-  if (scope.run_id) query.set('run', scope.run_id)
-  if (taskId) query.set('rerun', taskId)
-  history.pushState({patternScope: scope, patternBack: back}, '', `#/tasks/patterns/new?${query}`)
-  window.dispatchEvent(new Event('hashchange'))
-}

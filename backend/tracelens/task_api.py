@@ -71,7 +71,7 @@ def summary(rows):
 def filter_rows(rows, search='', diagnosis='all', business='all', review='all', category='all'):
     if diagnosis not in {'all','pending','queued','running','completed','failed'} or business not in {'all','failed','succeeded','unknown'} or review not in {'all','pending','confirmed','modified','rejected','waived'}:
         raise HTTPException(422, '无效筛选条件')
-    return [r for r in rows if (not search or search.lower() in f"{r['title']} {r['id']} {r['task_id']} {r['source']}".lower())
+    return [r for r in rows if (not search or search.lower() in f"{r['title']} {r['id']} {r['task_id']} {r['source']} {r.get('agent_name') or ''}".lower())
             and (diagnosis=='all' or r['diagnosis']==diagnosis)
             and (business=='all' or r['outcome']==business)
             and (review=='all' or (r['diagnosis']=='completed' and not r.get('review_status') if review=='pending' else r.get('review_status')==review))
@@ -105,7 +105,7 @@ def attach_task_routes(app, store, settings, job_view):
 
     def inputs(task_id):
         return [dict(id=t['id'], **{k: t['data'][k] for k in ('title','task_id','source','kind','outcome','dataset')},
-                     input_format=trajectory_format(t['data']),
+                     input_format=trajectory_format(t['data']), agent_name=(t['data'].get('agent_identity') or {}).get('name'),
                      steps=len(t['data']['messages']), diagnosis='pending', position=index) for index,t in enumerate(store.task_inputs(task_id))]
 
     def task_view(task):
@@ -346,6 +346,24 @@ def attach_task_routes(app, store, settings, job_view):
             else:
                 skipped.append({'trace_id':row['id'],'reason':reason})
         return {'enqueued':len(created),'skipped':skipped}
+
+    @router.get('/tasks/{task_id}/runs/{run_id}/improvements')
+    def improvements(task_id: str, run_id: str, report_id: str | None = None):
+        require_run(task_id, run_id)
+        result = store.task_improvements(run_id, report_id)
+        if report_id and not result['report']:
+            raise HTTPException(404, '改进建议不属于本轮分析')
+        return result
+
+    @router.post('/tasks/{task_id}/runs/{run_id}/improvements')
+    def create_improvement(task_id: str, run_id: str):
+        run = require_run(task_id, run_id, writable=True)
+        task = require_task(task_id)
+        snapshot = store.task_improvement_snapshot(run_id, task['goal'])
+        execution = run_settings(store, settings, run['config'])
+        if snapshot['agents'] and not execution.ready:
+            raise HTTPException(409, '本轮使用的模型连接不可用，请检查系统设置。')
+        return checked(lambda: store.enqueue_task_improvement(task_id, run_id, execution.model, snapshot))
 
     @router.get('/tasks/{task_id}/runs/{run_id}/export')
     def export(task_id: str, run_id: str, trace_id: list[str] | None=Query(None)):

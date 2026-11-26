@@ -2,7 +2,6 @@ import {useEffect, useRef, useState} from 'react'
 import {Plus, RefreshCw, Search, Upload} from 'lucide-react'
 import {api, dateLabel} from '../api'
 import {sourceLabel} from '../branding'
-import {openPatternCreate} from '../patterns'
 import DeleteRecord, {DeleteRecords, traceDeletionBlock} from '../components/DeleteRecord'
 import Pagination from '../components/Pagination'
 import TableSelection, {useSelectionRequest} from '../components/TableSelection'
@@ -96,7 +95,7 @@ export default function TraceLibrary({params, selected, onSelect}: {
       event.preventDefault()
       update({search: searchInput.trim(), page: ''})
     }}>
-      <input type="search" aria-label="搜索轨迹" placeholder="标题、轨迹 ID、来源文件或数据集" maxLength={200}
+      <input type="search" aria-label="搜索轨迹" placeholder="标题、Agent、轨迹 ID 或来源" maxLength={200}
         value={searchInput} onChange={event => setSearchInput(event.target.value)}/>
       <button className="secondary" type="submit"><Search size={15}/>搜索</button>
       <select aria-label="诊断状态" value={filters.diagnosis} onChange={event => update({diagnosis: event.target.value, page: ''})}>
@@ -126,8 +125,6 @@ export default function TraceLibrary({params, selected, onSelect}: {
         <button className="primary small" disabled={selectionBusy || !selected.length || !!reuseBlock} onClick={() => openLibraryTask(params, selected)}>
           <Plus size={14}/>新建诊断任务
         </button>
-        <button className="secondary small" disabled={selectionBusy || selected.length<2 || !!reuseBlock} onClick={() =>
-          openPatternCreate({trace_ids:selected.map(row=>row.id)},'#'+libraryPath(params))}>分析失败模式</button>
         <DeleteRecords records={selected.map(row => ({id:row.id,name:row.title}))} kind="trace" disabled={selectionBusy} onDeleted={removeSelection}/>
       </div>
     </div>
@@ -137,7 +134,7 @@ export default function TraceLibrary({params, selected, onSelect}: {
     <section className="ws-surface ws-trace-list" aria-label="库内轨迹" aria-busy={loading}>
       <div className="ws-table-scroll"><table className="ws-trace-table library-table">
         <thead><tr><th scope="col" aria-label="选择"/>
-          <th scope="col">轨迹 / 来源</th><th scope="col">业务结果</th><th scope="col">诊断状态</th>
+          <th scope="col">轨迹 / 来源</th><th scope="col">Agent</th><th scope="col">业务结果</th><th scope="col">诊断状态</th>
           <th scope="col">关联任务</th><th scope="col">入库时间</th><th scope="col">操作</th></tr></thead>
         <tbody>{rows.map(row => {
           const known = row.outcome !== 'unknown'
@@ -148,6 +145,7 @@ export default function TraceLibrary({params, selected, onSelect}: {
             <td><a className="ws-trace-title" href={'#' + libraryPath(params, row.id)}>{row.title}</a>
               <small>{formatLabel(row.input_format ?? '')} · {row.steps} 条消息</small>
               {row.source ? <small className="library-source" title={sourceLabel(row.source)}>{sourceLabel(row.source)}</small> : null}</td>
+            <td className="ws-agent-cell">{row.agent_name || <span className="muted">未识别</span>}</td>
             <td><Badge value={row.outcome}>{businessOutcomes[row.outcome as keyof typeof businessOutcomes]}</Badge>
               {known ? null : <small>重新上传并填写业务结果后可用于新任务</small>}</td>
             <td><Badge value={row.diagnosis}>{libraryDiagnosis[row.diagnosis as keyof typeof libraryDiagnosis]}</Badge></td>

@@ -4,9 +4,11 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from .agent_identity import AgentOwnership
 from .models import Trajectory
 from .deletion import DeletionStore
 from .model_connections import ModelConnections
+from .task_improvement_store import TaskImprovementStore
 from .task_store import TaskStore
 from .pattern_store import PatternStore
 from .trajdebug import attribution_fields
@@ -16,7 +18,7 @@ def now():
     return datetime.now(timezone.utc).isoformat()
 
 
-class Store(TaskStore, PatternStore, DeletionStore):
+class Store(TaskStore, TaskImprovementStore, PatternStore, DeletionStore):
     def __init__(self, directory: Path):
         directory.mkdir(parents=True, exist_ok=True)
         self.model_connections = ModelConnections(directory)
@@ -41,8 +43,24 @@ class Store(TaskStore, PatternStore, DeletionStore):
                 WHERE status IN ('queued', 'running');
             """)
         self.migrate_tasks()
+        self.migrate_task_improvements()
         self.migrate_patterns()
         self.migrate_attribution()
+        self.migrate_agent_identity()
+
+    def migrate_agent_identity(self):
+        key = 'trajectory_agent_identity_v1'
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            if db.execute('SELECT 1 FROM workspace_meta WHERE key=?', (key,)).fetchone():
+                return
+            for row in db.execute('''SELECT id,data FROM traces
+                WHERE json_extract(data,'$.agent_identity') IS NULL
+                AND (json_type(data,'$.deepagent')='object' OR json_type(data,'$.otel')='object')'''):
+                if identity := AgentOwnership(json.loads(row['data'])).entry():
+                    db.execute("UPDATE traces SET data=json_set(data,'$.agent_identity',json(?)) WHERE id=?",
+                               (identity.model_dump_json(), row['id']))
+            db.execute('INSERT INTO workspace_meta VALUES (?,?)', (key, '1'))
 
     def migrate_attribution(self):
         """Refresh the saved projection while retaining the upstream output and review snapshots."""
@@ -141,6 +159,7 @@ class Store(TaskStore, PatternStore, DeletionStore):
         with self.connect() as db:
             db.execute("UPDATE jobs SET status='failed', stage='运行中断', error='服务重启导致任务中断，可点击重试', updated_at=? WHERE status='running'", (now(),))
             db.execute("UPDATE feedback_runs SET status='failed', error='服务重启导致建议生成中断，可重试', updated_at=? WHERE status='running'", (now(),))
+            db.execute("UPDATE task_improvements SET status='failed', error='服务重启导致建议生成中断，可重试' WHERE status='running'")
 
     def claim(self):
         with self.connect() as db:

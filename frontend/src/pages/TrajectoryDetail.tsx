@@ -29,7 +29,13 @@ export default function TrajectoryDetail({id,traceId,params}:{id:string;traceId:
   const frozen=snapshot?.items.find(item=>item.source_task_id===id&&item.source_run_id===runId&&item.job_id===data?.job?.id)
   const [selection,setSelection]=useState<Evidence|null>(null),[dialog,setDialog]=useState('')
   const close=useCallback(()=>setDialog(''),[])
-  useEffect(()=>{setSelection(null);setDialog('')},[id,traceId,runId,data?.job?.id])
+  const evidenceStep=params.get('evidence_step')
+  const messageCount=data?.trace.data.messages.length??0
+  useEffect(()=>{
+    const step=evidenceStep!==null&&/^\d+$/.test(evidenceStep)?Number(evidenceStep):null
+    setSelection(step!==null&&step<messageCount?{step,quote:''}:null)
+    setDialog('')
+  },[id,traceId,runId,data?.job?.id,evidenceStep,messageCount])
   useEffect(()=>{
     const anchor=frozen?.evidence
     if(anchor)setSelection(anchor.source_kind==='compressed'?{step:anchor.step,quote:''}:anchor)
@@ -43,7 +49,7 @@ export default function TrajectoryDetail({id,traceId,params}:{id:string;traceId:
   const modelStep=report?.synthesis?.status==='completed'?report.synthesis.critical_step
     :unsettledComparison.has(report?.comparison?.state??'')?null:report?.attribution?.critical_step??null
   const legacy=!!report&&report.schema_version!==2,critical=legacy?null:review?review.decision==='rejected'?null:review.critical_step:modelStep
-  const query=new URLSearchParams(params);query.delete('pattern_task');query.delete('pattern_run');query.delete('pattern_id');if(draft)query.delete('run');else query.set('run',runId!)
+  const query=new URLSearchParams(params);query.delete('pattern_task');query.delete('pattern_run');query.delete('pattern_id');query.delete('evidence_step');if(draft)query.delete('run');else query.set('run',runId!)
   const size=[10,20,50].includes(Number(params.get('page_size')))?Number(params.get('page_size')):10
   function back(){if(navigation.index>=0)query.set('page',String(Math.floor(navigation.index/size)+1));query.set('focus',traceId);go(taskPath(id,query))}
   function next(target:string|null,direction:number){if(!target)return;query.delete('focus');if(navigation.index>=0)query.set('page',String(Math.floor((navigation.index+direction)/size)+1));go(tracePath(id,target,query))}
@@ -70,6 +76,7 @@ export default function TrajectoryDetail({id,traceId,params}:{id:string;traceId:
     </>:snapshotError?<span>无法读取失败模式分析使用的诊断记录。</span>:null}
   </div>:null}
   {readonly&&!draft?<div className="ws-warning">正在查看历史分析记录。可查看并导出已有结果。</div>:null}
+  {trace.data.agent_identity ? <p className="ws-trace-agent">入口 Agent <strong>{trace.data.agent_identity.name}</strong></p> : null}
   <details className="ws-trace-context"><summary>轨迹任务说明及来源</summary><p>{trace.data.task_description||'未提供任务说明。'}</p><p className="muted">来源：{sourceLabel(trace.data.source)}</p></details>
   <div className="ws-detail-status"><span>{uiText(job?.stage)||'尚未开始分析'}{job?.status==='running'?` · ${job.progress}%`:''}</span><div className="ws-actions">{canRun?<button className="primary small" disabled={busy||blocked} onClick={()=>void diagnose()}>{job?<RotateCcw size={14}/>:<Play size={14}/>} {job?'重试诊断':'诊断轨迹'}</button>:null}<button className="secondary small" disabled={job?.status!=='completed'} onClick={()=>setDialog('export')}><Download size={14}/>导出诊断报告</button></div></div>
   {blocked?<p className="ws-warning">该轨迹缺少业务结果。请重新上传并填写业务结果。</p>:null}

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import json
 import re
 
+from .agent_identity import AgentOwnership
 from .models import Message, OTelProvenance, OTelSource, RuntimeInput, Trajectory
 
 
@@ -317,7 +318,8 @@ def _convert_trace(spans, filename):
     task = next((m.content for m in messages if m.role == "user"), "")
     return Trajectory(title=f"{filename.rsplit('.', 1)[0]} · {trace_id[:8]}", task_id=trace_id,
                       dataset="otel_genai", task_description=task, messages=messages, source=filename,
-                      agent_framework_description=FRAMEWORK, runtime_inputs=runtime_inputs, otel=provenance)
+                      agent_framework_description=FRAMEWORK, runtime_inputs=runtime_inputs, otel=provenance,
+                      agent_identity=AgentOwnership({'otel': {'spans': provenance.spans}}).entry())
 
 
 def convert_envelopes(envelopes, filename):

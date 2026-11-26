@@ -8,7 +8,9 @@ from .diagnosis.compare import diagnose_dual
 from .engine import diagnose
 from .feedback import generate_feedback, feedback_availability
 from .execution import job_settings, run_settings
+from .llm import ModelError
 from .models import Trajectory
+from .task_improvements import generate_agent_suggestions
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +48,10 @@ class JobQueue:
                 return
             job = self.store.claim()
             if not job:
+                improvement = self.store.claim_task_improvement()
+                if improvement:
+                    await self.task_improvement(improvement)
+                    continue
                 feedback = self.store.claim_feedback()
                 if feedback:
                     await self.feedback(feedback)
@@ -89,7 +95,6 @@ class JobQueue:
                 raise
             except Exception as exc:
                 # Never persist provider payloads, authorization headers, or unknown exception text.
-                from .llm import ModelError
                 message = str(exc) if isinstance(exc, (ModelError, ValueError)) else "诊断运行失败，请检查服务日志后重试"
                 if execution.api_key:
                     message = message.replace(execution.api_key, "[redacted]")
@@ -115,13 +120,39 @@ class JobQueue:
             self.store.update_feedback(feedback['id'], status='failed', error='服务停止，建议生成已中断，可重试')
             raise
         except Exception as exc:
-            from .llm import ModelError
             message = str(exc) if isinstance(exc, (ModelError, ValueError)) else '建议生成失败，请检查模型配置后重试'
             if execution.api_key:
                 message = message.replace(execution.api_key, '[redacted]')
             self.store.update_feedback(feedback['id'], status='failed', error=message,
                                        result={'usage': exc.usage} if isinstance(exc, ModelError) and exc.usage else None)
             logger.warning('Feedback %s failed (%s)', feedback['id'], type(exc).__name__)
+
+    async def task_improvement(self, job):
+        results = job['results']
+        report_id = job['id']
+        try:
+            execution = run_settings(self.store, self.settings, job['config'])
+            if not execution.ready:
+                raise ModelError('本轮使用的模型连接不可用，请检查系统设置。')
+            for agent in job['snapshot']['agents']:
+                key = agent['key']
+                if key in results:
+                    continue
+                try:
+                    results[key] = await generate_agent_suggestions(agent, job['snapshot']['goal'], execution)
+                except ModelError as exc:
+                    results[key] = {'status': 'failed', 'error': str(exc), 'usage': exc.usage}
+                self.store.update_task_improvement(report_id, results)
+            completed = sum(result['status'] == 'completed' for result in results.values())
+            status = 'completed' if completed == len(results) else 'partial' if completed else 'failed'
+            self.store.update_task_improvement(report_id, results, status=status)
+        except asyncio.CancelledError:
+            self.store.update_task_improvement(report_id, results, status='failed', error='服务停止，建议生成已中断，可重试。')
+            raise
+        except Exception as exc:
+            message = str(exc) if isinstance(exc, ModelError) else '任务改进建议生成失败，请检查服务日志后重试。'
+            self.store.update_task_improvement(report_id, results, status='failed', error=message)
+            logger.warning('Task improvement job %s failed (%s)', report_id, type(exc).__name__)
 
     def schedule_feedback(self):
         for job_id in self.store.auto_feedback_jobs():
