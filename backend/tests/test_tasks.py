@@ -58,6 +58,8 @@ def test_task_create_pagination_filter_export_and_restart(tmp_path):
     task={**draft,'run_id':run}
     first=client.get(endpoint(task)+'/traces').json()
     assert first['total']==20 and len(first['items'])==10 and first['pages']==2
+    selection = client.get(endpoint(task)+'/traces?selection=true&search=case-01').json()
+    assert selection == {'items': ids[9:19]}
     second=client.get(endpoint(task)+'/traces?page=2').json()
     assert second['items'][0]['task_id']=='case-011'
     assert client.get(endpoint(task)+'/traces?page=99').json()['page']==2
@@ -142,9 +144,14 @@ def test_trace_library_deduplicates_shared_traces_and_links_history(tmp_path):
     assert first['total'] == 11 and first['pages'] == 2
     assert {row['id'] for row in first['items'] + second['items']} == set(ids)
     assert len(second['items']) == 1
+    selection = client.get('/api/trace-library?selection=true&business=failed').json()
+    assert {row['id'] for row in selection['items']} == set(ids)
+    assert all(set(row) == {'id', 'title', 'outcome', 'input_format'} for row in selection['items'])
     diagnosed = client.get('/api/trace-library', params={'diagnosis': 'completed', 'search': 'CASE-001'}).json()
     assert diagnosed['total'] == 1
     assert diagnosed['items'][0]['id'] == ids[0] and diagnosed['items'][0]['task_count'] == 2
+    filtered_selection = client.get('/api/trace-library?selection=true&diagnosis=completed&search=CASE-001').json()
+    assert [row['id'] for row in filtered_selection['items']] == [ids[0]]
     assert client.get('/api/trace-library?diagnosis=completed&input_format=otel_genai').json()['total'] == 0
     assert client.get('/api/trace-library?page_size=17').status_code == 422
 

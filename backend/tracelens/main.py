@@ -13,6 +13,7 @@ from pydantic import Field, ValidationError
 from .config import Settings, ROOT
 from .models import Contract, Review, trajectory_format
 from .deepagent import source_bundle, trace_with_source_summary
+from .deletion import DeleteSelection
 from .normalize import parse_upload
 from .execution_view import execution_view
 from .store import Store
@@ -120,6 +121,10 @@ def create_app(settings=None, *, frontend_dir=None):
             raise HTTPException(404, str(exc)) from exc
         return {"deleted": True}
 
+    @app.post('/api/traces/batch-delete')
+    def delete_traces(body: DeleteSelection):
+        return store.delete_traces(body.ids)
+
     @app.get("/api/traces/{trace_id}/execution")
     def trace_execution(trace_id: str):
         return execution_view(require_trace(trace_id)["data"])
@@ -131,8 +136,10 @@ def create_app(settings=None, *, frontend_dir=None):
         diagnosis: Literal['all', 'pending', 'queued', 'running', 'completed', 'failed'] = 'all',
         business: Literal['all', 'failed', 'succeeded', 'unknown'] = 'all',
         input_format: Literal['all', 'messages', 'otel_genai', 'deepagent'] = 'all',
+        selection: bool = False,
     ):
-        return store.trace_library(page, int(page_size), search.strip(), diagnosis, business, input_format)
+        return store.trace_library(page, int(page_size), search.strip(), diagnosis, business, input_format,
+                                   selection=selection)
 
     @app.get('/api/trace-library/{trace_id}/history')
     def trace_library_history(trace_id: str):

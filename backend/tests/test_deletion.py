@@ -94,3 +94,36 @@ def test_delete_unlinked_trace_cleans_standalone_jobs_and_retries_artifacts(tmp_
     assert store.jobs() == [] and store.job_config(job['id']) is None
     assert create_app(app.state.settings).state.store.trace(trace_id) is None
     assert not files.exists()
+
+
+def test_batch_delete_removes_selected_patterns_before_their_source_task(tmp_path):
+    app, client, source, ids = fixture(tmp_path)
+    preview = begin(client, {'task_id': source['task_id'], 'run_id': source['run_id']})
+    _, response = create_pattern(client, preview)
+    assert response.status_code == 200, response.text
+    pattern_id = response.json()['task_id']
+    active = create(client, [ids[0]], start=True)['task_id']
+
+    removed = client.post('/api/tasks/batch-delete', json={'ids': [source['task_id'], active, pattern_id]})
+    assert removed.status_code == 200, removed.text
+    summary = removed.json()
+    assert summary['deleted_ids'] == [pattern_id, source['task_id']]
+    assert summary['skipped'][0]['id'] == active and '排队或运行' in summary['skipped'][0]['reason']
+    assert app.state.store.trace(ids[0]) is not None
+    assert app.state.store.task(active) is not None
+    assert app.state.store.task(source['task_id']) is None
+
+
+def test_batch_delete_traces_keeps_linked_and_active_records(tmp_path):
+    app, client, (linked, active, removable) = setup(tmp_path, 3)
+    create(client, [linked])
+    app.state.store.enqueue(active, 'demo')
+
+    removed = client.post('/api/traces/batch-delete', json={'ids': [removable, linked, active, removable]})
+    assert removed.status_code == 200, removed.text
+    summary = removed.json()
+    assert summary['deleted_ids'] == [removable]
+    assert [item['id'] for item in summary['skipped']] == [linked, active]
+    assert '引用' in summary['skipped'][0]['reason'] and '排队或运行' in summary['skipped'][1]['reason']
+    assert app.state.store.trace(removable) is None
+    assert all(app.state.store.trace(trace_id) is not None for trace_id in (linked, active))

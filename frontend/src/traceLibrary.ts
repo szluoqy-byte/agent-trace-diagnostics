@@ -23,6 +23,15 @@ export const libraryLimit = 500
 export const libraryDiagnosis = diagnosisStatus
 export const businessOutcomes = {failed: '业务失败', succeeded: '业务成功', unknown: '结果未知'}
 
+export function libraryFilterQuery(params: URLSearchParams) {
+  const query = new URLSearchParams()
+  for (const key of ['search', 'diagnosis', 'business', 'input_format']) {
+    const value = params.get(key)
+    if (value && (key === 'search' || value !== 'all')) query.set(key, value)
+  }
+  return query.toString()
+}
+
 export function libraryPath(params: URLSearchParams, traceId?: string) {
   const path = traceId ? `/library/${traceId}` : '/library'
   return params.size ? `${path}?${params}` : path

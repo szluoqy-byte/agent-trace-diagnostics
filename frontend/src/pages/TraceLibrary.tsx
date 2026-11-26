@@ -3,9 +3,10 @@ import {Plus, RefreshCw, Search, Upload} from 'lucide-react'
 import {api, dateLabel} from '../api'
 import {sourceLabel} from '../branding'
 import {openPatternCreate} from '../patterns'
-import DeleteRecord, {traceDeletionBlock} from '../components/DeleteRecord'
+import DeleteRecord, {DeleteRecords, traceDeletionBlock} from '../components/DeleteRecord'
 import Pagination from '../components/Pagination'
-import {businessOutcomes, libraryDiagnosis, libraryLimit, libraryPath, openLibraryTask} from '../traceLibrary'
+import TableSelection, {useSelectionRequest} from '../components/TableSelection'
+import {businessOutcomes, libraryDiagnosis, libraryFilterQuery, libraryLimit, libraryPath, openLibraryTask} from '../traceLibrary'
 import type {LibraryPage, LibrarySelection} from '../traceLibrary'
 import {Badge, formatLabel, useResource, useWorkspace} from '../workspace'
 
@@ -14,7 +15,7 @@ const poll = (data: LibraryPage) => data.items.some(row => ['running', 'queued']
 export default function TraceLibrary({params, selected, onSelect}: {
   params: URLSearchParams; selected: LibrarySelection[]; onSelect: (items: LibrarySelection[]) => void
 }) {
-  const {go, version, refresh, notify} = useWorkspace()
+  const {go, version, refresh, notify, busy} = useWorkspace()
   const search = params.get('search') ?? ''
   const [searchInput, setSearchInput] = useState(search)
   const [importing, setImporting] = useState(false)
@@ -31,18 +32,19 @@ export default function TraceLibrary({params, selected, onSelect}: {
     business: params.get('business') ?? '',
     input_format: params.get('input_format') ?? '',
   }
-  const query = new URLSearchParams({page: String(page), page_size: String(size)})
-  if (search) query.set('search', search)
-  for (const [key, value] of Object.entries(filters)) if (value) query.set(key, value)
+  const filterQuery = libraryFilterQuery(params)
+  const query = new URLSearchParams(filterQuery)
+  query.set('page', String(page))
+  query.set('page_size', String(size))
   const {data, loading, error} = useResource<LibraryPage>(`/trace-library?${query}`, version, poll)
+  const allSelection = useSelectionRequest(`/trace-library?selection=true&${filterQuery}`)
 
   const ids = new Set(selected.map(row => row.id))
-  const selectable = (data?.items ?? []).filter(row => row.outcome !== 'unknown')
-  const allChecked = selectable.length > 0 && selectable.every(row => ids.has(row.id))
-  const someChecked = selectable.some(row => ids.has(row.id))
-  const unselected = selectable.filter(row => !ids.has(row.id))
-  const atLimit = ids.size >= libraryLimit
-  const hasFilters = !!(search || filters.diagnosis || filters.business || filters.input_format)
+  const rows = data?.items ?? []
+  const selectionBusy = busy || allSelection.loading
+  const reuseBlock = selected.length > libraryLimit ? '新建任务最多可使用 500 条轨迹' :
+    selected.some(row => row.outcome === 'unknown') ? '新建任务需要已标注业务结果的轨迹' : ''
+  const hasFilters = !!filterQuery
 
   function update(patch: Record<string, string>) {
     const next = new URLSearchParams(params)
@@ -50,12 +52,18 @@ export default function TraceLibrary({params, selected, onSelect}: {
       if (value) next.set(key, value)
       else next.delete(key)
     }
+    if (libraryFilterQuery(next) !== filterQuery) onSelect([])
     go(libraryPath(next))
   }
 
   function togglePage(checked: boolean) {
-    const pageIds = new Set(selectable.map(row => row.id))
-    onSelect(checked ? [...selected, ...unselected] : selected.filter(row => !pageIds.has(row.id)))
+    const pageIds = new Set(rows.map(row => row.id))
+    onSelect(checked ? [...selected, ...rows.filter(row => !ids.has(row.id))] : selected.filter(row => !pageIds.has(row.id)))
+  }
+
+  function removeSelection(deletedIds: string[]) {
+    const deleted = new Set(deletedIds)
+    onSelect(selected.filter(row => !deleted.has(row.id)))
   }
 
   async function importFiles(files: File[]) {
@@ -109,32 +117,33 @@ export default function TraceLibrary({params, selected, onSelect}: {
       }}>清除筛选</button> : null}
     </form>
     <div className="ws-selection">
+      <TableSelection pageIds={rows.map(row => row.id)} selectedIds={ids} total={data?.total ?? 0}
+        disabled={selectionBusy || !data} loading={allSelection.loading} onPage={togglePage}
+        onAll={checked => checked ? void allSelection.load<LibrarySelection>(onSelect) : onSelect([])}/>
       <strong aria-live="polite">已选 {selected.length} 条</strong>
-      <span>{atLimit ? '已达到每任务 500 条上限' : '切换分页或筛选时保留选择'}</span>
+      {reuseBlock ? <span>{reuseBlock}</span> : null}
       <div className="ws-actions">
-        {selected.length ? <button className="text-button" onClick={() => onSelect([])}>清空选择</button> : null}
-        <button className="primary small" disabled={!selected.length} onClick={() => openLibraryTask(params, selected)}>
+        <button className="primary small" disabled={selectionBusy || !selected.length || !!reuseBlock} onClick={() => openLibraryTask(params, selected)}>
           <Plus size={14}/>新建诊断任务
         </button>
-        <button className="secondary small" disabled={selected.length<2} onClick={() =>
+        <button className="secondary small" disabled={selectionBusy || selected.length<2 || !!reuseBlock} onClick={() =>
           openPatternCreate({trace_ids:selected.map(row=>row.id)},'#'+libraryPath(params))}>分析失败模式</button>
+        <DeleteRecords records={selected.map(row => ({id:row.id,name:row.title}))} kind="trace" disabled={selectionBusy} onDeleted={removeSelection}/>
       </div>
     </div>
+    {allSelection.error ? <p className="error-inline" role="alert">{allSelection.error}</p> : null}
     {error ? <p className="error-inline" role="alert">{error}</p> : null}
     <p className="ws-table-scroll-hint muted">横向滑动可查看其余列</p>
     <section className="ws-surface ws-trace-list" aria-label="库内轨迹" aria-busy={loading}>
       <div className="ws-table-scroll"><table className="ws-trace-table library-table">
-        <thead><tr><th scope="col"><input type="checkbox" aria-label="选择本页全部可用轨迹"
-          checked={allChecked} ref={element => {if (element) element.indeterminate = someChecked && !allChecked}}
-          disabled={!selectable.length || !allChecked && ids.size + unselected.length > libraryLimit}
-          onChange={event => togglePage(event.target.checked)}/></th>
+        <thead><tr><th scope="col" aria-label="选择"/>
           <th scope="col">轨迹 / 来源</th><th scope="col">业务结果</th><th scope="col">诊断状态</th>
           <th scope="col">关联任务</th><th scope="col">入库时间</th><th scope="col">操作</th></tr></thead>
-        <tbody>{data?.items.map(row => {
+        <tbody>{rows.map(row => {
           const known = row.outcome !== 'unknown'
           return <tr key={row.id}>
             <td><input type="checkbox" aria-label={`选择 ${row.title}`} checked={ids.has(row.id)}
-              disabled={!known || atLimit && !ids.has(row.id)}
+              disabled={selectionBusy}
               onChange={event => onSelect(event.target.checked ? [...selected, row] : selected.filter(item => item.id !== row.id))}/></td>
             <td><a className="ws-trace-title" href={'#' + libraryPath(params, row.id)}>{row.title}</a>
               <small>{formatLabel(row.input_format ?? '')} · {row.steps} 条消息</small>
@@ -145,7 +154,7 @@ export default function TraceLibrary({params, selected, onSelect}: {
             <td>{row.task_count} 个</td><td>{dateLabel(row.created_at)}</td>
             <td><DeleteRecord id={row.id} name={row.title} kind="trace" compact
               blocked={traceDeletionBlock(row.task_count, ['queued', 'running'].includes(row.diagnosis))}
-              onDeleted={() => onSelect(selected.filter(item => item.id !== row.id))}/></td>
+              onDeleted={() => removeSelection([row.id])}/></td>
           </tr>
         })}</tbody>
       </table></div>

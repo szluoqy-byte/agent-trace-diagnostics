@@ -6,6 +6,7 @@ from fastapi.responses import Response
 from pydantic import Field
 from .models import Contract, Trajectory, trajectory_format
 from .deepagent import trace_with_source_summary
+from .deletion import DeleteSelection
 from .normalize import WORKBENCH_FORMAT_ERROR, parse_upload, fingerprint
 from .execution import active_execution, snapshot, job_settings, run_settings
 from .feedback import feedback_availability
@@ -197,6 +198,10 @@ def attach_task_routes(app, store, settings, job_view):
             raise HTTPException(404, str(exc)) from exc
         return {'deleted': True}
 
+    @router.post('/tasks/batch-delete')
+    def delete_tasks(body: DeleteSelection):
+        return store.delete_tasks(body.ids)
+
     def validate_inputs(traces, *, start, execution):
         if not traces or len(traces)>500:
             raise HTTPException(422, '每个任务需要 1–500 条轨迹')
@@ -279,11 +284,14 @@ def attach_task_routes(app, store, settings, job_view):
 
     @router.get('/tasks/{task_id}/runs/{run_id}/traces')
     def list_traces(task_id: str, run_id: str, page: int=Query(1,ge=1), page_size: int=Query(10,ge=1,le=50),
-                    search: str='', diagnosis: str='all', business: str='all', review: str='all', category: str='all'):
+                    search: str='', diagnosis: str='all', business: str='all', review: str='all', category: str='all',
+                    selection: bool=False):
         if page_size not in {10,20,50}:
             raise HTTPException(422, '每页条数仅支持 10、20、50')
         run, all_rows, read_only = trace_scope(task_id, run_id)
         rows = filter_rows(all_rows, search, diagnosis, business, review, category)
+        if selection:
+            return {'items': [r['id'] for r in rows]}
         pages = max(1,(len(rows)+page_size-1)//page_size)
         page = min(page,pages)
         return {'items': rows[(page-1)*page_size:page*page_size], 'total':len(rows),'page':page,'page_size':page_size,'pages':pages,

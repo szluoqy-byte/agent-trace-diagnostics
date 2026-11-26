@@ -109,7 +109,7 @@ class TaskStore:
         with self.connect() as db:
             return [self.row(row) for row in db.execute('SELECT t.* FROM traces t JOIN task_traces x ON x.trace_id=t.id WHERE x.task_id=? ORDER BY x.position', (task_id,))]
 
-    def trace_library(self, page, page_size, search, diagnosis, business, input_format):
+    def trace_library(self, page, page_size, search, diagnosis, business, input_format, *, selection=False):
         # Keep a completed diagnosis visible even when the same trace is being reanalyzed.
         query = """
         WITH library AS (
@@ -138,6 +138,10 @@ class TaskStore:
                 args.append(value)
         where = ' WHERE ' + ' AND '.join(conditions) if conditions else ''
         with self.connect() as db:
+            if selection:
+                items = db.execute(query + 'SELECT id,title,outcome,input_format FROM library' + where
+                                   + ' ORDER BY created_at DESC,id', args)
+                return {'items': [dict(row) for row in items]}
             db.execute('BEGIN')
             total = db.execute(query + 'SELECT COUNT(*) FROM library' + where, args).fetchone()[0]
             pages = max(1, (total + page_size - 1) // page_size)

@@ -22,6 +22,7 @@ vi.mock('./api', async importOriginal=>({...await importOriginal<typeof import('
   if(parts[4]==='traces'&&parts[5]){const id=parts[5],index=fixtures.traces.findIndex(t=>t.id===id);return {trace:fixtures.data[id],job:null,read_only:false,attempts:[],navigation:{index,total:12,previous_id:fixtures.traces[index-1]?.id??null,next_id:fixtures.traces[index+1]?.id??null}}}
   if(parts[4]==='traces'){
     const rows=fixtures.traces.filter(t=>!url.searchParams.get('search')||t.title.includes(url.searchParams.get('search')!)),page=Number(url.searchParams.get('page')||1),size=Number(url.searchParams.get('page_size')||10)
+    if(url.searchParams.get('selection')==='true')return {items:rows.map(row=>row.id)}
     return {items:rows.slice((page-1)*size,page*size),total:rows.length,page,pages:Math.max(1,Math.ceil(rows.length/size)),page_size:size,counts:fixtures.task.counts,categories:[],read_only:false,status:'pending'}
   }
   throw new Error('Unexpected API: '+path)
@@ -65,9 +66,22 @@ it('pagination preserves selected IDs across pages and clears them on filtering'
   expect(screen.getByText('已选 1 条')).toBeTruthy()
   fireEvent.click(screen.getByLabelText('选择轨迹 trace11'))
   expect(screen.getByRole('link',{name:'导出所选'}).getAttribute('href')).toContain('trace_id=first&trace_id=trace11')
+  const pageSelection=screen.getByRole<HTMLInputElement>('checkbox',{name:'全选本页'})
+  fireEvent.click(pageSelection)
+  expect(await screen.findByText('已选 3 条')).toBeTruthy()
+  fireEvent.click(pageSelection)
+  expect(await screen.findByText('已选 1 条')).toBeTruthy()
+  const allSelection=screen.getByRole<HTMLInputElement>('checkbox',{name:'跨页全选'})
+  fireEvent.click(allSelection)
+  expect(await screen.findByText('已选 12 条')).toBeTruthy()
+  expect(allSelection.checked && pageSelection.checked).toBe(true)
+  expect(screen.queryByRole('button',{name:'清空选择'})).toBeNull()
+  fireEvent.click(allSelection)
+  expect(await screen.findByText('已选 0 条')).toBeTruthy()
+  fireEvent.click(screen.getByLabelText('选择轨迹 trace11'))
   fireEvent.change(screen.getByLabelText('搜索轨迹'),{target:{value:'second'}})
   await screen.findByRole('link',{name:'轨迹 second'})
-  expect(container.querySelector('.ws-selection')).toBeNull()
+  expect(screen.getByText('已选 0 条')).toBeTruthy()
   expect(screen.getByLabelText('分页状态').textContent).toBe('第 1 / 1 页')
 })
 
