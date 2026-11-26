@@ -217,21 +217,66 @@ def test_conflict_uses_ranked_candidate_in_review_and_task_list(tmp_path):
     assert item["critical_step"] == 1 and item["summary"] == "人工判断"
 
 
-async def test_synthesis_calls_model_without_engine_quotes(tmp_path, provider):
+@pytest.mark.parametrize("same_step", [False, True])
+async def test_synthesis_calls_model_without_engine_quotes(tmp_path, provider, same_step):
     endpoint, requests, state = provider
-    state["extra_request_reply"] = dual_answer
+
+    def answer(system, user):
+        reply = dual_answer(system, user)
+        if same_step:
+            reply.pop("assessments")
+        return reply
+
+    state["extra_request_reply"] = answer
     settings = Settings(data_dir=tmp_path, base_url=endpoint, model="fixture", prompt_language="zh", max_retries=0)
     reports = {"trajdebug": {"attribution":{"critical_step":1}},
-               "agentdebugx": {"attribution":{"critical_step":3}}}
+               "agentdebugx": {"attribution":{"critical_step":1 if same_step else 3}}}
     result = await synthesize(pipeline_trace(), reports, dict.fromkeys(reports, []), settings,
-                              {"state":"different", "primary":"trajdebug"})
+                              {"state":"same_step" if same_step else "different", "primary":"trajdebug"})
     assert len(requests) == 1 and result["status"] == "completed" and "confidence" not in result
-    assert result["preferred_engine"] == "agentdebugx" and result["critical_step"] == 3
+    assert result["preferred_engine"] == ("trajdebug" if same_step else "agentdebugx")
+    assert result["critical_step"] == (1 if same_step else 3)
+    assert ("assessments" in result) is not same_step
     messages = requests[0]["request"]["messages"]
     assert "最终分析结论" in messages[0]["content"]
     evidence = json.loads(messages[1]["content"])["evidence"]
     assert any(ref["role"] == "candidate" and ref["quote"] == "issue_refund()" for ref in evidence.values())
     assert any(ref["role"] == "outcome_context" for ref in evidence.values())
+
+
+@pytest.mark.parametrize("synthesis_status", ["completed", "failed"])
+def test_saved_step_agreement_shows_key_step_and_waives_review(tmp_path, synthesis_status):
+    app = create_app(Settings(data_dir=tmp_path, base_url="http://127.0.0.1:9/v1", model="fixture"))
+    store = app.state.store
+    trace_id = store.add_trace(pipeline_trace())["id"]
+    client = TestClient(app)
+    task = client.post("/api/tasks", json={"name":"一致轨迹", "trace_ids":[trace_id],
+                                          "start":True, "diagnosis_mode":"dual_chief"}).json()
+    route = f"/api/tasks/{task['task_id']}/runs/{task['run_id']}/traces"
+    job_id = store.run_rows(task["run_id"])[0]["job_id"]
+    attribution = {"critical_step":1, "summary":"缺少授权", "reasoning":"发起了未授权退款", "category":"type-a"}
+    synthesis = {"status": synthesis_status}
+    if synthesis_status == "completed":
+        synthesis.update(summary="两路均定位到退款调用", critical_step=None,
+                         assessments={"trajdebug":{"support":"medium"}, "agentdebugx":{"support":"medium"}})
+    report = {
+        "schema_version":2, "mode":"live", "algorithm":"TrajDebug", "attribution":attribution,
+        "comparison":{"state":"same_step","primary":"trajdebug"},
+        "engine_runs":{"trajdebug":{"status":"completed"}, "agentdebugx":{"status":"completed", "report":{
+            "algorithm":"AgentDebugX", "attribution":attribution,
+        }}, "chief":{"status":"completed", "report":{"algorithm":"CHIEF", "attribution":attribution}}},
+        "synthesis":synthesis,
+    }
+    store.update(job_id, status="completed", result=report)
+    detail = client.get(f"{route}/{trace_id}").json()["job"]
+    assert detail["review_status"] == "waived" and detail["result"]["attribution"]["critical_step"] == 1
+    if synthesis_status == "completed":
+        assert detail["result"]["synthesis"]["critical_step"] == 1
+        assert "assessments" not in detail["result"]["synthesis"]
+    assert client.get(route, params={"review":"waived"}).json()["items"][0]["critical_step"] == 1
+    assert client.get(route, params={"review":"pending"}).json()["total"] == 0
+    markdown = client.get(f"/api/jobs/{job_id}/export?format=md").text
+    assert "人工复核：免复核" in markdown and "关键步骤：#1" in markdown
 
 
 @pytest.mark.parametrize("language", ["en", "zh"])
@@ -302,7 +347,8 @@ def test_quote_normalization_restores_original_text_in_the_reported_event():
     assert not locate_engine_quote(trace, 1, "request: issue_refund()")["matched"]
 
 
-async def test_dual_runs_in_parallel_and_preserves_primary_when_second_engine_fails(monkeypatch, tmp_path):
+@pytest.mark.parametrize("missing_quote", [False, True])
+async def test_dual_runs_in_parallel_and_preserves_primary_when_second_engine_fails(monkeypatch, tmp_path, missing_quote):
     standard_started = asyncio.Event()
     candidate_started = asyncio.Event()
     base = {"algorithm": "TrajDebug", "attribution": {"critical_step": 1}, "triggers": [
@@ -317,7 +363,7 @@ async def test_dual_runs_in_parallel_and_preserves_primary_when_second_engine_fa
     async def candidate(*_):
         candidate_started.set()
         await asyncio.wait_for(standard_started.wait(), 1)
-        return {"algorithm": "AgentDebugX", "attribution": {"critical_step": 1}, "evidence": [
+        return {"algorithm": "AgentDebugX", "attribution": {"critical_step": 1}, "evidence": [] if missing_quote else [
             {"step": 1, "original_matched": True},
         ]}
 
@@ -326,7 +372,7 @@ async def test_dual_runs_in_parallel_and_preserves_primary_when_second_engine_fa
 
     monkeypatch.setattr("tracelens.diagnosis.compare.diagnose_agentdebugx", candidate)
     result = await diagnose_dual(pipeline_trace(), Settings(data_dir=tmp_path), progress, standard)
-    assert result["comparison"] == {"state": "aligned", "primary": "trajdebug"}
+    assert result["comparison"] == {"state": "same_step" if missing_quote else "aligned", "primary": "trajdebug"}
     assert result["engine_runs"]["agentdebugx"]["report"]["attribution"]["critical_step"] == 1
     assert "comparison" not in base
 

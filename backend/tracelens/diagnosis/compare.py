@@ -29,7 +29,7 @@ def compare_results(trace, runs):
         return "succeeded"
     reports = [row["report"] for row in runs.values()]
     steps = [(report.get("attribution") or {}).get("critical_step") for report in reports]
-    if any(step is None for step in steps):
+    if any(type(step) is not int or not 0 <= step < len(trace.messages) for step in steps):
         return "unresolved"
     if len(set(steps)) > 1:
         return "different"

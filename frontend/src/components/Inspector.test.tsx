@@ -141,6 +141,22 @@ it('shows the waiver and keeps manual review available for aligned results', () 
   expect(review).toHaveBeenCalledTimes(1)
 })
 
+it.each(['completed', 'failed'] as const)('shows the clickable agreed step with missing quotes and %s synthesis', status => {
+  const dual: Report = {...report, comparison:{state:'same_step',primary:'trajdebug'},
+    engine_runs:{trajdebug:{status:'completed'},agentdebugx:{status:'completed'},chief:{status:'completed'}},
+    synthesis:status === 'completed' ? {status, summary:'引擎选中同一步骤', critical_step:null, preferred_engine:null,
+      evidence:[], model:'fixture', calls:1} : {status, failure:'format'}}
+  const jump = vi.fn()
+  render(<Inspector job={{...job,result:dual,review_status:'waived'}} report={dual} onJump={jump} onReview={vi.fn()}/>)
+  expect(screen.getByText('免复核')).toBeTruthy()
+  expect(screen.getByText(/部分引擎缺少可核验的原文引用/)).toBeTruthy()
+  expect(screen.queryByText('待人工复核')).toBeNull()
+  fireEvent.click(screen.getByRole('button',{name:/一致关键步骤 #7.*定位轨迹/}))
+  expect(jump).toHaveBeenCalledWith({step:7,quote:''})
+  fireEvent.click(screen.getByRole('tab',{name:'TrajDebug'}))
+  expect(screen.getByText('免复核')).toBeTruthy()
+})
+
 it('opens CHIEF reference details and jumps to a verified source in the trace', () => {
   const source = {step:3, quote:'refund completed', matched:true, original_matched:true}
   const chief: Report = {...report, algorithm:'CHIEF', triggers:[], instances:[], evidence:[source],

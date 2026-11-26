@@ -74,11 +74,11 @@ it('preselects low, describes all three depths, and saves the high preset as a C
   expect(low.checked).toBe(true)
   expect(group.getByRole('radio', {name:/^低/, description:/批量初筛/})).toBe(low)
   expect(group.getByRole('radio', {name:/^中/, description:/交叉验证/})).toBe(medium)
-  expect(group.getByRole('radio', {name:/^高/, description:/供复核/})).toBe(high)
+  expect(group.getByRole('radio', {name:'高 多路综合', description:/供人工复核/})).toBe(high)
 
   fireEvent.click(high)
   expect(high.checked && !low.checked).toBe(true)
-  expect(screen.getByText('高 · 双路综合 + CHIEF')).toBeTruthy()
+  expect(screen.getByText('高 · 多路综合')).toBeTruthy()
   fireEvent.change(screen.getByLabelText('选择轨迹文件'), {target:{files:[new File(['{}'], 'deepagent.json')]}})
   await screen.findByRole('status', {name:''})
   await waitFor(() => expect((screen.getByRole('button',{name:'保存草稿'}) as HTMLButtonElement).disabled).toBe(false))

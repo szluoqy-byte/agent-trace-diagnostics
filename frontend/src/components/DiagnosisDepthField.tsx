@@ -14,8 +14,8 @@ const options = {
     tip: '适合重点排查。两种引擎交叉验证，业务失败时生成综合结论。',
   },
   dual_chief: {
-    label: '高', name: '双路综合 + CHIEF',
-    tip: '适合复杂链路。在中档基础上增加 CHIEF 因果回溯供复核，预计耗时和用量最高。',
+    label: '高', name: '多路综合',
+    tip: '适合复杂链路。增加一路因果回溯供人工复核，预计耗时和用量最高。',
   },
   agentdebugx: {
     label: 'AgentDebugX', name: '',

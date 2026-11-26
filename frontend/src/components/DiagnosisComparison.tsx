@@ -57,9 +57,10 @@ export default function DiagnosisComparison({report, onJump, onEngine, reviewWai
 }) {
   const comparison = report.comparison
   const synthesis = report.synthesis
-  const aligned = comparison?.state === 'aligned'
+  const sameStep = comparison?.state === 'same_step'
+  const agreed = comparison?.state === 'aligned' || sameStep
   const diverged = comparison?.state === 'different'
-  const finalStep = aligned ? report.attribution?.critical_step
+  const finalStep = agreed ? report.attribution?.critical_step
     : synthesis?.status === 'completed' ? synthesis.critical_step : null
   const synthesisError = synthesis?.status === 'failed' && synthesis.failure
     ? synthesis.failure === 'http' ? `模型服务返回 HTTP ${synthesis.http_status}` : synthesisFailureLabels[synthesis.failure]
@@ -68,17 +69,22 @@ export default function DiagnosisComparison({report, onJump, onEngine, reviewWai
     <div className="section-title"><h2>综合结论</h2>{reviewWaived ? <span className="status-tag green">免复核</span> : null}</div>
     {finalStep != null ? <button type="button" className="synthesis-step" onClick={() => onJump({step:finalStep, quote:''})}>
       <span className="synthesis-step-main">
-        <span className="synthesis-step-label">{aligned ? '一致关键步骤' : reviewed ? '模型候选步骤' : '暂定关键步骤'} <strong>#{finalStep}</strong></span>
-        {!aligned && !reviewed ? <span className="status-tag">待人工复核</span> : null}
+        <span className="synthesis-step-label">{agreed ? '一致关键步骤' : reviewed ? '模型候选步骤' : '暂定关键步骤'} <strong>#{finalStep}</strong></span>
+        {!agreed && !reviewed ? <span className="status-tag">待人工复核</span> : null}
       </span>
       <span className="synthesis-step-action">定位轨迹 <ArrowUpRight size={18} aria-hidden="true"/></span>
     </button> : null}
     {synthesis?.status === 'completed' ? <>
       <div className="conclusion"><strong>{synthesis.summary}</strong></div>
       {finalStep == null && !reviewed ? <p className="muted">关键步骤待人工复核。</p> : null}
+    </> : agreed && finalStep != null ? <>
+      <div className="conclusion"><strong>两路均定位到该关键步骤。</strong></div>
+      {synthesis?.status === 'failed' ? <p className="muted">综合说明生成失败，可查看引擎详情。
+        {synthesisError ? ` ${synthesisError}。` : null}</p> : null}
     </> : <p className="muted">{synthesis ? synthesisStatusLabels[synthesis.status]
       : comparison ? '此历史记录提供两路原始结论。重新生成诊断可生成综合分析。' : '等待引擎诊断结果…'}
       {synthesisError ? ` ${synthesisError}。` : null}</p>}
+    {sameStep ? <p className="muted">部分引擎缺少可核验的原文引用，可点击关键步骤查看轨迹。</p> : null}
     {engines.map(engine => {
       const run = report.engine_runs?.[engine]
       if (!run) return null

@@ -1,7 +1,7 @@
 """Human-readable export; the raw model output is exported separately unchanged."""
 
 from .diagnosis.synthesis import SUPPORT_LABELS, project_synthesis, review_target
-from .diagnosis.review_policy import review_status
+from .diagnosis.review_policy import AGREEMENT_STATES, review_status
 
 REVIEW_LABELS = {"confirmed": "已确认", "modified": "已修改", "rejected": "已驳回", "waived": "免复核"}
 FEEDBACK_LABELS = {"queued": "排队中", "running": "生成中", "completed": "已生成", "failed": "生成失败"}
@@ -42,7 +42,7 @@ def markdown_report(trace, job, reviews, feedback=None):
         preferred_step = synthesis.get("critical_step")
         comparison = result.get("comparison") or {}
         if preferred_step is not None:
-            label = ("一致关键步骤" if comparison.get("state") == "aligned"
+            label = ("一致关键步骤" if comparison.get("state") in AGREEMENT_STATES
                      else "模型候选步骤" if reviews else "暂定关键步骤（待人工复核）")
             lines += [f"{label} #{preferred_step}", ""]
         else:
