@@ -3,7 +3,7 @@ from uuid import uuid4
 import pytest
 
 from test_patterns import begin, create as create_pattern, fixture
-from test_tasks import create, setup
+from test_tasks import complete, create, setup
 
 from tracelens.main import create_app
 
@@ -127,3 +127,17 @@ def test_batch_delete_traces_keeps_linked_and_active_records(tmp_path):
     assert '引用' in summary['skipped'][0]['reason'] and '排队或运行' in summary['skipped'][1]['reason']
     assert app.state.store.trace(removable) is None
     assert all(app.state.store.trace(trace_id) is not None for trace_id in (linked, active))
+
+
+def test_reanalysis_keeps_source_jobs_referenced_by_an_existing_pattern(tmp_path):
+    app, client, source, ids = fixture(tmp_path)
+    preview = begin(client, {'trace_ids': ids[:3]})
+    _, created = create_pattern(client, preview)
+    assert created.status_code == 200, created.text
+    replacement = client.post(f"/api/tasks/{source['task_id']}/runs", json={})
+    assert replacement.status_code == 200, replacement.text
+    store = app.state.store
+    complete(store, replacement.json())
+    store.prune_superseded_runs()
+    assert store.run_rows(source['run_id'])
+    assert client.get(f"/api/pattern-tasks/{created.json()['task_id']}").status_code == 200

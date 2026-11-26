@@ -97,11 +97,12 @@ class TaskStore:
             return [dict(row) for row in db.execute(
                 "SELECT * FROM analysis_tasks WHERE ?='all' OR kind=? ORDER BY created_at DESC,id", (kind,kind))]
 
-    def runs(self, task_id):
+    def runs(self, task_id, *, latest_only=False):
         with self.connect() as db:
             result = [dict(row) for row in db.execute('''SELECT r.*,
                 EXISTS (SELECT 1 FROM task_improvements i WHERE i.run_id=r.id AND i.status IN ('queued','running'))
-                    AS improvement_active FROM analysis_runs r WHERE r.task_id=? ORDER BY r.number DESC''', (task_id,))]
+                    AS improvement_active FROM analysis_runs r WHERE r.task_id=? ORDER BY r.number DESC LIMIT ?''',
+                    (task_id, 1 if latest_only else -1))]
         for row in result:
             row['config'] = json.loads(row['config'])
             row['auto_feedback'] = bool(row['auto_feedback'])
@@ -156,7 +157,7 @@ class TaskStore:
                 [*args, page_size, (page - 1) * page_size]).fetchall()
         return {'items': [dict(row) for row in items], 'total': total, 'page': page, 'page_size': page_size, 'pages': pages}
 
-    def trace_library_history(self, trace_id):
+    def trace_library_history(self, trace_id, *, latest_only=False):
         with self.connect() as db:
             db.execute('BEGIN')
             if not db.execute('SELECT 1 FROM traces WHERE id=?', (trace_id,)).fetchone():
@@ -167,8 +168,9 @@ class TaskStore:
                 COALESCE(json_extract(r.config,'$.model'),json_extract(j.result,'$.model')) AS model
                 FROM jobs j LEFT JOIN run_attempts a ON a.job_id=j.id
                 LEFT JOIN analysis_runs r ON r.id=a.run_id
-                WHERE j.trace_id=? AND (a.job_id IS NULL OR a.attempt=(SELECT MAX(attempt) FROM run_attempts
-                    WHERE run_id=a.run_id AND trace_id=a.trace_id)) ORDER BY j.created_at DESC,j.id''', (trace_id,))
+                WHERE j.trace_id=? AND (?=0 OR r.id IS NULL OR r.number=(SELECT MAX(number) FROM analysis_runs WHERE task_id=r.task_id))
+                AND (a.job_id IS NULL OR a.attempt=(SELECT MAX(attempt) FROM run_attempts
+                    WHERE run_id=a.run_id AND trace_id=a.trace_id)) ORDER BY j.created_at DESC,j.id''', (trace_id, latest_only))
             return {'tasks': [dict(row) for row in tasks], 'diagnoses': [dict(row) for row in diagnoses]}
 
     @staticmethod
@@ -273,11 +275,16 @@ class TaskStore:
             raise ValueError('分析任务已删除，请刷新后重试')
         active = db.execute("""SELECT 1 FROM run_attempts a JOIN analysis_runs r ON r.id=a.run_id
           JOIN jobs j ON j.id=a.job_id LEFT JOIN feedback_runs f ON f.job_id=j.id
-          WHERE r.task_id=? AND (j.status IN ('queued','running') OR f.status IN ('queued','running')) LIMIT 1""", (task_id,)).fetchone()
+          WHERE r.task_id=? AND (j.status IN ('queued','running') OR f.status IN ('queued','running'))
+          UNION ALL SELECT 1 FROM task_improvements i JOIN analysis_runs r ON r.id=i.run_id
+          WHERE r.task_id=? AND i.status IN ('queued','running') LIMIT 1""", (task_id, task_id)).fetchone()
         if active:
-            raise ValueError('当前任务仍在处理，请完成后再新建分析记录')
+            raise ValueError('当前任务仍在处理，请完成后再重新分析')
         number = db.execute('SELECT COALESCE(MAX(number),0)+1 FROM analysis_runs WHERE task_id=?', (task_id,)).fetchone()[0]
         run_id = uuid.uuid4().hex
+        config = {**config, 'latest_only': True}
+        if 'diagnosis_mode' in config:
+            db.execute('UPDATE analysis_tasks SET diagnosis_mode=? WHERE id=?', (config['diagnosis_mode'], task_id))
         db.execute('INSERT INTO analysis_runs VALUES (?,?,?,?,?,?)', (run_id, task_id, number, json.dumps(config, ensure_ascii=False), int(auto_feedback), now()))
         for row in db.execute('SELECT * FROM task_traces WHERE task_id=? ORDER BY position', (task_id,)).fetchall():
             db.execute('INSERT INTO run_items VALUES (?,?,?)', (run_id, row['trace_id'], row['position']))

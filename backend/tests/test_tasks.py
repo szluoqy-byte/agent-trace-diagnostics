@@ -2,6 +2,7 @@ import asyncio
 import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from time import monotonic, sleep
 
 from fastapi.testclient import TestClient
 from tracelens.config import Settings
@@ -113,6 +114,37 @@ def test_retries_stay_in_analysis_and_history_is_read_only(tmp_path):
     assert app.state.store.job(job)['result']==original_result
     assert app.state.store.reviews(job)[0]['data']['summary']=='人工结论'
     assert all(r['review_status'] is None for r in app.state.store.run_rows(next_run))
+
+
+def test_reanalysis_exposes_current_results_and_retires_replaced_managed_results(tmp_path):
+    app, client, ids = setup(tmp_path, 1)
+    store = app.state.store
+    original = create(client, ids, start=True)
+    complete(store, original)
+    task_path = '/api/tasks/' + original['task_id']
+    with store.connect() as db:
+        db.execute("UPDATE analysis_runs SET config=json_remove(config,'$.latest_only') WHERE id=?", (original['run_id'],))
+    prior = {**original, 'run_id': client.post(task_path + '/runs', json={}).json()['run_id']}
+    complete(store, prior)
+    prior_job = store.run_rows(prior['run_id'])[0]['job_id']
+    current = {**original, 'run_id': client.post(task_path + '/runs', json={}).json()['run_id']}
+    failed = store.run_rows(current['run_id'])[0]['job_id']
+    store.update(failed, status='failed')
+
+    assert [r['id'] for r in client.get(task_path).json()['runs']] == [current['run_id']]
+    history = client.get(f'/api/trace-library/{ids[0]}/history?latest_only=true').json()
+    assert [row['job_id'] for row in history['diagnoses']] == [failed]
+    with TestClient(app) as client:
+        assert store.job(prior_job)['status'] == 'completed'
+        assert client.post(endpoint(current) + '/actions', json={'action': 'retry_failed'}).json()['enqueued'] == 1
+        deadline = monotonic() + 8
+        while store.job(prior_job) and monotonic() < deadline:
+            sleep(0.05)
+        assert store.job(prior_job) is None
+        assert [r['id'] for r in store.runs(original['task_id'])] == [current['run_id'], original['run_id']]
+        assert client.get(endpoint(original) + '/traces').json()['read_only'] is True
+        assert client.get(endpoint(current) + '/traces').json()['status'] == 'completed'
+        assert store.trace(ids[0]) is not None
 
 
 def test_shared_trace_tasks_have_independent_jobs_and_atomic_actions(tmp_path):

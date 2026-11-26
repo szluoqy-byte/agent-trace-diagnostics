@@ -1,4 +1,4 @@
-import {useCallback,useEffect,useRef,useState} from 'react'
+import {useCallback,useEffect,useLayoutEffect,useRef,useState} from 'react'
 import {Settings,X,CircleCheck} from 'lucide-react'
 import {PRODUCT_NAME,uiText} from './branding'
 import SystemSettings from './pages/SystemSettings'
@@ -46,8 +46,10 @@ export default function App(){
   const selection:LibrarySelection[]=fromLibrary?workspaceState?.librarySelection??[]:[]
   const libraryFilters=libraryFilterQuery(url.searchParams)
   const clearLibrarySelection=useCallback(()=>setLibrarySelection({filters:'',items:[]}),[])
-  const routeKey=settingsPage?'/settings':url.pathname
-  useEffect(()=>{window.scrollTo(0,0)},[routeKey])
+  const detailPage=!settingsPage&&(page==='trace'||page==='library-detail')
+  const routeKey=settingsPage?'/settings':`${url.pathname}:${url.searchParams.get('tab')??''}`
+  const main=useRef<HTMLElement>(null)
+  useLayoutEffect(()=>{if(main.current)main.current.scrollTop=0},[routeKey])
   useEffect(()=>{
     if(!notice)return
     const timer=setTimeout(()=>setNotice(''),6000)
@@ -64,9 +66,9 @@ export default function App(){
         }}><Settings size={16}/><span>系统设置</span></a>
       </div>
     </nav></aside>
-    <main className="ws-main">{error||configError?<div role="alert" className="alert error"><span>{uiText(error||configError)}</span>{error?<button aria-label="关闭错误" onClick={()=>setError('')}><X size={16}/></button>:<button onClick={refresh}>重试</button>}</div>:null}{notice?<div role="status" className="alert notice ws-toast"><CircleCheck size={16}/><span>{uiText(notice)}</span><button aria-label="关闭提示" onClick={()=>setNotice('')}><X size={16}/></button></div>:null}
+    <main ref={main} className={`ws-main${detailPage?' ws-detail-main':''}`}>{error||configError?<div role="alert" className="alert error"><span>{uiText(error||configError)}</span>{error?<button aria-label="关闭错误" onClick={()=>setError('')}><X size={16}/></button>:<button onClick={refresh}>重试</button>}</div>:null}{notice?<div role="status" className="alert notice ws-toast"><CircleCheck size={16}/><span>{uiText(notice)}</span><button aria-label="关闭提示" onClick={()=>setNotice('')}><X size={16}/></button></div>:null}
   {settingsPage?<SystemSettings onBack={settingsBack?closeSettings:undefined}/>:null}
-  {!settingsPage||settingsBack?<div hidden={settingsPage}>
+  {!settingsPage||settingsBack?<div hidden={settingsPage} className={detailPage?'ws-trace-route':undefined}>
   {patterns&&patternId?<PatternDetail key={patternId} id={patternId} requestedRun={url.searchParams.get('run')} requestedPattern={url.searchParams.get('pattern_id')}/>
     :page==='tasks'?<TaskList/>:page==='new'?<TaskCreate key={fromLibrary?'new-library':'new-'+(url.searchParams.get('source')||'upload')} source={fromLibrary?null:url.searchParams.get('source')}
     library={fromLibrary?{items:selection,back:'#'+libraryPath(returnParams),onCreated:clearLibrarySelection}:undefined}/>

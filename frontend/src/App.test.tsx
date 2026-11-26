@@ -55,6 +55,16 @@ it('switching task trajectories repeatedly keeps one matching log and inspector'
   }
 })
 
+it('opens the current result when an old task history URL is used', async () => {
+  window.history.replaceState(null,'','#/tasks/one?tab=history&run=old')
+  render(<App/>)
+  expect(await screen.findByRole('link', {name:'轨迹 first'})).toBeTruthy()
+  expect(location.hash).toBe('#/tasks/one')
+  expect(screen.queryByRole('tab', {name:/分析记录/})).toBeNull()
+  expect(screen.queryByRole('combobox', {name:/分析记录/})).toBeNull()
+  expect(screen.getByRole('link', {name:'导出当前分析'}).getAttribute('href')).toBe('/api/tasks/one/runs/r1/export')
+})
+
 it('pagination preserves selected IDs across pages and clears them on filtering',async()=>{
   window.history.replaceState(null,'','#/tasks/one?run=r1')
   const {container}=render(<App/>);await screen.findByRole('link',{name:'轨迹 first'})

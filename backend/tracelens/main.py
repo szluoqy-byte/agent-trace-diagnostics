@@ -142,8 +142,8 @@ def create_app(settings=None, *, frontend_dir=None):
                                    selection=selection)
 
     @app.get('/api/trace-library/{trace_id}/history')
-    def trace_library_history(trace_id: str):
-        history = store.trace_library_history(trace_id)
+    def trace_library_history(trace_id: str, latest_only: bool = False):
+        history = store.trace_library_history(trace_id, latest_only=latest_only)
         if history is None:
             raise HTTPException(404, '轨迹不存在')
         return history

@@ -14,7 +14,7 @@ type Report = ReportSummary & {
   snapshot:{total:number; failed:number; included:number; exclusions:Record<string,number>; agents:AgentGroup[]}
   results:Record<string,GroupResult>
 }
-type ImprovementPage = {reports:ReportSummary[]; report:Report|null}
+type ImprovementPage = {report:Report|null}
 
 const statusLabels: Record<Status,string> = {
   queued:'排队中', running:'生成中', completed:'已生成', partial:'部分生成', failed:'生成失败', insufficient:'可用证据不足',
@@ -25,51 +25,42 @@ const exclusions: Record<string,string> = {
   missing_step:'缺少关键步骤', missing_evidence:'缺少关键步骤原文证据', unknown_agent:'Agent 归属待确认',
 }
 const active = (status?:Status) => status === 'queued' || status === 'running'
-const polling = (data:ImprovementPage) => active(data.reports[0]?.status) ? 1800 : 0
+const polling = (data:ImprovementPage) => active(data.report?.status) ? 1800 : 0
 
-export default function TaskImprovements({taskId, runId, reportId, readonly, onReport}: {
-  taskId:string; runId:string; reportId:string|null; readonly:boolean; onReport:(id:string)=>void
-}) {
+export default function TaskImprovements({taskId, runId}: {taskId:string; runId:string}) {
   const {version, busy, action, refresh} = useWorkspace()
   const path = `/tasks/${taskId}/runs/${runId}/improvements`
-  const {data, error, loading} = useResource<ImprovementPage>(reportId ? `${path}?${new URLSearchParams({report_id:reportId})}` : path, version, polling)
+  const {data, error, loading} = useResource<ImprovementPage>(path, version, polling)
   const [submissionError, setSubmissionError] = useState('')
   const report = data?.report
-  const latest = data?.reports[0]
-  const generating = active(latest?.status)
+  const generating = active(report?.status)
 
   async function generate() {
     setSubmissionError('')
-    const result = await action(() => post<{id:string}>(path), undefined, setSubmissionError)
-    if (result) onReport(result.id)
+    await action(() => post<{id:string}>(path), undefined, setSubmissionError)
   }
 
-  function evidenceLink(sample: Sample, selectedId: string) {
-    const params = new URLSearchParams({run:runId, tab:'improvements', improvement:selectedId, evidence_step:String(sample.step)})
+  function evidenceLink(sample: Sample) {
+    const params = new URLSearchParams({tab:'improvements', evidence_step:String(sample.step)})
     return '#' + tracePath(taskId, sample.trace_id, params)
   }
 
   return <div className="task-improvements">
     <section className="ws-surface improvement-intro">
-      <div><h2>任务改进建议</h2><p>汇总本轮可核验的失败证据，按关键失败步骤所属的 Agent 提出改进和回归验证建议。</p></div>
-      <div className="ws-actions">
-        {data && data.reports.length > 1 ? <label>建议记录 <select value={report?.id ?? ''} onChange={event => onReport(event.target.value)}>
-          {data.reports.map(item => <option key={item.id} value={item.id}>{dateLabel(item.created_at)} · {statusLabels[item.status]}</option>)}
-        </select></label> : null}
-        {!readonly ? <button type="button" className="primary" disabled={busy || generating || loading || !!error} onClick={() => void generate()}>
-          <Sparkles size={15}/>{generating && latest ? statusLabels[latest.status] : latest?.status === 'partial' || latest?.status === 'failed' ? '重试生成' : latest ? '重新生成' : '生成本轮改进建议'}
-        </button> : null}
-      </div>
+      <div><h2>任务改进建议</h2><p>汇总当前分析的可核验失败证据，按关键失败步骤所属的 Agent 提出改进和回归验证建议。</p></div>
+      <button type="button" className="primary" disabled={busy || generating || loading || !!error} onClick={() => void generate()}>
+        <Sparkles size={15}/>{generating && report ? statusLabels[report.status] : report?.status === 'partial' || report?.status === 'failed' ? '重试生成' : report ? '重新生成' : '生成改进建议'}
+      </button>
     </section>
     {error || submissionError ? <div role="alert" className="ws-actions"><p className="error-inline">{error || submissionError}</p>
       {error ? <button className="secondary small" onClick={refresh}>重新加载</button> : null}</div> : null}
     {loading ? <p role="status" className="muted">正在读取改进建议…</p> : null}
-    {!report && data ? <section className="ws-surface empty"><h3>暂无本轮改进建议</h3>
-      <p>{readonly ? '该分析轮次没有保存改进建议。' : '诊断完成后，可按 Agent 生成建议并核对代表轨迹。'}</p></section> : null}
+    {!report && data ? <section className="ws-surface empty"><h3>暂无任务改进建议</h3>
+      <p>诊断完成后，可按 Agent 生成建议并核对代表轨迹。</p></section> : null}
     {report ? <>
       <section className="ws-surface improvement-coverage">
         <div className="improvement-stats"><strong>{statusLabels[report.status]}</strong>
-          <span>本轮 {report.snapshot.total} 条轨迹</span><span>业务失败 {report.snapshot.failed} 条</span>
+          <span>共 {report.snapshot.total} 条轨迹</span><span>业务失败 {report.snapshot.failed} 条</span>
           <span>纳入 {report.snapshot.included} 条</span><span>{report.snapshot.agents.length} 个 Agent</span></div>
         <p className="muted">{dateLabel(report.created_at)}{report.model && report.status !== 'insufficient' ? ` · ${report.model}` : ''}</p>
         {Object.keys(report.snapshot.exclusions).length ? <ul className="improvement-exclusions">
@@ -93,7 +84,7 @@ export default function TaskImprovements({taskId, runId, reportId, readonly, onR
             <dl><dt>建议改动</dt><dd>{item.change}</dd><dt>回归验证</dt><dd>{item.verification}</dd></dl>
             <details><summary>查看轨迹证据</summary><ul>{item.evidence_ids.map(id => {
               const sample = byId.get(id)
-              return sample ? <li key={id}><a href={evidenceLink(sample,report.id)}>{sample.title} · 步骤 #{sample.step}<ArrowUpRight size={13}/></a>
+              return sample ? <li key={id}><a href={evidenceLink(sample)}>{sample.title} · 步骤 #{sample.step}<ArrowUpRight size={13}/></a>
                 <blockquote>{sample.quote}</blockquote></li> : null
             })}</ul></details>
           </article>)}

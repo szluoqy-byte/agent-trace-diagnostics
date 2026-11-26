@@ -109,14 +109,15 @@ def attach_task_routes(app, store, settings, job_view):
                      steps=len(t['data']['messages']), diagnosis='pending', position=index) for index,t in enumerate(store.task_inputs(task_id))]
 
     def task_view(task):
-        runs = store.runs(task['id'])
-        details = [{**run, **summary(store.run_rows(run['id'])), 'read_only': i>0} for i,run in enumerate(runs)]
-        rows = store.run_rows(runs[0]['id']) if runs else inputs(task['id'])
+        runs = store.runs(task['id'], latest_only=True)
+        current = runs[0] if runs else None
+        rows = store.run_rows(current['id']) if current else inputs(task['id'])
         totals = summary(rows)
         return {**task, 'draft_auto_feedback': bool(task['draft_auto_feedback']),
-                'runs': details, 'latest_run_id': runs[0]['id'] if runs else None,
+                'runs': [{**current, **totals, 'read_only': False}] if current else [],
+                'latest_run_id': current['id'] if current else None,
                 'input_count': len(rows), 'formats': sorted({r['input_format'] for r in rows}),
-                **totals, 'status': totals['status'] if runs else 'draft'}
+                **totals, 'status': totals['status'] if current else 'draft'}
 
     def stage_preview(files):
         token = store.save_preview(files)
@@ -277,7 +278,7 @@ def attach_task_routes(app, store, settings, job_view):
             require_task(task_id)
             return None, inputs(task_id), True
         run = require_run(task_id, run_id)
-        runs = store.runs(task_id)
+        runs = store.runs(task_id, latest_only=True)
         if not runs:
             raise HTTPException(404, '分析任务不存在')
         return run, store.run_rows(run_id), runs[0]['id'] != run_id

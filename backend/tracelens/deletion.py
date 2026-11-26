@@ -84,13 +84,39 @@ class DeletionStore:
                 LIMIT 1''', (task_id, task_id)).fetchone()
             if blocked:
                 raise ValueError('此任务的诊断已被失败模式分析引用，请先删除关联的失败模式分析任务')
-            jobs = self._deletable_jobs(db, f'id IN ({job_ids})', task_id)
-            db.execute(f'DELETE FROM run_attempts WHERE run_id IN ({run_ids})', (task_id,))
-            self._delete_jobs(db, jobs)
-            db.execute(f'DELETE FROM run_items WHERE run_id IN ({run_ids})', (task_id,))
-            db.execute('DELETE FROM analysis_runs WHERE task_id=?', (task_id,))
+            self._delete_analysis_runs(db, run_ids, task_id)
         db.execute('DELETE FROM task_traces WHERE task_id=?', (task_id,))
         db.execute('DELETE FROM analysis_tasks WHERE id=?', (task_id,))
+
+    def prune_superseded_runs(self, job_id=None):
+        """Retire managed results after every trace in the replacement completes."""
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            obsolete = db.execute('''SELECT old.id FROM analysis_runs old
+                JOIN analysis_runs newest ON newest.id=(SELECT id FROM analysis_runs
+                    WHERE task_id=old.task_id ORDER BY number DESC LIMIT 1)
+                WHERE old.id!=newest.id AND json_extract(old.config,'$.latest_only')=1
+                  AND json_extract(newest.config,'$.latest_only')=1
+                  AND (? IS NULL OR newest.id=(SELECT run_id FROM run_attempts WHERE job_id=?))
+                  AND NOT EXISTS (SELECT 1 FROM run_items item
+                      LEFT JOIN jobs j ON j.id=(SELECT a.job_id FROM run_attempts a
+                          WHERE a.run_id=item.run_id AND a.trace_id=item.trace_id ORDER BY a.attempt DESC LIMIT 1)
+                      WHERE item.run_id=newest.id AND COALESCE(j.status,'pending')!='completed')
+                  AND NOT EXISTS (SELECT 1 FROM pattern_runs WHERE json_extract(scope,'$.run_id')=old.id)
+                  AND NOT EXISTS (SELECT 1 FROM pattern_run_inputs p JOIN run_attempts a ON a.job_id=p.job_id
+                      WHERE a.run_id=old.id)''', (job_id, job_id)).fetchall()
+            for row in obsolete:
+                self._delete_analysis_runs(db, 'SELECT id FROM analysis_runs WHERE id=?', row['id'])
+        if obsolete:
+            self.purge_deleted_artifacts()
+
+    def _delete_analysis_runs(self, db, run_ids, value):
+        job_ids = f'SELECT job_id FROM run_attempts WHERE run_id IN ({run_ids})'
+        jobs = self._deletable_jobs(db, f'id IN ({job_ids})', value)
+        db.execute(f'DELETE FROM run_attempts WHERE run_id IN ({run_ids})', (value,))
+        self._delete_jobs(db, jobs)
+        db.execute(f'DELETE FROM run_items WHERE run_id IN ({run_ids})', (value,))
+        db.execute(f'DELETE FROM analysis_runs WHERE id IN ({run_ids})', (value,))
 
     def _delete_trace(self, db, trace_id):
         if not db.execute('SELECT 1 FROM traces WHERE id=?', (trace_id,)).fetchone():

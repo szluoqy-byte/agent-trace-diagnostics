@@ -23,6 +23,7 @@ class JobQueue:
 
     async def start(self):
         self.store.recover()
+        self.prune_superseded_runs()
         self.schedule_feedback()
         self.started = True
         self.tasks = [asyncio.create_task(self.worker(slot)) for slot in range(self.settings.concurrency)]
@@ -109,6 +110,14 @@ class JobQueue:
                     fields['result'] = {**partial, 'usage': exc.usage}
                 self.store.update(job["id"], status="failed", stage="诊断失败", error=message, **fields)
                 logger.warning("Diagnosis job %s failed (%s)", job["id"], type(exc).__name__)
+            else:
+                self.prune_superseded_runs(job['id'])
+
+    def prune_superseded_runs(self, job_id=None):
+        try:
+            self.store.prune_superseded_runs(job_id)
+        except Exception as exc:
+            logger.warning('Superseded analysis cleanup deferred (%s)', type(exc).__name__)
 
     async def feedback(self, feedback):
         execution = self.settings
