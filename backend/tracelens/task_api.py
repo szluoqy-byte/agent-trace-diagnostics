@@ -11,7 +11,7 @@ from .execution import active_execution, snapshot, job_settings, run_settings
 from .feedback import feedback_availability
 from .official_samples import load_official_samples
 from .prompt_language import normalize_prompt_language
-from .diagnosis import DEFAULT_MODE, DiagnosisMode
+from .diagnosis import DEFAULT_MODE, TRAJDEBUG_MODES, DiagnosisMode
 
 
 class TaskCreate(Contract):
@@ -252,7 +252,7 @@ def attach_task_routes(app, store, settings, job_view):
         config = snapshot(execution, connection_id, body.prompt_language, body.diagnosis_mode) if body.start else None
         task_id, run_id = checked(lambda: store.create_task(
             fields, traces=traces, trace_ids=trace_ids, config=config,
-            auto_feedback=body.auto_feedback and body.diagnosis_mode != 'agentdebugx',
+            auto_feedback=body.auto_feedback and body.diagnosis_mode in TRAJDEBUG_MODES,
         ))
         return {'task_id':task_id, 'run_id':run_id}
 
@@ -264,7 +264,7 @@ def attach_task_routes(app, store, settings, job_view):
                         start=True, execution=execution)
         mode = body.diagnosis_mode or task['diagnosis_mode']
         config = snapshot(execution, connection_id, task['prompt_language'], mode)
-        run_id = checked(lambda:store.start_run(task_id, config, body.auto_feedback and mode != 'agentdebugx'))
+        run_id = checked(lambda:store.start_run(task_id, config, body.auto_feedback and mode in TRAJDEBUG_MODES))
         return {'run_id':run_id}
 
     def trace_scope(task_id, run_id):

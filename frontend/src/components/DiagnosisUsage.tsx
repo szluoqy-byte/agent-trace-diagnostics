@@ -1,6 +1,6 @@
 import type {ModelUsage, Report} from '../types'
+import {engineLabels, engines} from './DiagnosisComparison'
 
-const engines = [{id:'trajdebug',label:'TrajDebug'}, {id:'agentdebugx',label:'AgentDebugX'}] as const
 const integers = new Intl.NumberFormat('zh-CN')
 const decimals = new Intl.NumberFormat('zh-CN', {maximumFractionDigits:2})
 
@@ -34,11 +34,11 @@ function totalTokens(usage?: Partial<ModelUsage>) {
 export default function DiagnosisUsage({report}: {report:Report}) {
   const rows: UsageRow[] = []
   if (report.engine_runs) {
-    for (const {id,label} of engines) {
+    for (const id of engines) {
       const run = report.engine_runs[id]
       if (!run) continue
       const result = report.comparison?.primary === id ? report : run.report
-      rows.push({label, seconds:run.seconds ?? elapsed(result), usage:modelUsage(result) ?? run.usage})
+      rows.push({label:engineLabels[id], seconds:run.seconds ?? elapsed(result), usage:modelUsage(result) ?? run.usage})
     }
   } else if (report.usage || report.stage_metrics?.length) {
     rows.push({label:report.algorithm || report.engine_version || '诊断', seconds:elapsed(report), usage:modelUsage(report)})

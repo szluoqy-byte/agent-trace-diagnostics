@@ -18,6 +18,8 @@ def feedback_source(job, settings):
     result = job.get('result') or {}
     if result.get('algorithm') == 'AgentDebugX':
         raise ValueError('AgentDebugX 的恢复建议已随诊断生成，请在诊断详情查看。')
+    if result.get('algorithm') == 'CHIEF':
+        raise ValueError('CHIEF 诊断提供根因定位和证据；可用标准诊断生成改进建议。')
     if job['status'] != 'completed':
         raise ValueError('请先完成诊断，再生成改进建议')
     if job['mode'] != 'live' or result.get('schema_version') != 2:

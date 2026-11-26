@@ -203,8 +203,25 @@
 .ws-delete-body p{margin-block:0 10px}
 .ws-delete-body p:last-child{margin-bottom:0}
 
-.diagnosis-mode-field .ws-help{margin:6px 0 12px}
-.diagnosis-mode-field select{width:100%;min-width:0}
+.diagnosis-depth-field{container-type:inline-size;min-width:0;margin:0 0 18px;padding:0;border:0}
+.diagnosis-depth-field legend{padding:0;margin-bottom:8px;font-size:13px;font-weight:600;color:#536480}
+.diagnosis-depth-options{display:grid;gap:8px;grid-template-columns:minmax(0,1fr)}
+.diagnosis-depth-choice{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:start;gap:9px;padding:11px 12px;border:1px solid var(--border);border-radius:7px;background:#fafbfe;cursor:pointer}
+.diagnosis-depth-choice input[type="radio"]{width:15px;height:15px;margin:3px 0 0;padding:0;accent-color:var(--accent)}
+.diagnosis-depth-choice:has(input:checked){border-color:#a3b0f8;background:var(--accent-soft)}
+.diagnosis-depth-choice:has(input:focus-visible){outline:2px solid var(--accent);outline-offset:2px}
+.diagnosis-depth-choice:has(input:disabled){opacity:.65;cursor:default}
+.diagnosis-depth-copy{display:grid;gap:4px;min-width:0;overflow-wrap:anywhere}
+.diagnosis-depth-label{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;color:#273754;font-size:13px;line-height:1.4}
+.diagnosis-depth-label strong{font-size:15px}
+.diagnosis-depth-tip{color:#536480;font-size:12px;line-height:1.55}
+.diagnosis-depth-custom{margin-top:10px}
+.diagnosis-depth-custom summary{width:fit-content;color:#536480;font-size:12px;cursor:pointer}
+.diagnosis-depth-custom[open] summary{margin-bottom:8px}
+@container (min-width: 31rem){
+  .diagnosis-depth-options{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .diagnosis-depth-standalone{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
 .diagnosis-comparison,.engine-evidence{display:grid;gap:12px;min-width:0;overflow-wrap:anywhere}
 .synthesis-step{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;min-height:64px;padding:12px 16px;border:1px solid #b7c4ff;border-radius:8px;background:var(--accent-soft);color:#263683;text-align:left;cursor:pointer}
 .synthesis-step:hover{background:#e4eaff;border-color:var(--accent)}

@@ -362,6 +362,28 @@ def span_display_layout(spans):
         yield span, span["start_time"] - origin, span["end_time"] - origin, depth
 
 
+def deepagent_sources(trace):
+    if not trace.deepagent:
+        return {}
+    spans = {span["span_id"]: span for span in trace.deepagent.spans}
+    by_span = {}
+    for message in trace.messages:
+        span_id, _, _ = message.source_step.rpartition(":")
+        if span_id in spans:
+            by_span[span_id] = message.step
+    sources, owners = {}, {}
+    for span, _, _, _ in span_display_layout(spans.values()):
+        span_id = span["span_id"]
+        kind = span_kind(span, obj(span.get("attributes")))
+        name = span.get("span_name") if kind == "AGENT" else owners.get(span.get("parent_id"))
+        owners[span_id] = name
+        if span_id not in by_span:
+            continue
+        parent_step = by_span.get(span.get("parent_id"))
+        sources[by_span[span_id]] = (span_id, kind, name, parent_step)
+    return sources
+
+
 def source_nodes(spans):
     nodes = []
     for span, start_offset, end_offset, depth in span_display_layout(spans):

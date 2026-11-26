@@ -2,8 +2,8 @@ import {ArrowUpRight} from 'lucide-react'
 import type {EngineName, Evidence, EvidenceSupport, Report} from '../types'
 import Citation from './Citation'
 
-export const engineLabels = {trajdebug: 'TrajDebug', agentdebugx: 'AgentDebugX'}
-const engines = ['trajdebug', 'agentdebugx'] as const
+export const engineLabels = {trajdebug: 'TrajDebug', agentdebugx: 'AgentDebugX', chief: 'CHIEF'}
+export const engines = ['trajdebug', 'agentdebugx', 'chief'] as const
 const synthesisStatusLabels = {
   running: '正在综合两路诊断结果…',
   incomplete: '两路均完成后才会生成综合分析。可查看各引擎状态。',
@@ -85,9 +85,11 @@ export default function DiagnosisComparison({report, onJump, onEngine, reviewWai
       const current = comparison?.primary === engine ? report : run.report
       const conclusion = current?.attribution
       const step = conclusion?.critical_step
-      const assessment = diverged && synthesis?.status === 'completed' ? synthesis.assessments?.[engine] : undefined
+      const assessment = engine !== 'chief' && diverged && synthesis?.status === 'completed'
+        ? synthesis.assessments?.[engine] : undefined
       return <section key={engine} className="instance-card">
         <div className="instance-top"><h3>{engineLabels[engine]}</h3>
+          {engine === 'chief' ? <span className="mini-meta">复核参考</span> : null}
           {!assessment ? <span className="mini-meta">{run.status === 'completed' ? '已完成' : run.status === 'failed' ? '失败' : '运行中'}</span> : null}
         </div>
         {step != null || assessment ? <div className="engine-candidate">

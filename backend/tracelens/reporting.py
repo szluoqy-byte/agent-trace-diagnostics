@@ -33,6 +33,10 @@ def markdown_report(trace, job, reviews, feedback=None):
         lines += ["历史合成数据，未运行模型。", ""]
     else:
         lines += [f"诊断模型：{result.get('model') or '未记录'}", ""]
+        if result.get("algorithm") == "CHIEF":
+            lines += ["诊断引擎：CHIEF", ""]
+            if agent := result.get("root_cause_agent"):
+                lines += [f"根因 Agent：{agent}", ""]
     if (synthesis := result.get("synthesis", {})).get("status") == "completed":
         lines += ["## 综合分析", "", synthesis["summary"], ""]
         preferred_step = synthesis.get("critical_step")
@@ -60,13 +64,13 @@ def markdown_report(trace, job, reviews, feedback=None):
     if comparison := result.get("comparison"):
         lines += ["", "## 双路诊断对照", "", COMPARISON_LABELS[comparison["state"]], ""]
         for name, run in result.get("engine_runs", {}).items():
-            label = "标准诊断" if name == "trajdebug" else "AgentDebugX"
+            label = {"trajdebug": "标准诊断", "agentdebugx": "AgentDebugX", "chief": "CHIEF（参考）"}.get(name, name)
             branch = result if name == comparison["primary"] else (run.get("report") or {})
             attribution = branch.get("attribution") or {}
             branch_step = attribution.get("critical_step")
             title = f"#{branch_step}" if branch_step is not None else "未定位"
             lines.append(f"- {label} · {title} · {attribution.get('summary') or run.get('error', '')}")
-            if name == "agentdebugx" and branch is not result:
+            if name in {"agentdebugx", "chief"} and branch is not result:
                 lines.extend(evidence_lines(branch))
                 lines.extend("  - 建议 " + item for item in attribution.get("fix_suggestions", []))
     otel = trace.get("data", {}).get("otel")
@@ -100,15 +104,17 @@ def markdown_report(trace, job, reviews, feedback=None):
                 location = locations[0]
                 text = result.get("compression_views", {}).get(str(location["step"]), {}).get(location["tier"], "")
                 lines += ["对应压缩视图：", "", *["> " + line for line in text.splitlines()], ""]
-    lines += ["", "## 错误生命周期", ""]
+    if result.get("algorithm") != "CHIEF":
+        lines += ["", "## 错误生命周期", ""]
     for item in result.get("instances", []):
         state = INSTANCE_LABELS.get(item.get("error_state") or item.get("status"), "状态待核验")
         lines += [f"- {item['id']} · 检测起点 #{item['origin_step']} · 有效起点 #{item.get('qualified_origin_step', item['origin_step'])}",
                   f"  状态：{state} · 影响最终结果：{'是' if item['terminal_relevant'] else '否'}",
                   "  " + item["explanation"]]
-    lines += ["", "## 修复与验证建议", ""]
-    suggestions = ai.get("fix_suggestions", [])
-    lines += ["- " + text for text in suggestions] if suggestions else ["本次诊断未附带修复建议。可在工作台生成改进建议或补充验证计划。"]
+    if result.get("algorithm") != "CHIEF":
+        lines += ["", "## 修复与验证建议", ""]
+        suggestions = ai.get("fix_suggestions", [])
+        lines += ["- " + text for text in suggestions] if suggestions else ["本次诊断未附带修复建议。可在工作台生成改进建议或补充验证计划。"]
     if feedback:
         lines += ['', '## 改进建议', '', f"生成状态：{FEEDBACK_LABELS.get(feedback['status'], '未知')}"]
         if feedback['status'] == 'completed':

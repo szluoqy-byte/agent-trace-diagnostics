@@ -11,8 +11,8 @@ from time import monotonic
 
 from ..citation_views import locate_quote
 from ..config import ROOT
-from ..deepagent import obj, span_display_layout, span_kind
-from ..llm import ModelError
+from ..deepagent import deepagent_sources
+from ..llm import MODEL_HTTP_HINTS, ModelError
 from ..model_concurrency import model_slot_environment
 from ..trajdebug import to_unified
 from . import AGENTDEBUGX_COMMIT, AGENTDEBUGX_URL, AGENTDEBUGX_VERSION
@@ -28,37 +28,6 @@ MODEL_FAILURES = {
     "timeout": "AgentDebugX 请求模型服务超时，请检查服务负载和请求超时设置。",
     "connection": "AgentDebugX 无法连接模型服务，请核对接口地址及服务器网络。",
 }
-HTTP_FAILURES = {
-    400: "请检查模型支持的请求参数和上下文长度。",
-    401: "模型服务认证失败，请检查 API Key 或自定义认证头。",
-    403: "模型服务拒绝访问，请检查模型权限和网关访问规则。",
-    404: "模型服务未找到请求路径或模型，请核对接口地址和模型标识。",
-    413: "请求超过服务端大小限制，请检查轨迹长度和网关限制。",
-    422: "模型服务无法处理请求，请检查模型兼容性和参数。",
-    429: "模型服务已限流或额度不足，请检查账户状态。",
-}
-
-
-def deepagent_sources(trace):
-    if not trace.deepagent:
-        return {}
-    spans = {span["span_id"]: span for span in trace.deepagent.spans}
-    by_span = {}
-    for message in trace.messages:
-        span_id, _, _ = message.source_step.rpartition(":")
-        if span_id in spans:
-            by_span[span_id] = message.step
-    sources, owners = {}, {}
-    for span, _, _, _ in span_display_layout(spans.values()):
-        span_id = span["span_id"]
-        kind = span_kind(span, obj(span.get("attributes")))
-        name = span.get("span_name") if kind == "AGENT" else owners.get(span.get("parent_id"))
-        owners[span_id] = name
-        if span_id not in by_span:
-            continue
-        parent_step = by_span.get(span.get("parent_id"))
-        sources[by_span[span_id]] = (span_id, kind, name, parent_step)
-    return sources
 
 
 def to_agentdebugx(trace):
@@ -206,7 +175,7 @@ async def diagnose_agentdebugx(trace, settings, progress):
     if failure := output.get("failure"):
         if failure["kind"] == "http":
             status = failure["status"]
-            hint = HTTP_FAILURES.get(status, "请检查模型服务和网关状态。")
+            hint = MODEL_HTTP_HINTS.get(status, "请检查模型服务和网关状态。")
             raise ModelError(f"AgentDebugX 模型请求失败（HTTP {status}）。{hint}")
         raise ModelError(MODEL_FAILURES.get(failure["kind"], WORKER_FAILURE))
     report = present_agentdebugx(trace, request, output, settings.model, settings.prompt_language)

@@ -3,6 +3,7 @@ import logging
 from .demo import demo_report
 from .diagnosis import DEFAULT_MODE
 from .diagnosis.agentdebugx import diagnose_agentdebugx
+from .diagnosis.chief import diagnose_chief
 from .diagnosis.compare import diagnose_dual
 from .engine import diagnose
 from .feedback import generate_feedback, feedback_availability
@@ -72,8 +73,11 @@ class JobQueue:
                     fresh = self.store.uses_fresh_diagnosis_cache(job['id'])
                     if mode == "agentdebugx":
                         report = await diagnose_agentdebugx(trace, execution, progress)
-                    elif mode == "dual":
-                        report = await diagnose_dual(trace, execution, progress, diagnose, fresh_cache=fresh)
+                    elif mode == "chief":
+                        report = await diagnose_chief(trace, execution, progress)
+                    elif mode in {"dual", "dual_chief"}:
+                        report = await diagnose_dual(trace, execution, progress, diagnose, fresh_cache=fresh,
+                                                     **({"include_chief": True} if mode == "dual_chief" else {}))
                     elif fresh:
                         report = await diagnose(trace, execution, progress, fresh_cache=True)
                     else:
@@ -95,6 +99,9 @@ class JobQueue:
                     fields['result'] = {**partial, 'contract_issues': exc.issues,
                                         'usage': exc.usage or partial.get('usage'),
                                         'model_validation': exc.validation_events or partial.get('model_validation', [])}
+                elif isinstance(exc, ModelError) and exc.usage:
+                    partial = self.store.job(job['id']).get('result') or {}
+                    fields['result'] = {**partial, 'usage': exc.usage}
                 self.store.update(job["id"], status="failed", stage="诊断失败", error=message, **fields)
                 logger.warning("Diagnosis job %s failed (%s)", job["id"], type(exc).__name__)
 

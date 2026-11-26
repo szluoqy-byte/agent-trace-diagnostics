@@ -185,7 +185,8 @@ def provider():
             calls.append({"stage": stage, "request": request,
                           "headers": {key.lower(): value for key, value in self.headers.items()},
                           "authorization": self.headers.get_all("Authorization", [])})
-            response = {"id": "fixture", "object": "chat.completion", "created": 0, "model": "fixture", "choices": [{"index": 0, "message": {"role": "assistant", "content": json.dumps(value)}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}}
+            content = value if isinstance(value, str) else json.dumps(value)
+            response = {"id": "fixture", "object": "chat.completion", "created": 0, "model": "fixture", "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}}
             if override := state.get("override_response"):
                 override(response)
             body = json.dumps(response).encode()

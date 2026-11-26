@@ -1,0 +1,8 @@
+{
+  "repository": "https://github.com/Mr-Capybara/CHIEF",
+  "commit": "2b47170c41913c8bdea34397f7d52c65360dcef9",
+  "source_sha256": "8e2361ce5b1dc771b164066d3b4f9a2577275b5658d03d62e00b21feafb859b0",
+  "files": {
+    "pipeline.py": "cece49dc89fab7b9028accec437530ea7accb393b23ad2411532d3b03a0d6453"
+  }
+}

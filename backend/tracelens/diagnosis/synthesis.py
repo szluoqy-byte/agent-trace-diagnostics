@@ -231,7 +231,8 @@ def project_synthesis(report):
     primary = comparison["primary"]
     steps = {
         name: ((report if name == primary else run.get("report") or {}).get("attribution") or {}).get("critical_step")
-        for name, run in report.get("engine_runs", {}).items() if run["status"] == "completed"
+        for name, run in report.get("engine_runs", {}).items()
+        if name in {"trajdebug", "agentdebugx"} and run["status"] == "completed"
     }
     preferred, step = select_candidate(comparison, steps, synthesis.get("assessments") or {})
     clean = {key: value for key, value in synthesis.items() if key != "confidence"}

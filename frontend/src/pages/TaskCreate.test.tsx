@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 import {afterEach, expect, it, vi} from 'vitest'
-import {cleanup, fireEvent, render, screen, within} from '@testing-library/react'
+import {cleanup, fireEvent, render, screen, waitFor, within} from '@testing-library/react'
 import TaskCreate from './TaskCreate'
-import {api} from '../api'
+import {api,post} from '../api'
 import {WorkspaceContext} from '../workspace'
 
-vi.mock('../api', async importOriginal => ({...await importOriginal<typeof import('../api')>(), api:vi.fn()}))
+vi.mock('../api', async importOriginal => ({...await importOriginal<typeof import('../api')>(), api:vi.fn(), post:vi.fn()}))
 afterEach(() => {cleanup(); vi.clearAllMocks()})
 
 function renderUpload() {
@@ -59,4 +59,29 @@ it('identifies an unsupported file and lets the user exclude it before saving', 
   expect(save.disabled).toBe(true)
   fireEvent.click(screen.getByRole('button',{name:'排除文件 parallel.json'}))
   expect(save.disabled).toBe(false)
+})
+
+it('preselects low, describes all three depths, and saves the high preset as a CHIEF reference run', async () => {
+  vi.mocked(api).mockResolvedValue({id:'preview', files:[
+    {id:'0', name:'deepagent.json', formats:['deepagent'], count:1, errors:[]},
+  ], rows:[{id:'native', file_id:'0', outcome:'failed'}]})
+  vi.mocked(post).mockResolvedValue({task_id:'task', run_id:null})
+  renderUpload()
+
+  const group = within(screen.getByRole('group', {name:'诊断深度'}))
+  const [low, medium, high] = group.getAllByRole<HTMLInputElement>('radio')
+  expect([low.value, medium.value, high.value]).toEqual(['trajdebug', 'dual', 'dual_chief'])
+  expect(low.checked).toBe(true)
+  expect(group.getByRole('radio', {name:/^低/, description:/批量初筛/})).toBe(low)
+  expect(group.getByRole('radio', {name:/^中/, description:/交叉验证/})).toBe(medium)
+  expect(group.getByRole('radio', {name:/^高/, description:/供复核/})).toBe(high)
+
+  fireEvent.click(high)
+  expect(high.checked && !low.checked).toBe(true)
+  expect(screen.getByText('高 · 双路综合 + CHIEF')).toBeTruthy()
+  fireEvent.change(screen.getByLabelText('选择轨迹文件'), {target:{files:[new File(['{}'], 'deepagent.json')]}})
+  await screen.findByRole('status', {name:''})
+  await waitFor(() => expect((screen.getByRole('button',{name:'保存草稿'}) as HTMLButtonElement).disabled).toBe(false))
+  fireEvent.click(screen.getByRole('button',{name:'保存草稿'}))
+  expect(post).toHaveBeenCalledWith('/tasks', expect.objectContaining({diagnosis_mode:'dual_chief', start:false}))
 })

@@ -364,7 +364,7 @@ class TaskStore:
             if row['diagnosis'] == 'completed':
                 row['review_status'] = review_status(comparison_state, row['review_status'])
             row['feedback_applicable'] = (row['diagnosis']=='completed' and row['mode']=='live'
-                and row['schema_version']==2 and row['algorithm']!='AgentDebugX'
+                and row['schema_version']==2 and row['algorithm'] not in {'AgentDebugX', 'CHIEF'}
                 and row['outcome']=='failed' and row['critical_step'] is not None)
             row['attempts'] = row['attempts'] or 0
             if row['diagnosis'] == 'completed' and comparison_state == 'different':

@@ -335,6 +335,12 @@ def create_app(settings=None, *, frontend_dir=None):
                 raise HTTPException(404, 'AgentDebugX 原始报告不存在')
             return JSONResponse({"detection": report.get("engine_detection"), "diagnosis": report["official_output"]},
                                 headers={"Content-Disposition": f'attachment; filename="agentdebugx-{job_id}.json"'})
+        if stage == 'chief':
+            report = result if result.get('algorithm') == 'CHIEF' else (engines.get('chief') or {}).get('report')
+            if not report or not report.get('official_output'):
+                raise HTTPException(404, 'CHIEF 原始诊断报告不存在')
+            return JSONResponse(report["official_output"],
+                                headers={"Content-Disposition": f'attachment; filename="chief-{job_id}.json"'})
         run_id = (result.get("provenance", {}).get("run_id")
                   or (engines.get('trajdebug') or {}).get('provenance', {}).get('run_id', ''))
         names = {"stage_a": "input_stage_a.json", "stage_b": "input_stage_b.json", "phase1": "input_stage_c_phase1.json",

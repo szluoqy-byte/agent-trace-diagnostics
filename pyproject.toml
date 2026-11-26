@@ -16,7 +16,7 @@ test = ["pytest>=8,<10", "pytest-asyncio>=0.25,<2"]
 where = ["backend"]
 
 [tool.setuptools.package-data]
-tracelens = ["_vendor/trajdebug/**/*", "_vendor/trajdebug/*", "_vendor/agentdebugx/**/*", "_vendor/agentdebugx/*"]
+tracelens = ["_vendor/trajdebug/**/*", "_vendor/trajdebug/*", "_vendor/agentdebugx/**/*", "_vendor/agentdebugx/*", "_vendor/chief/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]

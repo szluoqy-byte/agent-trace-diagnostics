@@ -140,3 +140,29 @@ it('shows the waiver and keeps manual review available for aligned results', () 
   fireEvent.click(screen.getByRole('button',{name:'仍要人工复核'}))
   expect(review).toHaveBeenCalledTimes(1)
 })
+
+it('opens CHIEF reference details and jumps to a verified source in the trace', () => {
+  const source = {step:3, quote:'refund completed', matched:true, original_matched:true}
+  const chief: Report = {...report, algorithm:'CHIEF', triggers:[], instances:[], evidence:[source],
+    root_cause_agent:'billing', attribution:{...report.attribution!, critical_step:3, summary:'退款流程缺少审批'},
+    official_output:{dag_graph:{subtasks:[{id:'S1', name:'提交退款', step_range:'1-3', oracle:'审批已完成',
+      agents:[{agent:'billing'}], data_flow:[]}], subtask_edges:[], agent_edges:[]},
+      candidates:{candidate_error_steps:[{step_id:3, agent_in_step:['billing'], irrecoverability_issue:{reason:'不可撤销'},
+        data_issue:{explanation:''}}]}}}
+  const combined: Report = {...report, comparison:{state:'aligned',primary:'trajdebug'},
+    engine_runs:{trajdebug:{status:'completed'}, agentdebugx:{status:'completed'}, chief:{status:'completed',report:chief}}}
+  const jump = vi.fn()
+  render(<Inspector job={{...job,result:combined,review_status:'waived'}} report={combined} onJump={jump} onReview={vi.fn()}/>)
+  expect(screen.getByText('复核参考')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button',{name:'查看CHIEF详情'}))
+  expect(screen.getByText('根因 Agent · billing')).toBeTruthy()
+  expect(screen.queryByRole('tab',{name:'改进建议'})).toBeNull()
+  fireEvent.click(screen.getByRole('tab',{name:'证据与候选'}))
+  fireEvent.click(screen.getByRole('button',{name:'步骤 #3'}))
+  expect(jump).toHaveBeenLastCalledWith({step:3,quote:''})
+  fireEvent.click(screen.getByRole('button',{name:/定位原文/}))
+  expect(jump).toHaveBeenLastCalledWith(source)
+  expect(screen.getByRole('link',{name:'下载 CHIEF 原始报告'}).getAttribute('href')).toBe('/api/jobs/job/artifacts/chief')
+  fireEvent.click(screen.getByRole('tab',{name:'因果回溯'}))
+  expect(screen.getByText('S1 · 提交退款 · 步骤 1-3')).toBeTruthy()
+})
