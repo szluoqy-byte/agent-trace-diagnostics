@@ -10,6 +10,7 @@ import sys
 
 from .config import ROOT
 from .llm import ModelError
+from .model_concurrency import model_slot_environment
 from .trajdebug import UPSTREAM_COMMIT, UPSTREAM_URL, verify_upstream
 
 
@@ -99,7 +100,7 @@ async def generate_feedback(job, settings, feedback_id):
     namespace = hashlib.sha256(json.dumps([hashes, config, headers, UPSTREAM_COMMIT, 'official-feedback-v1', feedback_id], sort_keys=True).encode()).hexdigest()
     config['cache_path'] = str(settings.data_dir / 'trajdebug' / 'cache' / namespace / 'feedback.pkl')
     (directory / 'settings.json').write_text(json.dumps(config), encoding='utf-8')
-    env = {**os.environ, 'OPENAI_API_KEY': settings.api_key or 'EMPTY',
+    env = {**os.environ, **model_slot_environment(settings), 'OPENAI_API_KEY': settings.api_key or 'EMPTY',
            'TRACELENS_MODEL_HEADERS': json.dumps(headers, ensure_ascii=False),
            'PYTHONIOENCODING': 'utf-8',
            'PYTHONPATH': str(ROOT / 'backend') + os.pathsep + os.environ.get('PYTHONPATH', '')}

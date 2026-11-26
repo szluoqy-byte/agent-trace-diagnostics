@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import Field, SecretStr, field_validator
 
 from .model_headers import merge_headers
+from .model_concurrency import ModelSlots
 from .models import Contract
 
 MODEL_SETTINGS_PATH = '/api/model-configurations'
@@ -80,12 +81,13 @@ class ModelConnectionUpdate(ModelConnectionInput):
     make_default: bool = False
 
 
-async def test_connection(base_url, model, api_key, headers=None):
+async def test_connection(base_url, model, api_key, headers, settings):
     url = base_url.rstrip('/')
     if not url.endswith('/chat/completions'):
         url += '/chat/completions'
     try:
         async with httpx.AsyncClient(timeout=25, trust_env=False, follow_redirects=False) as client:
+            ModelSlots.for_settings(settings).attach_async(client)
             request_headers = merge_headers({'Authorization': 'Bearer ' + (api_key or 'EMPTY'),
                                              'Content-Type': 'application/json'}, headers)
             response = await client.post(url, headers=request_headers, json={
@@ -165,16 +167,16 @@ def attach_model_settings_routes(app, connections, settings):
 
     @router.post('/test')
     async def test_new_configuration(body: ModelConnectionInput):
-        return await test_connection(body.base_url, body.model, body.api_key.get_secret_value(), body.headers)
+        return await test_connection(body.base_url, body.model, body.api_key.get_secret_value(), body.headers, settings)
 
     @router.post('/{connection_id}/test')
     async def test_saved_configuration(connection_id: str):
         if connection_id == ENVIRONMENT_ID and settings.ready:
-            return await test_connection(settings.base_url, settings.model, settings.api_key, settings.headers)
+            return await test_connection(settings.base_url, settings.model, settings.api_key, settings.headers, settings)
         connection = connections.get(connection_id)
         if connection is None:
             raise HTTPException(404, '模型配置不存在')
-        return await test_connection(connection['base_url'], connection['model'], connection['api_key'], connection['headers'])
+        return await test_connection(connection['base_url'], connection['model'], connection['api_key'], connection['headers'], settings)
 
     @router.post('/{connection_id}/default')
     def set_default_configuration(connection_id: str):

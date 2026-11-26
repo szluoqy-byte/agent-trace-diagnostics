@@ -1,19 +1,26 @@
 from copy import deepcopy
 import asyncio
 import json
+from threading import Lock
 from time import monotonic, sleep
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 
 from test_trajdebug import pipeline_trace, provider
+from test_feedback import provider as feedback_provider, seed_job
 from tracelens.config import Settings
 from tracelens.diagnosis.agentdebugx import diagnose_agentdebugx, locate_engine_quote, to_agentdebugx
 from tracelens.diagnosis.agentdebugx_prompts import ZH_PROFILE, EN_PROFILE
 from tracelens.diagnosis.compare import diagnose_dual
-from tracelens.diagnosis.synthesis import SynthesisAnswer, ground_answer, project_synthesis, synthesize
+from tracelens.diagnosis.synthesis import SynthesisAnswer, ground_answer, parse_synthesis_answer, project_synthesis, synthesize
 from tracelens.engine import diagnose
 from tracelens.main import create_app
+from tracelens.feedback import generate_feedback
+from tracelens.model_concurrency import ModelSlots
+from tracelens.model_settings_api import test_connection as probe_model
+from tracelens.store import Store
 
 
 def agentdebugx_answer(system):
@@ -54,6 +61,109 @@ def test_synthesis_cannot_select_candidate_with_unverified_evidence():
     assert "confidence" not in result
     assert result["assessments"]["agentdebugx"]["support"] == "insufficient"
     assert result["evidence"] == [evidence["E1"]]
+
+
+def test_synthesis_accepts_fenced_json_and_normalizes_supported_labels():
+    response = {"summary":"分析结论", "evidence_ids":None,
+                "assessments":{"trajdebug":{"support":" 高 ", "reason":"有原文"},
+                               "agentdebugx":{"support":"MEDIUM", "reason":"依据较弱"}}}
+    answer = parse_synthesis_answer("评估如下：\n```json\n" + json.dumps(response) + "\n```", aligned=False)
+    assert answer.assessments.trajdebug.support == "high"
+    assert answer.assessments.agentdebugx.support == "medium"
+    assert answer.evidence_ids == []
+    with pytest.raises(ValueError):
+        parse_synthesis_answer('{"summary":"output one"}\n{"summary":"output two"}', aligned=True)
+    with pytest.raises(ValueError):
+        parse_synthesis_answer('{"summary":"missing assessments","evidence_ids":[]}', aligned=False)
+
+
+@pytest.mark.parametrize(("failure","recover"), [
+    ("format", True), ("length", True), ("empty", True), ("format", False), ("filtered", False),
+])
+async def test_synthesis_format_retry_is_bounded_and_accounts_for_usage(tmp_path, provider, failure, recover):
+    endpoint, requests, state = provider
+    outcomes = {"format": ("stop", '{"summary":"Missing assessments"}'),
+                "length": ("length", '{"summary":"Truncated'),
+                "empty": ("stop", None), "filtered": ("content_filter", None)}
+
+    def override(response):
+        if len(requests) == 1 or not recover:
+            reason, text = outcomes[failure]
+            response["choices"][0]["finish_reason"] = reason
+            response["choices"][0]["message"]["content"] = text
+
+    state.update(extra_request_reply=dual_answer, override_response=override)
+    settings = Settings(data_dir=tmp_path, base_url=endpoint, model="fixture", max_tokens=6000,
+                        prompt_language="en", max_retries=0)
+    reports = {"trajdebug": {"attribution":{"critical_step":1}},
+               "agentdebugx": {"attribution":{"critical_step":3}}}
+    result = await synthesize(pipeline_trace(), reports, dict.fromkeys(reports, []), settings,
+                              {"state":"different", "primary":"trajdebug"})
+    expected = 1 if failure == "filtered" else 2
+    assert result["calls"] == result["requests"] == len(requests) == expected
+    assert result["prompt_tokens"] == 10 * expected and result["completion_tokens"] == 5 * expected
+    if recover:
+        assert result["status"] == "completed" and result["critical_step"] == 3
+        latest = requests[-1]["request"]
+        assert latest["max_tokens"] == (6000 if failure == "length" else 4096)
+        assert "did not pass format validation" in latest["messages"][0]["content"]
+    else:
+        assert result["status"] == "failed" and result["failure"] == failure
+
+
+async def test_all_online_model_paths_share_the_workspace_limit(tmp_path, provider, feedback_provider):
+    endpoint, calls, state = provider
+    feedback_url, feedback_calls, feedback_state = feedback_provider
+    lock = Lock()
+    active = peak = 0
+
+    def observe():
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        sleep(0.08)
+        with lock:
+            active -= 1
+
+    state.update(critical_step=1, extra_request_reply=dual_answer, observe_request=observe)
+    feedback_state["observe_request"] = observe
+    settings = Settings(data_dir=tmp_path, base_url=endpoint, model="fixture", llm_concurrency=8,
+                        max_retries=0, timeout=5)
+    feedback_settings = Settings(data_dir=tmp_path, base_url=feedback_url, model="feedback-fixture",
+                                 llm_concurrency=8, max_retries=0, timeout=5)
+    store = Store(tmp_path)
+    store.save_runtime_settings({"llm_concurrency": 1})
+    job, _ = seed_job(store, feedback_settings)
+
+    async def progress(*_):
+        pass
+
+    report, feedback, probe = await asyncio.wait_for(asyncio.gather(
+        diagnose_dual(pipeline_trace(), settings, progress, diagnose),
+        generate_feedback(job, feedback_settings, uuid4().hex),
+        probe_model(endpoint, settings.model, settings.api_key, {}, settings),
+    ), timeout=20)
+    assert {run["status"] for run in report["engine_runs"].values()} == {"completed"}
+    assert report["synthesis"]["status"] == "completed" and feedback["usage"]["requests"] == 1 and probe["ok"]
+    assert len(feedback_calls) == 1 and len(calls) > 3
+    assert peak == 1
+
+
+def test_workspace_model_limit_can_shrink_below_occupied_slots(tmp_path):
+    store = Store(tmp_path)
+    slots = ModelSlots(tmp_path, 3)
+    leases = [slots.try_acquire() for _ in range(3)]
+    assert all(leases) and slots.try_acquire() is None
+    store.save_runtime_settings({"llm_concurrency": 1})
+    leases[0].release()
+    assert slots.try_acquire() is None
+    leases[1].release()
+    assert slots.try_acquire() is None
+    leases[2].release()
+    lease = slots.try_acquire()
+    assert lease
+    lease.release()
 
 
 def test_aligned_step_is_final_and_disagreement_ties_are_unresolved():
@@ -142,6 +252,7 @@ async def test_upstream_agentdebugx_preserves_grounding_and_language(tmp_path, l
         pass
 
     report = await diagnose_agentdebugx(trace, settings, progress)
+    assert report["duration_seconds"] >= 0
     assert len(requests) >= 2 and len(requests) == report["usage"]["requests"]
     assert all(("仅返回" in call["request"]["messages"][0]["content"]) == (language == "zh") for call in requests)
     assert all((("任务目标：" in call["request"]["messages"][-1]["content"]) == (language == "zh")) for call in requests)
@@ -279,6 +390,7 @@ def test_dual_task_reuses_saved_model_and_keeps_native_export(tmp_path, provider
         assert job["result"]["comparison"]["primary"] == "trajdebug"
         assert job["result"]["engine_runs"]["agentdebugx"]["report"]["attribution"]["critical_step"] == 1
         synthesis = job["result"]["synthesis"]
+        assert synthesis["duration_seconds"] >= 0 and synthesis["requests"] == 1
         assert synthesis["status"] == "completed" and synthesis["critical_step"] == 1
         assert synthesis["preferred_engine"] == "trajdebug"
         assert "confidence" not in synthesis

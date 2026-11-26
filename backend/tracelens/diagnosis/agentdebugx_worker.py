@@ -9,6 +9,7 @@ import sys
 import httpx
 
 from ..model_headers import merge_headers, parse_headers
+from ..model_concurrency import ModelSlots
 from ..prompt_language import normalize_prompt_language
 from .agentdebugx_prompts import render_diagnostic_prompt
 from .agentdebugx_source import load_vendored_agentdebugx
@@ -33,6 +34,7 @@ class WorkbenchModel(OpenAICompatClient):
             default_max_tokens=min(8192, settings["max_tokens"]),
         )
         self.configured_headers = parse_headers(os.environ.get("TRACELENS_MODEL_HEADERS"))
+        self.slots = ModelSlots.from_environment()
         self.language = normalize_prompt_language(settings["prompt_language"])
         self.max_tokens = settings["max_tokens"]
         self.calls = 0
@@ -71,7 +73,8 @@ class WorkbenchModel(OpenAICompatClient):
 
     def _post(self, url, headers, body, timeout):
         headers = merge_headers(headers, self.configured_headers)
-        return super()._post(url, headers, body, timeout)
+        with self.slots.request() if self.slots else contextlib.nullcontext():
+            return super()._post(url, headers, body, timeout)
 
 
 def run(payload):

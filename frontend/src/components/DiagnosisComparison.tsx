@@ -12,6 +12,13 @@ const synthesisStatusLabels = {
   failed: '综合分析失败，可查看两路原始结论。',
 }
 const supportLabels: Record<EvidenceSupport, string> = {high:'高', medium:'中', low:'低', insufficient:'证据不足'}
+const synthesisFailureLabels = {
+  connection: '模型连接失败或超时',
+  format: '模型输出未通过 JSON 格式校验',
+  empty: '模型未返回评估内容',
+  length: '评估输出达到 token 上限并被截断',
+  filtered: '模型拒绝返回评估内容或服务触发了内容过滤',
+}
 
 export function AgentDebugXDetails({report, jobId, onJump, section = 'all'}: {
   report: Report; jobId?: string; onJump: (evidence: Evidence) => void;
@@ -55,8 +62,7 @@ export default function DiagnosisComparison({report, onJump, onEngine, reviewWai
   const finalStep = aligned ? report.attribution?.critical_step
     : synthesis?.status === 'completed' ? synthesis.critical_step : null
   const synthesisError = synthesis?.status === 'failed' && synthesis.failure
-    ? synthesis.failure === 'http' ? `模型服务返回 HTTP ${synthesis.http_status}`
-      : synthesis.failure === 'format' ? '模型未返回可解析的评估结果' : '模型连接失败或超时'
+    ? synthesis.failure === 'http' ? `模型服务返回 HTTP ${synthesis.http_status}` : synthesisFailureLabels[synthesis.failure]
     : null
   return <div className="diagnosis-comparison">
     <div className="section-title"><h2>综合结论</h2>{reviewWaived ? <span className="status-tag green">免复核</span> : null}</div>

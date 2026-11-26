@@ -6,12 +6,14 @@ from typing import Literal
 
 import httpx
 from openai import APIError, APIStatusError, AsyncOpenAI
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ..model_headers import merge_headers
+from ..model_concurrency import ModelSlots
 from ..prompt_language import normalize_prompt_language
 
 SUPPORT_LABELS = {"high": "高", "medium": "中", "low": "低", "insufficient": "证据不足"}
+SUPPORT_ALIASES = {label: key for key, label in SUPPORT_LABELS.items()}
 SUPPORT_RANK = {"high": 3, "medium": 2, "low": 1}
 
 PROMPTS = {
@@ -35,16 +37,50 @@ PROMPTS = {
     ),
 }
 OUTPUT_FORMAT = (
-    '{"summary":"...",'
-    ' "assessments":{"trajdebug":{"support":"high|medium|low|insufficient","reason":"..."},'
-    ' "agentdebugx":{"support":"high|medium|low|insufficient","reason":"..."}}, "evidence_ids":["E1"]}'
+    '{"summary":"...","assessments":{"trajdebug":{"support":"medium","reason":"..."},'
+    '"agentdebugx":{"support":"insufficient","reason":"..."}},"evidence_ids":[]}'
 )
-ALIGNED_OUTPUT_FORMAT = '{"summary":"...", "evidence_ids":["E1"]}'
+ALIGNED_OUTPUT_FORMAT = '{"summary":"...","evidence_ids":[]}'
+FORMAT_RULES = {
+    "zh": (
+        "只返回一个合法 JSON 对象。禁止 Markdown 代码块、额外文字、尾逗号和其他顶层结构。保留示例中的英文键名。"
+        "summary 用两三句概括结论。evidence_ids 是原文证据 ID 的字符串数组，最多 8 条，证据不足时用 []。"
+    ),
+    "en": (
+        "Return one valid JSON object only. No Markdown, surrounding prose, trailing commas, or other top-level values. "
+        "Use the exact keys in the example. Keep summary to two or three sentences. "
+        "evidence_ids is an array of up to 8 original evidence ID strings. Use [] when evidence is unavailable."
+    ),
+}
+ASSESSMENT_RULES = {
+    "zh": (
+        "assessments 必须同时包含 trajdebug 和 agentdebugx。每项 support 只能填 high、medium、low 或 insufficient "
+        "中的一个，reason 为一句话。无法定位或证据不足时也要保留该项，support 填 insufficient。"
+    ),
+    "en": (
+        "assessments must contain both trajdebug and agentdebugx. Each support must be exactly one of high, medium, "
+        "low or insufficient, with a one-sentence reason. Keep the entry and use insufficient when evidence is unavailable."
+    ),
+}
+RETRY_RULES = {
+    "zh": "上一次评估未通过格式校验。请从轨迹材料重新作答，严格按示例返回完整 JSON。缩短结论和理由。",
+    "en": "The previous evaluation did not pass format validation. Answer again from the same evidence. Return complete JSON and shorten the summary and reasons.",
+}
 
 
 class Assessment(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
     support: Literal["high", "medium", "low", "insufficient"]
     reason: str = Field(min_length=1, max_length=1000)
+
+    @field_validator("support", mode="before")
+    @classmethod
+    def normalize_support(cls, value):
+        if isinstance(value, str):
+            label = value.strip().lower()
+            return SUPPORT_ALIASES.get(label, label)
+        return value
 
 
 class EngineAssessments(BaseModel):
@@ -53,9 +89,34 @@ class EngineAssessments(BaseModel):
 
 
 class SynthesisAnswer(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
     summary: str = Field(min_length=1, max_length=2000)
     assessments: EngineAssessments | None = None
-    evidence_ids: list[str] = Field(max_length=8)
+    evidence_ids: list[str] = Field(default_factory=list)
+
+    @field_validator("evidence_ids", mode="before")
+    @classmethod
+    def empty_evidence(cls, value):
+        return [] if value is None else value
+
+
+def parse_synthesis_answer(content, *, aligned):
+    source = content.strip().lstrip("\ufeff").strip()
+    try:
+        payload = json.loads(source)
+    except json.JSONDecodeError:
+        # Some compatible servers wrap an otherwise valid answer in a code fence or prose.
+        start = source.find("{")
+        if start < 0:
+            raise
+        payload, end = json.JSONDecoder().raw_decode(source, start)
+        if "{" in source[end:]:
+            raise ValueError("Multiple objects in the synthesis response")
+    answer = SynthesisAnswer.model_validate(payload)
+    if not aligned and answer.assessments is None:
+        raise ValueError("Missing candidate assessments")
+    return answer
 
 
 def process_evidence(engine, report, step):
@@ -149,7 +210,7 @@ def select_candidate(comparison, steps, assessments):
 
 def ground_answer(answer, candidates, evidence, comparison):
     result = answer.model_dump(exclude={"evidence_ids"}, exclude_none=True)
-    references = [evidence[key] for key in dict.fromkeys(answer.evidence_ids) if key in evidence]
+    references = [evidence[key] for key in dict.fromkeys(answer.evidence_ids) if key in evidence][:8]
     assessments = result.get("assessments") or {}
     for engine, assessment in assessments.items():
         if not any(ref["engine"] == engine and ref["step"] == candidates[engine]["critical_step"] for ref in references):
@@ -201,6 +262,10 @@ async def synthesize(trace, reports, evidence_by_engine, settings, comparison):
     aligned = comparison["state"] == "aligned"
     output_format = ALIGNED_OUTPUT_FORMAT if aligned else OUTPUT_FORMAT
     language = normalize_prompt_language(settings.prompt_language)
+    rules = [PROMPTS[language], FORMAT_RULES[language]]
+    if not aligned:
+        rules.append(ASSESSMENT_RULES[language])
+    system_prompt = "\n".join([*rules, output_format])
     base_url = settings.base_url.strip().rstrip("/").removesuffix("/chat/completions").rstrip("/")
     headers = merge_headers({"Authorization": f"Bearer {settings.api_key or 'EMPTY'}"}, settings.headers)
     trust_env = os.getenv("DETECTOR_HTTP_TRUST_ENV", "").strip().lower() in {"1", "true", "yes", "on"}
@@ -209,28 +274,62 @@ async def synthesize(trace, reports, evidence_by_engine, settings, comparison):
         "evidence": {key: {field: ref[field] for field in ("engine", "step", "quote", "role")}
                      for key, ref in evidence.items()},
     }
+    requests = 0
+    calls = 0
+    tokens = {}
+
+    async def count_request(_request):
+        nonlocal requests
+        requests += 1
+
+    def failed(kind, **details):
+        return {"status": "failed", "failure": kind, "model": settings.model, "requests": requests,
+                "calls": calls, **tokens, **details}
+
     try:
+        transport = httpx.AsyncClient(trust_env=trust_env, timeout=settings.timeout, follow_redirects=True,
+                                      event_hooks={"request": [count_request]})
+        ModelSlots.for_settings(settings).attach_async(transport)
         async with AsyncOpenAI(
             base_url=base_url, api_key=settings.api_key or "EMPTY", default_headers=headers,
             timeout=settings.timeout, max_retries=settings.max_retries,
-            http_client=httpx.AsyncClient(trust_env=trust_env, timeout=settings.timeout, follow_redirects=True),
+            http_client=transport,
         ) as client:
-            response = await client.chat.completions.create(
-                model=settings.model, max_tokens=min(settings.max_tokens, 2048),
-                response_format={"type": "json_object"},
-                messages=[{"role": "system", "content": f"{PROMPTS[language]}\n{output_format}"},
-                          {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
-            )
-        answer = SynthesisAnswer.model_validate_json(response.choices[0].message.content or "" if response.choices else "")
-        if not aligned and answer.assessments is None:
-            return {"status": "failed", "failure": "format", "model": settings.model}
+            prompt = system_prompt
+            budget = min(settings.max_tokens, 4096)
+            user_message = json.dumps(payload, ensure_ascii=False)
+            for _ in range(2):
+                calls += 1
+                response = await client.chat.completions.create(
+                    model=settings.model, max_tokens=budget,
+                    response_format={"type": "json_object"},
+                    messages=[{"role": "system", "content": prompt}, {"role": "user", "content": user_message}],
+                )
+                if response.usage:
+                    for field in ("prompt_tokens", "completion_tokens"):
+                        tokens[field] = tokens.get(field, 0) + (getattr(response.usage, field) or 0)
+                reason = "empty"
+                if response.choices:
+                    choice = response.choices[0]
+                    if choice.finish_reason == "content_filter" or getattr(choice.message, "refusal", None):
+                        return failed("filtered")
+                    content = choice.message.content
+                    if isinstance(content, str) and content.strip():
+                        try:
+                            answer = parse_synthesis_answer(content, aligned=aligned)
+                        except ValueError:
+                            reason = "format"
+                        else:
+                            return {"status": "completed", **ground_answer(answer, candidates, evidence, comparison),
+                                    "model": settings.model, "calls": calls, "requests": requests, **tokens}
+                    if choice.finish_reason == "length":
+                        reason = "length"
+                        budget = min(settings.max_tokens, 8192)
+                prompt = f"{system_prompt}\n{RETRY_RULES[language]}"
+            return failed(reason)
     except APIStatusError as exc:
-        return {"status": "failed", "failure": "http", "http_status": exc.status_code, "model": settings.model}
+        return failed("http", http_status=exc.status_code)
     except (APIError, httpx.HTTPError):
-        return {"status": "failed", "failure": "connection", "model": settings.model}
+        return failed("connection")
     except ValueError:
-        return {"status": "failed", "failure": "format", "model": settings.model}
-    return {"status": "completed", **ground_answer(answer, candidates, evidence, comparison),
-            "model": settings.model, "calls": 1,
-            "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
-            "completion_tokens": response.usage.completion_tokens if response.usage else 0}
+        return failed("format")

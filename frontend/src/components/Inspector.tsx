@@ -116,7 +116,6 @@ export default function Inspector({job, report: combined, onJump, onReview, onFe
       {!agentDebugX ? <div className="diagnosis-stats"><button onClick={() => setTab('instances')}><strong>{instances.length}</strong><span>错误实例</span></button><button onClick={() => {setInstanceFilter('responsible');setTab('instances')}}><strong>{instances.filter(i => i.terminal_relevant).length}</strong><span>影响最终结果</span></button><button onClick={() => setTab('evidence')}><strong>{report?.triggers.length ?? 0}</strong><span>触发证据</span></button></div> : null}
       {showAttribution && !agentDebugX ? <><h3 className="subheading">复核提示</h3><p className="muted">先核对影响最终结果实例的起点与修复证据，再确认或修改诊断结论。</p>
       {ai.fix_suggestions.length ? <ol className="suggestions">{ai.fix_suggestions.map((s,i) => <li key={i}>{s}</li>)}</ol> : <button className="secondary small" onClick={() => setTab('feedback')}>生成或查看改进建议</button>}</> : null}
-      {report?.usage ? <div className="run-usage"><span>{report.usage.requests} 次{agentDebugX ? '模型调用' : '模型请求'}</span><span>{((report.usage.prompt_tokens + report.usage.completion_tokens) / 1000).toFixed(1)}k tokens</span>{report.usage.cache_hits ? <span>{report.usage.cache_hits} 次缓存命中</span> : null}</div> : null}
     </>}
     </div>{reviewButton}</>
   return <section className="panel inspector">

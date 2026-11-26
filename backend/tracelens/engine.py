@@ -6,12 +6,15 @@ import os
 import sys
 import uuid
 from dataclasses import asdict
+from time import monotonic
 from .config import ROOT
 from .llm import ModelError
+from .model_concurrency import model_slot_environment
 from .trajdebug import ENGINE_VERSION, UPSTREAM_COMMIT, present_report, to_unified, verify_upstream
 
 
 async def diagnose(trace, settings, progress, *, fresh_cache=False):
+    started = monotonic()
     verify_upstream()
     if not settings.ready:
         raise ModelError("请配置模型接口后重启服务")
@@ -33,7 +36,7 @@ async def diagnose(trace, settings, progress, *, fresh_cache=False):
     namespace = hashlib.sha256(json.dumps(cache_key, sort_keys=True).encode()).hexdigest()
     config["cache_dir"] = str(settings.data_dir / "trajdebug" / "cache" / namespace)
     (directory / "settings.json").write_text(json.dumps(config), encoding="utf-8")
-    env = {**os.environ, "OPENAI_API_KEY": settings.api_key or "EMPTY",
+    env = {**os.environ, **model_slot_environment(settings), "OPENAI_API_KEY": settings.api_key or "EMPTY",
            "TRACELENS_MODEL_HEADERS": json.dumps(headers, ensure_ascii=False),
            "PYTHONIOENCODING": "utf-8",
            "PYTHONPATH": str(ROOT / "backend") + os.pathsep + os.environ.get("PYTHONPATH", "")}
@@ -55,6 +58,7 @@ async def diagnose(trace, settings, progress, *, fresh_cache=False):
         report = present_report(trace, payload["outputs"], model=settings.model, usage=payload["usage"],
                                 run_id=run_id, stage_metrics=payload["stage_metrics"])
         report["execution"] = {key: config[key] for key in ("max_tokens", "llm_concurrency", "max_retries", "timeout", "cluster_json_mode")}
+        report["duration_seconds"] = round(monotonic() - started, 2)
         report["unified_input_sha256"] = hashlib.sha256((directory / "input.json").read_bytes()).hexdigest()
         await progress("诊断完成", 100, report)
         return report

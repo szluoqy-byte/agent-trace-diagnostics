@@ -226,3 +226,11 @@
 .engine-candidate strong{font-size:15px}
 .diagnosis-comparison .text-button,.engine-evidence .text-button{justify-self:start}
 .engine-evidence ul{padding-inline-start:20px}
+
+.diagnosis-usage{margin-bottom:15px;border:1px solid var(--border);border-radius:6px;background:#fff}
+.diagnosis-usage>summary{padding:10px 14px;color:#495770;font-size:13px;font-weight:600;cursor:pointer}
+.diagnosis-usage table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+.diagnosis-usage th,.diagnosis-usage td{padding:8px 12px;border-top:1px solid var(--border);text-align:right}
+.diagnosis-usage th:first-child{text-align:left}
+.diagnosis-usage thead th{font-size:12px;font-weight:500;color:var(--muted)}
+@media(max-width:480px){.diagnosis-usage th,.diagnosis-usage td{padding:8px 6px}}

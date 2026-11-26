@@ -9,6 +9,7 @@ import threading
 import time
 from .trajdebug import STAGES, VENDOR, verify_upstream
 from .model_headers import apply_headers, parse_headers
+from .model_concurrency import ModelSlots
 from .prompt_language import localize_model
 
 
@@ -29,6 +30,8 @@ class Usage:
 
     def attach(self, model, config):
         model.client = model.client.with_options(timeout=config["timeout"], max_retries=config["max_retries"])
+        if slots := ModelSlots.from_environment():
+            slots.attach(model.http_client)
         def request(_request):
             self.add(requests=1)
         def response(reply):

@@ -49,7 +49,8 @@ def job_settings(store, settings, job_id):
 def run_settings(store, settings, config):
     if not config or 'base_url' not in config:
         return settings
-    frozen = {k: config[k] for k in FIELDS if k in config}
+    # The shared slot limit is a live workspace policy, including for old rounds.
+    frozen = {k: config[k] for k in FIELDS if k in config and k != 'llm_concurrency'}
     if connection_id := config.get('model_connection_id'):
         connection = store.model_connections.get(connection_id)
         if connection and connection['base_url'] == frozen['base_url'] and connection['model'] == frozen.get('model'):

@@ -139,6 +139,8 @@ def provider():
             if self.path != "/v1/chat/completions":
                 self.send_error(404)
                 return
+            if observe := state.get("observe_request"):
+                observe()
             request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             messages = request["messages"]
             system = messages[0]["content"]
@@ -184,6 +186,8 @@ def provider():
                           "headers": {key.lower(): value for key, value in self.headers.items()},
                           "authorization": self.headers.get_all("Authorization", [])})
             response = {"id": "fixture", "object": "chat.completion", "created": 0, "model": "fixture", "choices": [{"index": 0, "message": {"role": "assistant", "content": json.dumps(value)}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}}
+            if override := state.get("override_response"):
+                override(response)
             body = json.dumps(response).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -216,6 +220,7 @@ async def test_real_official_five_stages_transport_artifacts_and_cache(tmp_path,
     async def progress(stage, value, partial):
         events.append((stage, value))
     report = await diagnose(trace, settings, progress)
+    assert report["duration_seconds"] >= 0
     assert {c["stage"] for c in calls} == {"compression", "detection", "clustering", "state", "attribution"}
     assert all(c["headers"].get("x-tenant") == "fixture" for c in calls)
     assert len(calls) == 7

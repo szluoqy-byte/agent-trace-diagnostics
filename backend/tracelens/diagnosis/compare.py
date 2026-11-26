@@ -55,11 +55,14 @@ async def diagnose_dual(trace, settings, progress, run_standard, *, fresh_cache=
             latest[name].update(stage=stage, progress=percent)
             if provenance := report.get("provenance"):
                 latest[name]["provenance"] = provenance
+            if "usage" in report:
+                latest[name]["usage"] = report["usage"]
             await publish()
 
         try:
             report = await run(trace, settings, update, **options)
             latest[name].update(status="completed", report=report, progress=100)
+            latest[name].pop("usage", None)
         except Exception as exc:
             logger.warning("Diagnosis engine %s failed (%s)", name, type(exc).__name__)
             error = str(exc) if isinstance(exc, ModelError) else FAILURE
@@ -90,6 +93,7 @@ async def diagnose_dual(trace, settings, progress, run_standard, *, fresh_cache=
             await progress("综合分析", 99, {"engine_runs": {
                 name: {"status": latest[name]["status"]} for name in names
             }, "synthesis": {"status": "running"}})
+        started = monotonic()
         try:
             result["synthesis"] = await synthesize(
                 trace, reports, {name: root_evidence(report) for name, report in reports.items()}, settings, result["comparison"],
@@ -97,4 +101,6 @@ async def diagnose_dual(trace, settings, progress, run_standard, *, fresh_cache=
         except Exception as exc:
             logger.warning("Diagnosis synthesis failed (%s)", type(exc).__name__)
             result["synthesis"] = {"status": "failed"}
+        if trace.outcome == "failed":
+            result["synthesis"]["duration_seconds"] = round(monotonic() - started, 2)
     return result

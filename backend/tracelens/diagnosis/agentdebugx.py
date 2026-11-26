@@ -7,11 +7,13 @@ import os
 import re
 import sys
 from pathlib import Path
+from time import monotonic
 
 from ..citation_views import locate_quote
 from ..config import ROOT
 from ..deepagent import obj, span_display_layout, span_kind
 from ..llm import ModelError
+from ..model_concurrency import model_slot_environment
 from ..trajdebug import to_unified
 from . import AGENTDEBUGX_COMMIT, AGENTDEBUGX_URL, AGENTDEBUGX_VERSION
 from .agentdebugx_prompts import prompt_profile
@@ -167,6 +169,7 @@ def present_agentdebugx(trace, request, output, model, language):
 
 
 async def diagnose_agentdebugx(trace, settings, progress):
+    started = monotonic()
     if not settings.ready:
         raise ModelError("当前分析的模型连接不可用，请检查系统设置后重新分析。")
     verify_agentdebugx()
@@ -176,7 +179,7 @@ async def diagnose_agentdebugx(trace, settings, progress):
         "settings": {key: getattr(settings, key) for key in
                      ("model", "base_url", "prompt_language", "timeout", "max_retries", "max_tokens")},
     }
-    env = {**os.environ, "OPENAI_API_KEY": settings.api_key or "EMPTY",
+    env = {**os.environ, **model_slot_environment(settings), "OPENAI_API_KEY": settings.api_key or "EMPTY",
            "TRACELENS_MODEL_HEADERS": json.dumps(settings.headers),
            "PYTHONIOENCODING": "utf-8",
            "PYTHONPATH": str(Path(ROOT) / "backend") + os.pathsep + os.environ.get("PYTHONPATH", "")}
@@ -207,5 +210,6 @@ async def diagnose_agentdebugx(trace, settings, progress):
             raise ModelError(f"AgentDebugX 模型请求失败（HTTP {status}）。{hint}")
         raise ModelError(MODEL_FAILURES.get(failure["kind"], WORKER_FAILURE))
     report = present_agentdebugx(trace, request, output, settings.model, settings.prompt_language)
+    report["duration_seconds"] = round(monotonic() - started, 2)
     await progress("AgentDebugX 完成", 100, report)
     return report

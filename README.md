@@ -104,7 +104,7 @@ Pop-Location
 | OPENAI_API_KEY | 云端密钥；无鉴权本地服务可留空 | 空 |
 | DIAG_MODEL | 环境配置的模型标识 | 空，可在系统设置添加模型 |
 | DIAG_CONCURRENCY | 同时诊断的轨迹数 | 2 |
-| DIAG_LLM_CONCURRENCY | 每阶段步骤分析并发 | 8 |
+| DIAG_LLM_CONCURRENCY | 工作台共享的模型请求并发 | 8 |
 | DIAG_MAX_TOKENS | 模型输出上限 | 32768 |
 | DIAG_CLUSTER_JSON_MODE | 聚类阶段强制 JSON（默认关闭以兼容 DeepSeek） | false |
 | DIAG_TIMEOUT | 模型请求超时秒数 | 120 |

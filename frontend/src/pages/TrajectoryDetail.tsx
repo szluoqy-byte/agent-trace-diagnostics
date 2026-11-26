@@ -8,6 +8,7 @@ import Citation from '../components/Citation'
 import {patternTaskPath} from '../patterns'
 import type {PatternMembers} from '../patterns'
 import Inspector from '../components/Inspector'
+import DiagnosisUsage from '../components/DiagnosisUsage'
 import ExecutionTrace from '../components/ExecutionTrace'
 import {Badge,diagnosisStatus,filterQuery,formatLabel,taskPath,tracePath,useResource,useWorkspace} from '../workspace'
 import type {ActionResult,AnalysisTask,TraceDetail} from '../workspace'
@@ -73,7 +74,7 @@ export default function TrajectoryDetail({id,traceId,params}:{id:string;traceId:
   {blocked?<p className="ws-warning">该轨迹缺少业务结果。请重新上传并填写业务结果。</p>:null}
   {job?.status==='queued'||job?.status==='running'?<progress className="diagnosis-progress" max={100} value={job.progress} aria-label="诊断进度"/>:null}
   {data.attempts.length>1?<details className="ws-attempts"><summary>诊断请求记录 · {data.attempts.length} 次尝试</summary>{data.attempts.map(a=><div key={a.id}><span>第 {a.attempt} 次 · {dateLabel(a.created_at)} · {diagnosisStatus[a.status]}</span>{a.error?<small>{uiText(a.error)}</small>:null}</div>)}</details>:null}
-  {report?.stage_metrics?.length?<details className="stage-details"><summary>诊断阶段与模型用量</summary><div className="stage-metrics">{report.stage_metrics.map(m=><div key={m.id}><span>{m.name}</span><span>{m.requests} 次请求</span><span>{m.seconds}s</span></div>)}</div></details>:null}
+  {report?<DiagnosisUsage report={report}/>:null}
   <div className="ws-diagnostic-grid"><ExecutionTrace key={`${runId}-${traceId}`} trace={trace} criticalStep={critical} selection={selection}/>
     <Inspector draft={draft} key={`${runId}-${traceId}-${job?.id??'pending'}`} job={inspectorJob} report={report} onJump={e=>setSelection({...e})} onReview={()=>setDialog('review')} onFeedback={job&&!readonly?feedback:undefined}
       busy={busy} onRegenerate={canRegenerate?regenerate:undefined} onRegenerateFeedback={job&&!readonly?regenerateFeedback:undefined}/></div>

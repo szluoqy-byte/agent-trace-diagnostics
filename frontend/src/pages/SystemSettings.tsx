@@ -125,14 +125,14 @@ function RuntimeSettingsForm({value, onChange, error, onError}: {value: RuntimeS
 
   return <section className="ws-surface ws-config model-runtime" aria-labelledby="runtime-settings-heading">
     <div className="model-settings-heading">
-      <div><h2 id="runtime-settings-heading">运行参数</h2><p>参数会在启动分析时写入本次分析记录。</p></div>
+      <div><h2 id="runtime-settings-heading">运行参数</h2><p>模型并发上限在保存后生效，分析轮次仍保留启动时的配置。</p></div>
     </div>
     <form className="runtime-settings-form" onSubmit={save}>
       <div className="runtime-settings-grid">
         <label>轨迹并发上限<input type="number" min="1" max="8" required placeholder="默认 2" value={value.concurrency} disabled={busy}
           onChange={event => change('concurrency', Number(event.target.value))}/><small>同时处理的轨迹数量，范围 1–8，默认 2。</small></label>
-        <label>步骤分析并发上限<input type="number" min="1" max="16" required value={value.llm_concurrency} disabled={busy}
-          onChange={event => change('llm_concurrency', Number(event.target.value))}/><small>单条轨迹内部阶段调用的并发上限，范围 1–16，默认 8。</small></label>
+        <label>模型请求并发上限<input type="number" min="1" max="16" required value={value.llm_concurrency} disabled={busy}
+          onChange={event => change('llm_concurrency', Number(event.target.value))}/><small>整个工作台共用，覆盖轨迹诊断、改进建议、综合分析和连接测试，默认 8。</small></label>
         <label>请求重试次数<input type="number" min="0" max="5" required value={value.max_retries} disabled={busy}
           onChange={event => change('max_retries', Number(event.target.value))}/><small>模型请求失败后的自动重试次数，范围 0–5，默认 2。</small></label>
         <label>请求超时（秒）<input type="number" min="5" max="600" required value={value.timeout} disabled={busy}

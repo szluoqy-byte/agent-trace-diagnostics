@@ -30,6 +30,8 @@ def provider():
         def log_message(self, *_):
             pass
         def do_POST(self):
+            if observe := state.get('observe_request'):
+                observe()
             body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
             calls.append(body)
             if state['slow']:
