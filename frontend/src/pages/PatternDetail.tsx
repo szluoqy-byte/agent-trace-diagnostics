@@ -1,4 +1,4 @@
-import {useCallback, useState} from 'react'
+import {useCallback, useLayoutEffect, useRef, useState} from 'react'
 import {Download} from 'lucide-react'
 import {dateLabel, post} from '../api'
 import DeleteRecord from '../components/DeleteRecord'
@@ -71,7 +71,7 @@ function PatternResult({task, runId, requestedPattern}: {task: PatternTask; runI
           }}>{label}</button>)}
       </div><span className="muted">按 {report.eligible} 条可分组轨迹计算占比</span></div>
       {view === 'excluded' ? <PatternMemberTable path={path} taskId={task.id} runId={runId} excluded/> :
-        <section className="pattern-groups" aria-label={view==='repeated'?'重复失败模式':'单例'}>
+        <section key={view} className="pattern-groups ws-content-scroll" aria-label={view==='repeated'?'重复失败模式':'单例'}>
           {!visible.length ? <div className="empty ws-surface">{view==='repeated'?'本轮分析未发现重复模式。':'本轮分析没有仅出现一次的失败模式。'}</div> : null}
           {visible.map(pattern => {
             const review = run.reviews[pattern.id]
@@ -103,13 +103,15 @@ function PatternMemberTable({path, taskId, runId, patternId, excluded}: {
 }) {
   const [page, setPage] = useState(1)
   const [size, setSize] = useState(10)
+  const tableViewport=useRef<HTMLDivElement>(null)
+  useLayoutEffect(()=>{if(tableViewport.current)tableViewport.current.scrollTop=0},[page,size,excluded])
   const {version, refresh} = useWorkspace()
   const query = new URLSearchParams({page:String(page),page_size:String(size)})
   if (patternId) query.set('pattern_id',patternId)
   if (excluded) query.set('status','excluded')
   const {data, error, loading} = useResource<PatternMembers>(path+'/members?'+query,version)
-  return <section className="ws-surface pattern-members" aria-label="模式关联轨迹" aria-busy={loading}>
-    <div className="ws-table-scroll"><table><thead><tr><th>轨迹</th><th>诊断与证据</th><th>来源</th></tr></thead>
+  return <section className="ws-surface ws-table-frame pattern-members" aria-label="模式关联轨迹" aria-busy={loading}>
+    <div ref={tableViewport} className="ws-table-scroll" role="region" aria-label="模式关联轨迹表格" tabIndex={0}><table><thead><tr><th>轨迹</th><th>诊断与证据</th><th>来源</th></tr></thead>
       <tbody>{data?.items.map(item => {
         const source = new URLSearchParams({run:item.source_run_id??'',pattern_task:taskId,pattern_run:runId})
         if (patternId) source.set('pattern_id',patternId)

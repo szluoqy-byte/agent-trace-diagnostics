@@ -83,8 +83,8 @@ export default function TrajectoryDetail({id,traceId,params}:{id:string;traceId:
   {job?.status==='queued'||job?.status==='running'?<progress className="diagnosis-progress" max={100} value={job.progress} aria-label="诊断进度"/>:null}
   <div className="trace-detail-tools">
     <div className="trace-detail-disclosures">
-      <details className="ws-trace-context"><summary>轨迹任务说明及来源</summary><p>{trace.data.task_description||'未提供任务说明。'}</p><p className="muted">来源：{sourceLabel(trace.data.source)}</p></details>
-      {data.attempts.length>1?<details className="ws-attempts"><summary>诊断请求记录 · {data.attempts.length} 次尝试</summary>{data.attempts.map(a=><div key={a.id}><span>第 {a.attempt} 次 · {dateLabel(a.created_at)} · {diagnosisStatus[a.status]}</span>{a.error?<small>{uiText(a.error)}</small>:null}</div>)}</details>:null}
+      <details className="ws-trace-context" name="trace-disclosures"><summary>轨迹任务说明及来源</summary><div className="trace-disclosure-body"><p>{trace.data.task_description||'未提供任务说明。'}</p><p className="muted">来源：{sourceLabel(trace.data.source)}</p></div></details>
+      {data.attempts.length>1?<details className="ws-attempts" name="trace-disclosures"><summary>诊断请求记录 · {data.attempts.length} 次尝试</summary><div className="trace-disclosure-body">{data.attempts.map(a=><div key={a.id}><span>第 {a.attempt} 次 · {dateLabel(a.created_at)} · {diagnosisStatus[a.status]}</span>{a.error?<small>{uiText(a.error)}</small>:null}</div>)}</div></details>:null}
       {report?<DiagnosisUsage report={report}/>:null}
     </div>
     <div className="ws-detail-status">

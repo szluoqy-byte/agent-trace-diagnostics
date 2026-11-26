@@ -1,4 +1,4 @@
-import {useEffect, useRef, useState} from 'react'
+import {useEffect, useLayoutEffect, useRef, useState} from 'react'
 import {Plus, RefreshCw, Search, Upload} from 'lucide-react'
 import {api, dateLabel} from '../api'
 import {sourceLabel} from '../branding'
@@ -36,6 +36,10 @@ export default function TraceLibrary({params, selected, onSelect}: {
   query.set('page', String(page))
   query.set('page_size', String(size))
   const {data, loading, error} = useResource<LibraryPage>(`/trace-library?${query}`, version, poll)
+  const tableViewport = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    if (tableViewport.current) tableViewport.current.scrollTop = 0
+  }, [filterQuery, page, size])
   const allSelection = useSelectionRequest(`/trace-library?selection=true&${filterQuery}`)
 
   const ids = new Set(selected.map(row => row.id))
@@ -131,8 +135,8 @@ export default function TraceLibrary({params, selected, onSelect}: {
     {allSelection.error ? <p className="error-inline" role="alert">{allSelection.error}</p> : null}
     {error ? <p className="error-inline" role="alert">{error}</p> : null}
     <p className="ws-table-scroll-hint muted">横向滑动可查看其余列</p>
-    <section className="ws-surface ws-trace-list" aria-label="库内轨迹" aria-busy={loading}>
-      <div className="ws-table-scroll"><table className="ws-trace-table library-table">
+    <section className="ws-surface ws-table-frame" aria-label="库内轨迹" aria-busy={loading}>
+      <div ref={tableViewport} className="ws-table-scroll" role="region" aria-label="库内轨迹表格" tabIndex={0}><table className="ws-trace-table library-table">
         <thead><tr><th scope="col" aria-label="选择"/>
           <th scope="col">轨迹 / 来源</th><th scope="col">Agent</th><th scope="col">业务结果</th><th scope="col">诊断状态</th>
           <th scope="col">关联任务</th><th scope="col">入库时间</th><th scope="col">操作</th></tr></thead>

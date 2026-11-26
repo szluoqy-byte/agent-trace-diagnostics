@@ -36,10 +36,11 @@ export default function LibraryTraceDetail({id, params, onDeleted}: {id: string;
           onDeleted={() => {onDeleted(id); go(libraryPath(params), true)}}/>
       </div>
     </div>
-    {task_description ? <div className="trace-detail-disclosures"><details className="ws-trace-context"><summary>轨迹任务说明</summary><p>{task_description}</p></details></div> : null}
+    {task_description ? <div className="trace-detail-disclosures"><details className="ws-trace-context"><summary>轨迹任务说明</summary><div className="trace-disclosure-body"><p>{task_description}</p></div></details></div> : null}
     </>} trace={<ExecutionTrace key={id} trace={trace} criticalStep={null} selection={null}/>}
     details={<section className="ws-surface library-history" aria-busy={!history && !historyError}>
         <h2>当前诊断</h2>
+        <div className="ws-content-scroll">
         {historyError ? <div role="alert" className="error-inline">{historyError} <button className="text-button" onClick={refresh}>重试</button></div> :
           !history ? <p className="muted">正在读取诊断记录…</p> : history.diagnoses.length ?
           <ul>{history.diagnoses.map(row => {
@@ -57,5 +58,6 @@ export default function LibraryTraceDetail({id, params, onDeleted}: {id: string;
           <a href={task.kind==='failure_patterns'?patternTaskPath(task.id):`#/tasks/${task.id}`}>{task.name}</a>
           {task.agent || task.version ? <small>{[task.agent, task.version].filter(Boolean).join(' · ')}</small> : null}
         </li>)}</ul> : <p className="muted">这条轨迹暂无关联任务。</p> : null}
+        </div>
       </section>}/>
 }

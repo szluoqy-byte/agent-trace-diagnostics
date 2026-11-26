@@ -1,4 +1,4 @@
-import {ArrowUpRight} from 'lucide-react'
+import {ArrowUpRight, CircleCheck} from 'lucide-react'
 import type {EngineName, Evidence, EvidenceSupport, Report} from '../types'
 import Citation from './Citation'
 
@@ -52,9 +52,9 @@ export function AgentDebugXDetails({report, jobId, onJump, section = 'all'}: {
   </div>
 }
 
-export default function DiagnosisComparison({report, onJump, onEngine, reviewWaived, reviewed}: {
+export default function DiagnosisComparison({report, onJump, onEngine, reviewWaived, reviewed, reviewSummary}: {
   report: Report; onJump: (evidence: Evidence) => void; onEngine: (engine: EngineName) => void;
-  reviewWaived: boolean; reviewed: boolean
+  reviewWaived: boolean; reviewed: boolean; reviewSummary?: string
 }) {
   const comparison = report.comparison
   const synthesis = report.synthesis
@@ -67,6 +67,7 @@ export default function DiagnosisComparison({report, onJump, onEngine, reviewWai
     ? synthesis.failure === 'http' ? `模型服务返回 HTTP ${synthesis.http_status}` : synthesisFailureLabels[synthesis.failure]
     : null
   return <div className="diagnosis-comparison">
+    <section className="diagnosis-summary">
     <div className="section-title"><h2>综合结论</h2>{reviewWaived ? <span className="status-tag green">免复核</span> : null}</div>
     {included && included.length >= 2 && synthesis?.status !== 'not_needed' ? <p className="muted">
       纳入综合评估 {included.length} 路{comparison?.state === 'incomplete' ? '，部分引擎未完成。' : ''}
@@ -78,6 +79,7 @@ export default function DiagnosisComparison({report, onJump, onEngine, reviewWai
       </span>
       <span className="synthesis-step-action">定位轨迹 <ArrowUpRight size={18} aria-hidden="true"/></span>
     </button> : null}
+    <div className="diagnosis-summary-text">
     {synthesis?.status === 'completed' ? <>
       <div className="conclusion"><strong>{synthesis.summary}</strong></div>
       {finalStep == null && !reviewed ? <p className="muted">关键步骤待人工复核。</p> : null}
@@ -89,6 +91,10 @@ export default function DiagnosisComparison({report, onJump, onEngine, reviewWai
       : comparison ? '此历史记录可查看各引擎原始结论。重新生成诊断可生成综合分析。' : '等待引擎诊断结果…'}
       {synthesisError ? ` ${synthesisError}。` : null}</p>}
     {sameStep ? <p className="muted">部分引擎缺少可核验的原文引用，可点击关键步骤查看轨迹。</p> : null}
+    {reviewed ? <div className="review-note"><CircleCheck size={15}/><div>人工复核结论<p>{reviewSummary}</p></div></div> : null}
+    </div>
+    </section>
+    <div className="inspector-scroll diagnosis-candidates" role="region" aria-label="引擎结论" tabIndex={0}>
     {engines.map(engine => {
       const run = report.engine_runs?.[engine]
       if (!run) return null
@@ -113,5 +119,6 @@ export default function DiagnosisComparison({report, onJump, onEngine, reviewWai
         <button type="button" className="text-button" onClick={() => onEngine(engine)}>查看{engineLabels[engine]}详情</button>
       </section>
     })}
+    </div>
   </div>
 }

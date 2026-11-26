@@ -43,4 +43,11 @@ export function filterQuery(params:URLSearchParams){const q=new URLSearchParams(
 export function taskPath(id:string,params:URLSearchParams){return `/tasks/${id}${params.size?'?'+params.toString():''}`}
 export function tracePath(id:string,traceId:string,params:URLSearchParams){return `/tasks/${id}/traces/${traceId}?${params}`}
 export const listScroll=new Map<string,number>()
-export function listKey(id:string,params:URLSearchParams){const q=new URLSearchParams(params);q.delete('focus');q.sort();return `${id}?${q}`}
+export function listKey(id:string,params:URLSearchParams){
+  const q=new URLSearchParams(params)
+  q.delete('focus')
+  if(q.get('page')==='1')q.delete('page')
+  if(q.get('tab')==='data')q.delete('tab')
+  q.sort()
+  return `${id}?${q}`
+}

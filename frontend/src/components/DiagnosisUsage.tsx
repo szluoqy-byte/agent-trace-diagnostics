@@ -58,8 +58,9 @@ export default function DiagnosisUsage({report}: {report:Report}) {
   }
   if (!rows.length || report.mode === 'demo') return null
 
-  return <details className="diagnosis-usage">
+  return <details className="diagnosis-usage" name="trace-disclosures">
     <summary>算法用量</summary>
+    <div className="trace-disclosure-body">
     <table aria-label="算法用量">
       <thead><tr><th scope="col">算法</th><th scope="col">请求 / 调用</th><th scope="col">耗时</th><th scope="col">本轮 Tokens</th></tr></thead>
       <tbody>{rows.map(({label,seconds,usage}) => {
@@ -75,5 +76,6 @@ export default function DiagnosisUsage({report}: {report:Report}) {
         </tr>
       })}</tbody>
     </table>
+    </div>
   </details>
 }

@@ -46,7 +46,7 @@ export default function App(){
   const selection:LibrarySelection[]=fromLibrary?workspaceState?.librarySelection??[]:[]
   const libraryFilters=libraryFilterQuery(url.searchParams)
   const clearLibrarySelection=useCallback(()=>setLibrarySelection({filters:'',items:[]}),[])
-  const detailPage=!settingsPage&&(page==='trace'||page==='library-detail')
+  const fitPage=settingsPage||page!=='missing'
   const routeKey=settingsPage?'/settings':`${url.pathname}:${url.searchParams.get('tab')??''}`
   const main=useRef<HTMLElement>(null)
   useLayoutEffect(()=>{if(main.current)main.current.scrollTop=0},[routeKey])
@@ -66,9 +66,9 @@ export default function App(){
         }}><Settings size={16}/><span>系统设置</span></a>
       </div>
     </nav></aside>
-    <main ref={main} className={`ws-main${detailPage?' ws-detail-main':''}`}>{error||configError?<div role="alert" className="alert error"><span>{uiText(error||configError)}</span>{error?<button aria-label="关闭错误" onClick={()=>setError('')}><X size={16}/></button>:<button onClick={refresh}>重试</button>}</div>:null}{notice?<div role="status" className="alert notice ws-toast"><CircleCheck size={16}/><span>{uiText(notice)}</span><button aria-label="关闭提示" onClick={()=>setNotice('')}><X size={16}/></button></div>:null}
+    <main ref={main} className={`ws-main${fitPage?' ws-fit-main':''}`}>{error||configError?<div role="alert" className="alert error"><span>{uiText(error||configError)}</span>{error?<button aria-label="关闭错误" onClick={()=>setError('')}><X size={16}/></button>:<button onClick={refresh}>重试</button>}</div>:null}{notice?<div role="status" className="alert notice ws-toast"><CircleCheck size={16}/><span>{uiText(notice)}</span><button aria-label="关闭提示" onClick={()=>setNotice('')}><X size={16}/></button></div>:null}
   {settingsPage?<SystemSettings onBack={settingsBack?closeSettings:undefined}/>:null}
-  {!settingsPage||settingsBack?<div hidden={settingsPage} className={detailPage?'ws-trace-route':undefined}>
+  {!settingsPage||settingsBack?<div hidden={settingsPage} className={!settingsPage&&fitPage?'ws-fit-route':undefined}>
   {patterns&&patternId?<PatternDetail key={patternId} id={patternId} requestedRun={url.searchParams.get('run')} requestedPattern={url.searchParams.get('pattern_id')}/>
     :page==='tasks'?<TaskList/>:page==='new'?<TaskCreate key={fromLibrary?'new-library':'new-'+(url.searchParams.get('source')||'upload')} source={fromLibrary?null:url.searchParams.get('source')}
     library={fromLibrary?{items:selection,back:'#'+libraryPath(returnParams),onCreated:clearLibrarySelection}:undefined}/>

@@ -67,6 +67,7 @@ export default function SystemSettings({onBack}: {onBack?: () => void}) {
       <div><h1>系统设置</h1><p>管理诊断与改进建议使用的模型连接。</p></div>
       {onBack ? <button className="secondary" onClick={onBack}><ArrowLeft size={15}/>返回上一页</button> : null}
     </div>
+    <div className="ws-settings-body ws-content-scroll">
     <section className="ws-surface model-settings" aria-labelledby="model-settings-heading">
       <div className="model-settings-heading">
         <div><h2 id="model-settings-heading">模型配置</h2><p>新启动的分析使用默认模型。已有分析保留各自的配置。</p></div>
@@ -105,6 +106,7 @@ export default function SystemSettings({onBack}: {onBack?: () => void}) {
       </ul> : !error ? <p className="model-settings-empty" role="status">{data ? '暂无模型配置。添加配置并设为默认后即可开始诊断。' : '正在加载模型配置…'}</p> : null}
     </section>
     {runtime ? <RuntimeSettingsForm value={runtime} onChange={setRuntime} error={runtimeError} onError={setRuntimeError}/> : null}
+    </div>
     {adding || editing ? <ModelConfigurationForm key={editing?.id ?? 'new'} configuration={editing ?? undefined} onClose={close} first={!data?.items.length}/> : null}
   </>
 }
