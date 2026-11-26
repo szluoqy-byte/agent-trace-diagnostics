@@ -196,6 +196,13 @@ it('shows all three participants and can adopt and inspect the CHIEF candidate',
   fireEvent.click(screen.getByRole('button',{name:'查看CHIEF详情'}))
   expect(screen.getByText('根因 Agent · billing')).toBeTruthy()
   expect(screen.queryByRole('tab',{name:'改进建议'})).toBeNull()
+  for (const tab of ['诊断结论', '证据与候选', '因果回溯']) {
+    fireEvent.click(screen.getByRole('tab',{name:tab}))
+    expect(screen.getByText('关键失败步骤')).toBeTruthy()
+    jump.mockClear()
+    fireEvent.click(screen.getByRole('button',{name:'#3'}))
+    expect(jump).toHaveBeenCalledExactlyOnceWith({step:3,quote:''})
+  }
   fireEvent.click(screen.getByRole('tab',{name:'证据与候选'}))
   fireEvent.click(screen.getByRole('button',{name:'步骤 #3'}))
   expect(jump).toHaveBeenLastCalledWith({step:3,quote:''})
@@ -204,6 +211,23 @@ it('shows all three participants and can adopt and inspect the CHIEF candidate',
   expect(screen.getByRole('link',{name:'下载 CHIEF 原始报告'}).getAttribute('href')).toBe('/api/jobs/job/artifacts/chief')
   fireEvent.click(screen.getByRole('tab',{name:'因果回溯'}))
   expect(screen.getByText('S1 · 提交退款 · 步骤 1-3')).toBeTruthy()
+})
+
+it('distinguishes a missing CHIEF key step from a successful trace', () => {
+  const chief: Report = {...report,algorithm:'CHIEF',task_outcome:'failed',triggers:[],instances:[],
+    attribution:{...report.attribution!,critical_step:null,critical_instance_id:null}}
+  const jump = vi.fn()
+  const {rerender} = render(<Inspector job={{...job,result:chief}} report={chief} onJump={jump} onReview={vi.fn()}/>)
+  fireEvent.click(screen.getByRole('tab',{name:'证据与候选'}))
+  const control = screen.getByRole<HTMLButtonElement>('button',{name:'未确定'})
+  expect(control.disabled).toBe(true)
+  fireEvent.click(control)
+  expect(jump).not.toHaveBeenCalled()
+
+  const succeeded: Report = {...chief,task_outcome:'succeeded'}
+  rerender(<Inspector job={{...job,result:succeeded}} report={succeeded} onJump={jump} onReview={vi.fn()}/>)
+  expect(screen.queryByText('关键失败步骤')).toBeNull()
+  expect(screen.queryByRole('tab',{name:'证据与候选'})).toBeNull()
 })
 
 it('shows partial multi-engine synthesis and requires review', () => {
