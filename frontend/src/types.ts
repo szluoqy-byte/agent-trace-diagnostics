@@ -1,5 +1,6 @@
 export type EngineName = 'trajdebug' | 'agentdebugx' | 'chief'
-export type DiagnosisMode = EngineName | 'dual' | 'dual_chief'
+export type DiagnosisLevel = 'fast' | 'standard' | 'deep'
+export type DiagnosisMode = DiagnosisLevel | EngineName | 'dual' | 'dual_chief'
 export type EvidenceSupport = 'high' | 'medium' | 'low' | 'insufficient'
 export interface ModelUsage {
   requests: number

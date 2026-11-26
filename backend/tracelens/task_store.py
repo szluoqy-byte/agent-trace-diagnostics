@@ -1,6 +1,7 @@
 """Persistent task scopes and analysis rounds; diagnosis artifacts stay in jobs."""
 import json
 import uuid
+from .diagnosis import DEFAULT_MODE
 from .diagnosis.review_policy import UNSETTLED_STATES, review_status
 from .diagnosis.synthesis import LEGACY_COMPARISON_ENGINES, UNRESOLVED_SUMMARY, select_candidate
 from .models import Trajectory
@@ -246,7 +247,7 @@ class TaskStore:
                 (id,name,agent,version,goal,prompt_language,created_at,draft_auto_feedback,diagnosis_mode)
                 VALUES (?,?,?,?,?,?,?,?,?)''',
                 (task_id, *(fields[k] for k in ('name','agent','version','goal','prompt_language')),
-                 now(), int(auto_feedback), fields.get('diagnosis_mode', 'trajdebug')))
+                 now(), int(auto_feedback), fields.get('diagnosis_mode', DEFAULT_MODE)))
             for i, trace_id in enumerate(ids):
                 db.execute('INSERT INTO task_traces VALUES (?,?,?)', (task_id, trace_id, i))
             run_id = self._start_run(db, task_id, config, auto_feedback) if config is not None else None

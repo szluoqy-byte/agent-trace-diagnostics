@@ -5,6 +5,7 @@ import logging
 from time import monotonic
 
 from ..llm import ModelError
+from . import MODE_ENGINES
 from .agentdebugx import diagnose_agentdebugx
 from .chief import diagnose_chief
 from .synthesis import synthesize
@@ -36,17 +37,15 @@ def compare_results(trace, runs):
     return "aligned" if all(root_evidence(report) for report in reports) else "same_step"
 
 
-async def diagnose_dual(trace, settings, progress, run_standard, *, fresh_cache=False, include_chief=False):
-    runners = {"trajdebug": run_standard, "agentdebugx": diagnose_agentdebugx}
-    if include_chief:
-        runners["chief"] = diagnose_chief
-    names = tuple(runners)
+async def diagnose_dual(trace, settings, progress, run_trajdebug, *, fresh_cache=False, mode="dual"):
+    runners = {"trajdebug": run_trajdebug, "agentdebugx": diagnose_agentdebugx, "chief": diagnose_chief}
+    names = MODE_ENGINES[mode]
     progress_by_engine = dict.fromkeys(names, 0)
     latest = {name: {"status": "running"} for name in names}
 
     async def publish():
         completed_percent = int(sum(progress_by_engine.values()) / len(names))
-        await progress("多引擎诊断" if include_chief else "双路诊断", min(completed_percent, 99), {
+        await progress("多引擎诊断" if len(names) > 2 else "双路诊断", min(completed_percent, 99), {
             "engine_runs": {name: {key: value for key, value in row.items() if key != "report"}
                             for name, row in latest.items()},
         })
@@ -77,14 +76,13 @@ async def diagnose_dual(trace, settings, progress, run_standard, *, fresh_cache=
         progress_by_engine[name] = 100
         await publish()
 
-    await asyncio.gather(*(execute(name, run, **({"fresh_cache": True} if name == "trajdebug" and fresh_cache else {}))
-                           for name, run in runners.items()))
+    await asyncio.gather(*(execute(name, runners[name], **({"fresh_cache": True} if name == "trajdebug" and fresh_cache else {}))
+                           for name in names))
     reports = {name: row["report"] for name, row in latest.items() if row["status"] == "completed"}
     primary = next(iter(reports), None)
     if primary is None:
         await progress("诊断失败", 99, {"engine_runs": latest, "synthesis": {"status": "incomplete"}})
-        raise ModelError("所有诊断引擎均失败，请检查模型连接后重试。"
-                         if include_chief else "两路诊断均失败，请检查模型连接后重试。")
+        raise ModelError("所有诊断引擎均失败，请检查模型连接后重试。")
     result = dict(latest[primary]["report"])
     result.update(
         comparison={"state": compare_results(trace, latest), "primary": primary, "engines": list(reports)},

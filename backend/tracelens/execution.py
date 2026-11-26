@@ -1,6 +1,6 @@
 """Freeze analysis settings and resolve credentials from the selected connection."""
 from dataclasses import replace
-from .diagnosis import AGENTDEBUGX_COMMIT, AGENTDEBUGX_VERSION, CHIEF_COMMIT, CHIEF_VERSION
+from .diagnosis import AGENTDEBUGX_COMMIT, AGENTDEBUGX_VERSION, CHIEF_COMMIT, CHIEF_VERSION, MODE_ENGINES
 from .diagnosis.agentdebugx_prompts import prompt_profile
 from .diagnosis.chief import prompt_profile as chief_prompt_profile
 from .trajdebug import ENGINE_VERSION, UPSTREAM_COMMIT
@@ -34,16 +34,17 @@ def snapshot(settings, connection_id=None, prompt_language=None, diagnosis_mode=
     if connection_id is not None:
         config['model_connection_id'] = connection_id
     if diagnosis_mode is not None:
+        engines = MODE_ENGINES[diagnosis_mode]
         config['diagnosis_mode'] = diagnosis_mode
-        if diagnosis_mode in {'agentdebugx', 'dual', 'dual_chief'}:
+        if "agentdebugx" in engines:
             config.update(agentdebugx_version=AGENTDEBUGX_VERSION, agentdebugx_commit=AGENTDEBUGX_COMMIT,
                           agentdebugx_prompt_profile=prompt_profile(config['prompt_language']))
-        if diagnosis_mode == 'agentdebugx':
+        if engines[0] == "agentdebugx":
             config.update(engine=f'agentdebugx-{AGENTDEBUGX_VERSION}', upstream_commit=AGENTDEBUGX_COMMIT)
-        if diagnosis_mode in {'chief', 'dual_chief'}:
+        if "chief" in engines:
             config.update(chief_version=CHIEF_VERSION, chief_commit=CHIEF_COMMIT,
                           chief_prompt_profile=chief_prompt_profile(config['prompt_language']))
-        if diagnosis_mode == 'chief':
+        if engines[0] == "chief":
             config.update(engine=CHIEF_VERSION, upstream_commit=CHIEF_COMMIT)
     return config
 

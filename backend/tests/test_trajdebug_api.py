@@ -87,7 +87,8 @@ def test_regeneration_calls_model_again_and_preserves_previous_attempt(tmp_path,
             sleep(0.05)
 
     with TestClient(app) as client:
-        task = client.post('/api/tasks', json={'name':'重新生成验收', 'trace_ids':[trace_id], 'start':True}).json()
+        task = client.post('/api/tasks', json={'name':'重新生成验收', 'trace_ids':[trace_id], 'start':True,
+                                              'diagnosis_mode':'trajdebug'}).json()
         path = f"/api/tasks/{task['task_id']}/runs/{task['run_id']}/traces/{trace_id}"
         original_id = client.get(path).json()['job']['id']
         original = completed(client, original_id)

@@ -2,9 +2,20 @@
 
 from typing import Literal
 
-DiagnosisMode = Literal["trajdebug", "agentdebugx", "chief", "dual", "dual_chief"]
-DEFAULT_MODE: DiagnosisMode = "trajdebug"
-TRAJDEBUG_MODES = {"trajdebug", "dual", "dual_chief"}
+DiagnosisMode = Literal["fast", "standard", "deep", "trajdebug", "agentdebugx", "chief", "dual", "dual_chief"]
+DEFAULT_MODE: DiagnosisMode = "standard"
+LEGACY_DEFAULT_MODE: DiagnosisMode = "trajdebug"
+MODE_ENGINES: dict[DiagnosisMode, tuple[str, ...]] = {
+    "fast": ("agentdebugx",),
+    "standard": ("agentdebugx", "chief"),
+    "deep": ("trajdebug", "agentdebugx", "chief"),
+    "trajdebug": ("trajdebug",),
+    "agentdebugx": ("agentdebugx",),
+    "chief": ("chief",),
+    "dual": ("trajdebug", "agentdebugx"),
+    "dual_chief": ("trajdebug", "agentdebugx", "chief"),
+}
+TRAJDEBUG_MODES = {mode for mode, engines in MODE_ENGINES.items() if "trajdebug" in engines}
 
 AGENTDEBUGX_VERSION = "0.5.2"
 AGENTDEBUGX_COMMIT = "e180ac2e46e4c1e468336526f67ad122ecaf34ff"

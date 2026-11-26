@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from .demo import demo_report
-from .diagnosis import DEFAULT_MODE
+from .diagnosis import LEGACY_DEFAULT_MODE, MODE_ENGINES
 from .diagnosis.agentdebugx import diagnose_agentdebugx
 from .diagnosis.chief import diagnose_chief
 from .diagnosis.compare import diagnose_dual
@@ -69,15 +69,15 @@ class JobQueue:
                 else:
                     config = self.store.job_config(job['id']) or {}
                     execution = run_settings(self.store, self.settings, config)
-                    mode = config.get("diagnosis_mode", DEFAULT_MODE)
+                    mode = config.get("diagnosis_mode", LEGACY_DEFAULT_MODE)
+                    engines = MODE_ENGINES[mode]
                     fresh = self.store.uses_fresh_diagnosis_cache(job['id'])
-                    if mode == "agentdebugx":
+                    if len(engines) > 1:
+                        report = await diagnose_dual(trace, execution, progress, diagnose, mode=mode, fresh_cache=fresh)
+                    elif engines[0] == "agentdebugx":
                         report = await diagnose_agentdebugx(trace, execution, progress)
-                    elif mode == "chief":
+                    elif engines[0] == "chief":
                         report = await diagnose_chief(trace, execution, progress)
-                    elif mode in {"dual", "dual_chief"}:
-                        report = await diagnose_dual(trace, execution, progress, diagnose, fresh_cache=fresh,
-                                                     **({"include_chief": True} if mode == "dual_chief" else {}))
                     elif fresh:
                         report = await diagnose(trace, execution, progress, fresh_cache=True)
                     else:

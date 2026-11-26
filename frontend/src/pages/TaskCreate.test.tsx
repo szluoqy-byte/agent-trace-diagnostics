@@ -61,27 +61,30 @@ it('identifies an unsupported file and lets the user exclude it before saving', 
   expect(save.disabled).toBe(false)
 })
 
-it('preselects low, describes all three depths, and saves the high preset as a CHIEF reference run', async () => {
+it('preselects Standard, describes when to use each level, and saves Deep', async () => {
   vi.mocked(api).mockResolvedValue({id:'preview', files:[
     {id:'0', name:'deepagent.json', formats:['deepagent'], count:1, errors:[]},
   ], rows:[{id:'native', file_id:'0', outcome:'failed'}]})
   vi.mocked(post).mockResolvedValue({task_id:'task', run_id:null})
   renderUpload()
 
-  const group = within(screen.getByRole('group', {name:'诊断深度'}))
-  const [low, medium, high] = group.getAllByRole<HTMLInputElement>('radio')
-  expect([low.value, medium.value, high.value]).toEqual(['trajdebug', 'dual', 'dual_chief'])
-  expect(low.checked).toBe(true)
-  expect(group.getByRole('radio', {name:/^低/, description:/批量初筛/})).toBe(low)
-  expect(group.getByRole('radio', {name:/^中/, description:/交叉验证/})).toBe(medium)
-  expect(group.getByRole('radio', {name:'高 多路综合', description:/综合全部已完成的引擎结论/})).toBe(high)
+  const group = within(screen.getByRole('group', {name:'诊断等级'}))
+  const [fast, standard, deep] = group.getAllByRole<HTMLInputElement>('radio')
+  expect([fast.value, standard.value, deep.value]).toEqual(['fast', 'standard', 'deep'])
+  expect(standard.checked).toBe(true)
+  expect(group.getByRole('radio', {name:'Fast 快速诊断', description:/^单路 .*批量轨迹诊断/})).toBe(fast)
+  expect(group.getByRole('radio', {name:'Standard 标准诊断', description:/^双路 · 默认推荐 .*常规问题排查/})).toBe(standard)
+  expect(group.getByRole('radio', {name:'Deep 深度诊断', description:/^三路 .*复杂长轨迹/})).toBe(deep)
+  expect(group.queryByText(/AgentDebugX|CHIEF|TrajDebug|RSI/)).toBeNull()
+  expect(screen.queryByRole('checkbox', {name:/自动生成改进建议/})).toBeNull()
 
-  fireEvent.click(high)
-  expect(high.checked && !low.checked).toBe(true)
-  expect(screen.getByText('高 · 多路综合')).toBeTruthy()
+  fireEvent.click(deep)
+  expect(deep.checked && !standard.checked).toBe(true)
+  expect(screen.getByText('Deep · 深度诊断')).toBeTruthy()
+  expect(screen.getByRole('checkbox', {name:/自动生成改进建议/})).toBeTruthy()
   fireEvent.change(screen.getByLabelText('选择轨迹文件'), {target:{files:[new File(['{}'], 'deepagent.json')]}})
   await screen.findByRole('status', {name:''})
   await waitFor(() => expect((screen.getByRole('button',{name:'保存草稿'}) as HTMLButtonElement).disabled).toBe(false))
   fireEvent.click(screen.getByRole('button',{name:'保存草稿'}))
-  expect(post).toHaveBeenCalledWith('/tasks', expect.objectContaining({diagnosis_mode:'dual_chief', start:false}))
+  expect(post).toHaveBeenCalledWith('/tasks', expect.objectContaining({diagnosis_mode:'deep', start:false}))
 })

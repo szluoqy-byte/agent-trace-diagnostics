@@ -149,7 +149,8 @@ def test_deepagent_upload_starts_diagnosis_and_appears_in_library(tmp_path, prov
         assert preview["files"][0]["formats"] == ["deepagent"]
         assert preview["rows"][0]["outcome"] == "failed"
         assert preview["rows"][0]["steps"] == 2
-        response = client.post("/api/tasks", json={"name": "DeepAgent diagnosis", "preview_id": preview["id"], "start": True})
+        response = client.post("/api/tasks", json={"name": "DeepAgent diagnosis", "preview_id": preview["id"],
+                                                   "start": True, "diagnosis_mode": "trajdebug"})
         assert response.status_code == 200, response.text
         task_id, run_id = (response.json()[key] for key in ("task_id", "run_id"))
         detail_path = f"/api/tasks/{task_id}/runs/{run_id}/traces/{trace_id}"

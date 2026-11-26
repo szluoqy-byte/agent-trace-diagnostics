@@ -1,63 +1,61 @@
 import {useId} from 'react'
-import type {DiagnosisMode} from '../types'
+import type {DiagnosisLevel, DiagnosisMode} from '../types'
+import {engineLabels} from './DiagnosisComparison'
 
-const depths = ['trajdebug', 'dual', 'dual_chief'] as const
-const standaloneModes = ['agentdebugx', 'chief'] as const
+const levels = ['fast', 'standard', 'deep'] as const
+export const defaultDiagnosisLevel: DiagnosisLevel = 'standard'
 
-const options = {
-  trajdebug: {
-    label: '低', name: '标准诊断',
-    tip: '适合批量初筛。定位错误实例和关键步骤，模型开销通常最低。',
+const options: Record<DiagnosisLevel, {label:string; name:string; note:string; tip:string}> = {
+  fast: {
+    label: 'Fast', name: '快速诊断', note: '单路',
+    tip: '低成本快速定位，适用于日常 Badcase 和批量轨迹诊断。',
   },
-  dual: {
-    label: '中', name: '双路综合',
-    tip: '适合重点排查。两种引擎交叉验证，业务失败时生成综合结论。',
+  standard: {
+    label: 'Standard', name: '标准诊断', note: '双路 · 默认推荐',
+    tip: '兼顾诊断深度和推理成本，适合常规问题排查。',
   },
-  dual_chief: {
-    label: '高', name: '多路综合',
-    tip: '适合复杂链路。综合全部已完成的引擎结论与证据，预计耗时和用量最高。',
+  deep: {
+    label: 'Deep', name: '深度诊断', note: '三路',
+    tip: '从多个角度交叉验证，适合疑难问题和复杂长轨迹。',
   },
-  agentdebugx: {
-    label: 'AgentDebugX', name: '',
-    tip: '独立定位根因事件，给出原文证据和恢复建议。',
-  },
-  chief: {
-    label: 'CHIEF', name: '',
-    tip: '独立回溯关键失败步骤，提供候选与原文证据。',
-  },
-} satisfies Record<DiagnosisMode, {label:string; name:string; tip:string}>
+}
+
+export function diagnosisLevelFor(mode?: DiagnosisMode): DiagnosisLevel {
+  if (mode === 'fast' || mode === 'agentdebugx') return 'fast'
+  if (mode === 'deep' || mode === 'dual_chief') return 'deep'
+  return defaultDiagnosisLevel
+}
 
 export function diagnosisDepthLabel(mode: DiagnosisMode) {
-  const {label, name} = options[mode]
-  return name ? `${label} · ${name}` : label
+  if (mode === 'trajdebug' || mode === 'chief') return `${engineLabels[mode]} 单路`
+  if (mode === 'dual') return 'TrajDebug + AgentDebugX'
+  const {label, name} = options[diagnosisLevelFor(mode)]
+  return `${label} · ${name}`
 }
 
 export function supportsAutoFeedback(mode: DiagnosisMode) {
-  return mode === 'trajdebug' || mode === 'dual' || mode === 'dual_chief'
+  return mode === 'deep' || mode === 'trajdebug' || mode === 'dual' || mode === 'dual_chief'
 }
 
 export default function DiagnosisDepthField({value, onChange, disabled}: {
-  value: DiagnosisMode; onChange: (value: DiagnosisMode) => void; disabled?: boolean
+  value: DiagnosisLevel; onChange: (value: DiagnosisLevel) => void; disabled?: boolean
 }) {
   const groupId = useId()
-  function renderOption(mode: DiagnosisMode) {
-    const {label, name, tip} = options[mode]
+  function renderOption(mode: DiagnosisLevel) {
+    const {label, name, note, tip} = options[mode]
     const id = `${groupId}-${mode}`
     return <label className="diagnosis-depth-choice" key={mode}>
       <input type="radio" name={groupId} value={mode} checked={value === mode}
-        aria-labelledby={`${id}-label`} aria-describedby={`${id}-tip`} onChange={() => onChange(mode)}/>
+        aria-labelledby={`${id}-label`} aria-describedby={`${id}-note ${id}-tip`} onChange={() => onChange(mode)}/>
       <span className="diagnosis-depth-copy">
-        <span id={`${id}-label`} className="diagnosis-depth-label"><strong>{label}</strong>{name ? <span>{name}</span> : null}</span>
+        <span id={`${id}-label`} className="diagnosis-depth-label"><strong>{label}</strong><span>{name}</span></span>
+        <span id={`${id}-note`} className="diagnosis-depth-note">{note}</span>
         <span id={`${id}-tip`} className="diagnosis-depth-tip">{tip}</span>
       </span>
     </label>
   }
   return <fieldset className="diagnosis-depth-field" disabled={disabled}>
-    <legend>诊断深度</legend>
-    <div className="diagnosis-depth-options">{depths.map(renderOption)}</div>
-    <details className="diagnosis-depth-custom" open={value === 'agentdebugx' || value === 'chief'}>
-      <summary>单独运行引擎</summary>
-      <div className="diagnosis-depth-options diagnosis-depth-standalone">{standaloneModes.map(renderOption)}</div>
-    </details>
+    <legend>诊断等级</legend>
+    <div className="diagnosis-depth-options">{levels.map(renderOption)}</div>
   </fieldset>
 }

@@ -264,3 +264,53 @@ def test_chief_task_uses_saved_connection_and_participates_in_synthesis(tmp_path
             confirmed = client.get(route).json()["job"]
             assert confirmed["review_status"] == "confirmed"
             assert confirmed["reviews"][0]["data"]["critical_step"] == 3
+
+
+@pytest.mark.parametrize(("mode", "expected_mode", "engines"), [
+    ("fast", "fast", {"agentdebugx"}),
+    (None, "standard", {"agentdebugx", "chief"}),
+    ("deep", "deep", {"agentdebugx", "chief", "trajdebug"}),
+])
+def test_task_diagnosis_levels_dispatch_the_expected_engines(tmp_path, provider, mode, expected_mode, engines):
+    endpoint, requests, state = provider
+    state.update(critical_step=1, extra_request_reply=chief_answer)
+    app = create_app(Settings(data_dir=tmp_path, base_url=endpoint, model="fixture-model", api_key="fixture-key"))
+    trace_id = app.state.store.add_trace(pipeline_trace())["id"]
+    body = {"name": "Diagnosis levels", "trace_ids": [trace_id], "start": True, "prompt_language": "en"}
+    if mode is not None:
+        body["diagnosis_mode"] = mode
+
+    with TestClient(app) as client:
+        response = client.post("/api/tasks", json=body)
+        assert response.status_code == 200, response.text
+        task_id, run_id = (response.json()[key] for key in ("task_id", "run_id"))
+        task = client.get(f"/api/tasks/{task_id}").json()
+        config = task["runs"][0]["config"]
+        assert task["diagnosis_mode"] == config["diagnosis_mode"] == expected_mode
+        assert config["agentdebugx_prompt_profile"]
+        assert ("chief_prompt_profile" in config) == ("chief" in engines)
+
+        route = f"/api/tasks/{task_id}/runs/{run_id}/traces/{trace_id}"
+        deadline = monotonic() + 15
+        while True:
+            job = client.get(route).json()["job"]
+            if job["status"] in {"completed", "failed"} or monotonic() >= deadline:
+                break
+            sleep(0.05)
+        assert job["status"] == "completed", job
+        report = job["result"]
+        stages = {call["stage"] for call in requests}
+        assert "agentdebugx" in stages
+        assert ("detection" in stages) == ("trajdebug" in engines)
+        synthesis_inputs = [json.loads(call["request"]["messages"][1]["content"]) for call in requests
+                            if call["request"]["messages"][0]["content"].startswith("You synthesize")]
+        if expected_mode == "fast":
+            assert report["algorithm"] == "AgentDebugX"
+            assert "engine_runs" not in report and "synthesis" not in report
+            assert synthesis_inputs == []
+        else:
+            assert set(report["engine_runs"]) == engines == set(report["comparison"]["engines"])
+            assert all(run["status"] == "completed" for run in report["engine_runs"].values())
+            assert len(synthesis_inputs) == 1 and set(synthesis_inputs[0]["conclusions"]) == engines
+            assert report["synthesis"]["critical_step"] == 1
+            assert job["review_status"] == "waived"

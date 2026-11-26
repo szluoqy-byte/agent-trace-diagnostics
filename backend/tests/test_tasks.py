@@ -42,7 +42,7 @@ def complete(store, task):
 
 def test_task_create_pagination_filter_export_and_restart(tmp_path):
     app,client,ids=setup(tmp_path)
-    draft=create(client,ids,auto_feedback=True)
+    draft=create(client,ids,auto_feedback=True,diagnosis_mode='trajdebug')
     assert app.state.store.jobs()==[]
     assert client.get('/api/tasks').json()[0]['status']=='draft'
     assert client.get(f"/api/tasks/{draft['task_id']}").json()['draft_auto_feedback'] is True
@@ -227,7 +227,7 @@ async def test_queue_uses_frozen_config_and_auto_feedback(tmp_path,monkeypatch):
     for trace_id in ids:
         with app.state.store.connect() as db:
             data=json.loads(db.execute('SELECT data FROM traces WHERE id=?',(trace_id,)).fetchone()[0]);data['kind']='imported';db.execute('UPDATE traces SET data=? WHERE id=?',(json.dumps(data),trace_id))
-    task=create(client,ids,start=True,auto_feedback=True)
+    task=create(client,ids,start=True,auto_feedback=True,diagnosis_mode='trajdebug')
     seen=[]
     async def diagnose(trace,settings,progress):
         seen.append(('diagnosis',settings.model));return demo_report()

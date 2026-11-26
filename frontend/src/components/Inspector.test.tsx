@@ -129,6 +129,20 @@ it('opens dual synthesis first and keeps engine-specific inspection tabs', () =>
   expect(screen.getByText('验证授权')).toBeTruthy()
 })
 
+it('shows only the AgentDebugX and CHIEF views for a Standard run', () => {
+  const ad: Report = {...report, algorithm:'AgentDebugX', triggers:[], instances:[]}
+  const chief: Report = {...report, algorithm:'CHIEF', triggers:[], instances:[],
+    attribution:{...report.attribution!, summary:'CHIEF 归因'}}
+  const standard: Report = {...ad, comparison:{state:'aligned',primary:'agentdebugx'},
+    engine_runs:{agentdebugx:{status:'completed'},chief:{status:'completed',report:chief}}}
+  render(<Inspector job={{...job,result:standard}} report={standard} onJump={vi.fn()} onReview={vi.fn()}/>)
+  expect(screen.getByRole('tab',{name:'综合分析'}).getAttribute('aria-selected')).toBe('true')
+  expect(screen.getByRole('tab',{name:'AgentDebugX'})).toBeTruthy()
+  expect(screen.queryByRole('tab',{name:'TrajDebug'})).toBeNull()
+  fireEvent.click(screen.getByRole('tab',{name:'CHIEF'}))
+  expect(screen.getByText('CHIEF 归因')).toBeTruthy()
+})
+
 it('shows the waiver and keeps manual review available for aligned results', () => {
   const dual: Report = {...report, comparison:{state:'aligned',primary:'trajdebug'},
     engine_runs:{trajdebug:{status:'completed'},agentdebugx:{status:'completed'}}}

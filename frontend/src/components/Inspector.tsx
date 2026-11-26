@@ -3,13 +3,11 @@ import {uiText} from '../branding'
 import Citation from './Citation'
 import Tabs from './Tabs'
 import FeedbackPanel from './FeedbackPanel'
-import DiagnosisComparison, {AgentDebugXDetails} from './DiagnosisComparison'
+import DiagnosisComparison, {AgentDebugXDetails, engineLabels, engines} from './DiagnosisComparison'
 import ChiefDetails from './ChiefDetails'
 import {responsibilityLabels} from '../patterns'
 import { ArrowUpRight, CircleCheck, UserRoundCheck, ScanSearch, GitBranch, Flag, ChevronRight, RotateCcw } from 'lucide-react'
 import type { EngineName, Evidence, Instance, Job, Report } from '../types'
-
-const engineTabs = [{id:'overview',label:'综合分析'}, {id:'trajdebug',label:'TrajDebug'}, {id:'agentdebugx',label:'AgentDebugX'}]
 
 const states: Record<string, string> = {manifest_active:'持续影响最终结果', latent_active:'未修复 · 未影响最终结果', clean_resolution:'已修复 · 未影响最终结果', costly_resolution:'已修复 · 仍有资源代价', exploration:'探索行为 · 已排除', unknown:'状态待核验'}
 const references: Record<string, string> = {'cat-1':'与任务要求冲突', 'cat-2':'与可见上下文冲突', 'cat-3':'内部不一致', env:'环境异常'}
@@ -37,8 +35,10 @@ export default function Inspector({job, report: combined, onJump, onReview, onFe
 }) {
   const [tab, setTab] = useState('conclusion')
   const [instanceFilter, setInstanceFilter] = useState('all')
-  const [engine, setEngine] = useState<EngineName | 'overview'>('overview')
+  const [selectedEngine, setEngine] = useState<EngineName | 'overview'>('overview')
   const dual = !!combined?.engine_runs
+  const activeEngines = engines.filter(id => combined?.engine_runs?.[id])
+  const engine = selectedEngine !== 'overview' && activeEngines.includes(selectedEngine) ? selectedEngine : 'overview'
   const overview = dual && engine === 'overview'
   const primary = combined?.comparison?.primary
   const run = engine === 'overview' ? undefined : combined?.engine_runs?.[engine]
@@ -64,7 +64,6 @@ export default function Inspector({job, report: combined, onJump, onReview, onFe
   const agentDebugX = report?.algorithm === 'AgentDebugX'
   const chief = report?.algorithm === 'CHIEF'
   const standardDiagnosis = !agentDebugX && !chief
-  const includeChief = !!combined?.engine_runs?.chief
   const showAttribution = report?.task_outcome !== 'succeeded' && report?.official_output?.task_success !== true
   const filtered = instanceFilter === 'responsible' ? instances.filter(i => i.terminal_relevant) : instances
   const canInspect = !!ai && completed && !legacy
@@ -86,9 +85,10 @@ export default function Inspector({job, report: combined, onJump, onReview, onFe
   const regenerateLabel = feedbackTab ? (feedbackStatus === 'failed' ? '重试生成改进建议' : '重新生成改进建议') : '重新生成本条轨迹诊断'
   const regenerateTips = feedbackActive ? '请等待本条轨迹的改进建议生成完成'
     : feedbackTab ? job?.feedback_unavailable_reason || '使用当前诊断重新生成改进建议'
-    : includeChief ? '重新运行本条轨迹的多路诊断与综合分析'
+    : activeEngines.length > 2 ? '重新运行本条轨迹的多路诊断与综合分析'
     : dual ? '重新运行本条轨迹的两路诊断与综合分析'
     : chief ? '重新运行本条轨迹的 CHIEF 诊断'
+    : agentDebugX ? '重新运行本条轨迹的 AgentDebugX 诊断'
     : '重新分析本条轨迹并生成诊断结论、错误实例和触发证据'
   const regenerateButton = canShowRegenerate ? <span className="inspector-regenerate" title={regenerateTips}>
         <button type="button" className="secondary small" aria-label={regenerateLabel}
@@ -133,7 +133,7 @@ export default function Inspector({job, report: combined, onJump, onReview, onFe
   return <section className="panel inspector">
     <div className="inspector-toolbar">
       {dual ? <Tabs id="inspection-engine" label="诊断结果视图" className="inspector-tabs"
-        items={includeChief ? [...engineTabs, {id:'chief',label:'CHIEF'}] : engineTabs} active={engine} onChange={selectEngine}/> : detailsTabs}
+        items={[{id:'overview',label:'综合分析'}, ...activeEngines.map(id => ({id,label:engineLabels[id]}))]} active={engine} onChange={selectEngine}/> : detailsTabs}
       {regenerateButton}
     </div>
     {dual && combined ? <div className="inspector-engine-panel" role="tabpanel"
