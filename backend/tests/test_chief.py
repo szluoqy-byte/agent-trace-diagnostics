@@ -8,8 +8,9 @@ from fastapi.testclient import TestClient
 
 from test_diagnosis_engines import dual_answer
 from test_trajdebug import pipeline_trace, provider
+from tracelens._vendor.chief.pipeline import parse_subtasks
 from tracelens.config import Settings
-from tracelens.diagnosis.chief import diagnose_chief, to_chief
+from tracelens.diagnosis.chief import diagnose_chief, run_pipeline, to_chief, valid_partition
 from tracelens.llm import ModelError
 from tracelens.main import create_app
 from tracelens.model_concurrency import ModelSlots
@@ -35,6 +36,33 @@ def chief_answer(system, user, *, step=1, quote="issue_refund()"):
     if "Data_Transfer:" in user:
         return "[]"
     return f"The Subtask Name: {name}\nStep Range: 0-3\nThe Oracle: Check approval\nEvidence: Request and result"
+
+
+def test_chief_accepts_equivalent_step_ranges_without_shifting_optional_fields():
+    subtasks = parse_subtasks(
+        "**The Subtask Name:** Check authorization\n**Step Range:** `step0 – step1`\nThe Oracle: Approved\n"
+        "2. **The Subtask Name:** Call refund API\nStep Range：#2\nEvidence: Tool request\n"
+        "The Subtask Name: Read result\nStep Range: 3-3\nThe Oracle: Verify outcome\nEvidence: Tool result"
+    )
+    assert valid_partition(subtasks, 4)
+    assert [task["step_range"] for task in subtasks] == ["0-1", "2-2", "3-3"]
+    assert [task["oracle"] for task in subtasks] == ["Approved", "", "Verify outcome"]
+    assert [task["evidence"] for task in subtasks] == ["", "Tool request", "Tool result"]
+
+
+@pytest.mark.parametrize("invalid_range", ["0-1", "1-4", "0-1, 3-3"])
+async def test_chief_stops_after_one_subtask_retry_when_coverage_still_fails(invalid_range):
+    calls = []
+
+    async def call_model(stage, prompt):
+        calls.append((stage, prompt))
+        return f"The Subtask Name: First task\nStep Range: {invalid_range}\nThe Oracle: Check the result"
+
+    with pytest.raises(ModelError, match="两次任务分解.*#0 至 #3"):
+        await run_pipeline(to_chief(pipeline_trace()), "zh", call_model)
+
+    assert [stage for stage, _ in calls] == [1, 1]
+    assert "上一次的子任务范围未通过校验" in calls[1][1]
 
 
 @pytest.mark.parametrize("filename", ["deepagent-template.json", "otel-genai-template.json"])
@@ -125,13 +153,21 @@ async def test_chief_reports_empty_or_out_of_range_evidence_and_skips_success(tm
     assert "private gateway detail" not in str(error.value)
 
 
-@pytest.mark.parametrize(("mode", "bad_chief"), [("chief", False), ("dual_chief", False), ("dual_chief", True)])
-def test_chief_task_uses_saved_connection_and_keeps_dual_synthesis(tmp_path, provider, mode, bad_chief):
+@pytest.mark.parametrize(("mode", "scenario"), [
+    ("chief", "normal"), ("dual_chief", "normal"), ("dual_chief", "invalid_final"), ("dual_chief", "repair_subtasks"),
+])
+def test_chief_task_uses_saved_connection_and_keeps_dual_synthesis(tmp_path, provider, mode, scenario):
     endpoint, requests, state = provider
+    bad_chief = scenario == "invalid_final"
+    subtask_prompts = []
 
     def answer(system, user):
         if bad_chief and "Evidence Quote JSON:" in user:
             return "Unparseable evaluation result."
+        if system.startswith("Analyze the supplied run") and "Step Range:" in user:
+            subtask_prompts.append(user)
+            if scenario == "repair_subtasks" and len(subtask_prompts) == 1:
+                return "The Subtask Name: Partial scope\nStep Range: 0-1\nThe Oracle: Check approval"
         return chief_answer(system, user, step=3, quote="refund complete")
 
     state.update(critical_step=1, extra_request_reply=answer)
@@ -166,7 +202,7 @@ def test_chief_task_uses_saved_connection_and_keeps_dual_synthesis(tmp_path, pro
         task = client.get(f"/api/tasks/{task_id}").json()
         config = next(run["config"] for run in task["runs"] if run["id"] == run_id)
         assert config["diagnosis_mode"] == mode
-        assert config["chief_prompt_profile"] == "chief-en-v1"
+        assert config["chief_prompt_profile"] == "chief-en-v2"
         assert all(call["headers"]["x-tenant"] == "fixture-tenant" and call["request"]["model"] == "saved-model"
                    for call in requests)
         if mode == "chief":
@@ -178,6 +214,11 @@ def test_chief_task_uses_saved_connection_and_keeps_dual_synthesis(tmp_path, pro
                 assert chief["status"] == "failed" and chief["usage"]["requests"] == 6
             else:
                 assert chief["report"]["attribution"]["critical_step"] == 3
+                if scenario == "repair_subtasks":
+                    assert len(subtask_prompts) == 2
+                    assert "The previous subtask ranges did not pass validation" in subtask_prompts[1]
+                    assert chief["report"]["usage"]["requests"] == 7
+                    assert native.json()["dag_graph"]["subtasks"][0]["step_range"] == "0-3"
             assert report["synthesis"]["critical_step"] == 1 and job["review_status"] == "waived"
             assert {item["engine"] for item in report["synthesis"]["evidence"]} == {"trajdebug", "agentdebugx"}
         assert "CHIEF" in client.get(f"/api/jobs/{job['id']}/export?format=md").text

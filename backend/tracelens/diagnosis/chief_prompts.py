@@ -14,7 +14,8 @@ def trace_context(history, question):
 
 
 def step1(history, question):
-    return trace_context(history, question) + """把轨迹拆分为语义连贯的子任务。先拟定分段，再对照轨迹校验边界，最后确认各段连续、互不重叠并覆盖全部步骤。
+    return trace_context(history, question) + f"""把轨迹拆分为语义连贯的子任务。先拟定分段，再对照轨迹校验每个边界。
+按执行顺序输出；首段从 0 开始，每段从上一段终点加 1 开始，最后一段结束于 {len(history) - 1}。所有上下文与 tool 步骤也要覆盖。单步范围写成 N-N。长轨迹可以减少分段数量。
 为每段给出可以根据轨迹判断的成功标准，列出支撑划分的关键步骤。如果出现重复推理、重试或循环调用，记录循环位置、可逆性和风险。
 每段仅输出以下纯文本字段，不加 Markdown、加粗或额外标签。Step Range 用 0-2 这种闭区间。
 The Subtask Name: <子任务名称>
@@ -22,15 +23,30 @@ Step Range: <起点-终点>
 The Oracle: <可核验的成功标准>
 Evidence: <一行关键步骤摘要>
 Loop Info:
-{
+{{
   is_loop_related: true/false,
   loop_role: entry/internal/exit/none,
   loop_group_id: L1/L2/... or null,
   reversibility: reversible/partial/irreversible,
   loop_risk_score: 0.xx
-}
+}}
 没有循环时用 loop_role: none 和 loop_group_id: null。
 """
+
+
+def retry_step1(language, last_step):
+    if language == "zh":
+        return (
+            "上一次的子任务范围未通过校验。请重新输出完整分段，保留示例中的英文标签。"
+            f"用闭区间连续覆盖 0 到 {last_step}：第一段从 0 开始，每段紧接上一段，最后一段在 {last_step} 结束。"
+            "逐段检查是否遗漏上下文或 tool 步骤。必要时减少分段数量。"
+        )
+    return (
+        "The previous subtask ranges did not pass validation. Return a complete replacement using the same labels. "
+        f"Cover every step from 0 through {last_step} with inclusive ranges. Start at 0, start each next range at "
+        f"the previous end plus 1, and end the last one at {last_step}. Include context and tool steps. "
+        "Use fewer subtasks if needed."
+    )
 
 
 def step2(history, question, subtasks):

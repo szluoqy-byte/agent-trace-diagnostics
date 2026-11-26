@@ -35,7 +35,7 @@ SYSTEM_PROMPTS = {
 
 
 def prompt_profile(language):
-    return f"chief-{normalize_prompt_language(language)}-v1"
+    return f"chief-{normalize_prompt_language(language)}-v2"
 
 
 def to_chief(trace):
@@ -75,7 +75,12 @@ async def run_pipeline(request, language, call_model):
     options = {"call_model": call_model, "zh_prompts": chief_prompts if language == "zh" else None}
     tasks, draft = await pipeline.step1_generate_subtasks(history, question, **options)
     if not valid_partition(tasks, len(history)):
-        raise ModelError("CHIEF 返回的子任务范围不完整，请重试诊断。")
+        last_step = len(history) - 1
+        tasks, draft = await pipeline.step1_generate_subtasks(
+            history, question, correction=chief_prompts.retry_step1(language, last_step), **options,
+        )
+        if not valid_partition(tasks, len(history)):
+            raise ModelError(f"CHIEF 两次任务分解后仍未得到完整的子任务范围，需连续覆盖步骤 #0 至 #{last_step}。")
     edges, task_edges = await pipeline.step2_generate_subtasks_edges(history, question, tasks, **options)
     agents, agent_analysis = await pipeline.step3_generate_agents(history, question, tasks, **options)
     agent_edges, agent_links = await pipeline.step4_generate_agents_edges(history, question, agents, **options)

@@ -2,19 +2,20 @@
 
 Source: https://github.com/Mr-Capybara/CHIEF/blob/2b47170c41913c8bdea34397f7d52c65360dcef9/CHIEF.py
 Workbench changes: inject asynchronous model calls and localized prompts,
-remove RAG and gold answers, and return an optional verbatim root-step quote.
+remove RAG and gold answers, accept equivalent subtask formats, and return an
+optional verbatim root-step quote.
 """
 import json
 import re
 
 
-async def step1_generate_subtasks(history_text, question, *, call_model, zh_prompts):
+async def step1_generate_subtasks(history_text, question, *, call_model, zh_prompts, correction=""):
     prompt = (
         "You are an AI assistant tasked with analyzing a multi-agent conversation history when solving a real-world problem.\n"
         f"The problem is: {question}\n"
         "Here is the conversation in JSON format:\n"
         + json.dumps(history_text, ensure_ascii=False)
-        + f"\n\nThere are total {len(history_text)} steps, each entry provides the agent output and its role.\n\n"
+        + f"\n\nThere are {len(history_text)} steps with IDs 0 through {len(history_text) - 1}.\n\n"
         "Based on this conversation, please decompose the reasoning into semantic subtasks.\n"
         "You must perform a self-reflection process to optimize your decomposition:\n"
         "1. Draft Optimization: propose an initial set of subtasks.\n"
@@ -37,65 +38,67 @@ async def step1_generate_subtasks(history_text, question, *, call_model, zh_prom
         "Important:\n"
         "- Use ONLY the above fields and labels.\n"
         "- Do NOT add markdown formatting or extra labels.\n"
-        "- Step ranges must be contiguous, cover all steps, and must NOT overlap.\n"
+        "- Use inclusive ranges in execution order. Start at 0, start each next range at the previous end plus 1, "
+        f"and end the final range at {len(history_text) - 1}. Include context and tool steps. "
+        "For a subtask of one step N, use N-N. Use fewer subtasks if needed to cover the full log.\n"
         "Now generate your optimized output below:\n"
     )
 
     if zh_prompts is not None:
         prompt = zh_prompts.step1(history_text, question)
+    if correction:
+        prompt += "\n\n" + correction
     result_text = (await call_model(1, prompt)).strip()
+    return parse_subtasks(result_text), result_text
 
-    name_pattern = r"The Subtask Name:\s*([^\n]+)"
-    range_pattern = r"Step Range:\s*(?:step)?(\d+)\s*-\s*(?:step)?(\d+)"
-    oracle_pattern = r"The Oracle:\s*([^\n]+)"
-    evidence_pattern = r"Evidence:\s*([^\n]+)"
-    loop_block_pattern = r"Loop Info:\s*\{([\s\S]+?)\}"
 
-    names = re.findall(name_pattern, result_text)
-    range_matches = re.findall(range_pattern, result_text)
-    ranges = [f"{s}-{e}" for (s, e) in range_matches]
-    oracles = re.findall(oracle_pattern, result_text)
-    evidences = re.findall(evidence_pattern, result_text)
-    loop_blocks = re.findall(loop_block_pattern, result_text)
+def parse_subtasks(result_text):
+    """Read each subtask block independently so omitted fields cannot shift its neighbors."""
+    def label_pattern(label):
+        return rf"^[ \t]*(?:(?:[-*]|\d+\.)[ \t]+)?(?:\*\*)?{label}(?:\*\*)?[ \t]*[:：](?:\*\*)?[ \t]*"
 
-    loop_infos = []
-    for blk in loop_blocks:
+    name_label = label_pattern("The Subtask Name")
+    blocks = re.split(rf"(?={name_label})", result_text, flags=re.M | re.I)
+    step = r"(?:step[ \t]*)?#?(\d{1,5})"
+    range_pattern = rf"{step}(?:[ \t]*(?:[-–—−－~～至到]|to)[ \t]*{step})?"
+    subtasks = []
+    for block in blocks:
+        if not re.match(name_label, block, flags=re.I):
+            continue
+
+        def field(label):
+            match = re.search(label_pattern(label) + r"([^\r\n]*)", block, flags=re.M | re.I)
+            return match.group(1).strip(" \t*`") if match else ""
+
+        name = field("The Subtask Name")
+        bounds = re.fullmatch(range_pattern, field("Step Range"), flags=re.I)
+        if not name or bounds is None:
+            return []
+        start, end = bounds.groups()
+        loop = re.search(label_pattern("Loop Info") + r"\s*\{([^}]+)\}", block, flags=re.M | re.I)
+        loop_text = loop.group(1) if loop else ""
+
         def extract(pattern):
-            m = re.search(pattern, blk)
-            return m.group(1).strip() if m else None
+            match = re.search(pattern, loop_text)
+            return match.group(1).strip() if match else None
 
-        loop_infos.append({
+        loop_info = {
             "is_loop_related": extract(r"is_loop_related:\s*(true|false)") == "true",
             "loop_role": extract(r"loop_role:\s*([a-zA-Z]+)") or "none",
-            "loop_group_id": extract(r"loop_group_id:\s*([A-Za-z0-9]+|null)") or "null",
+            "loop_group_id": extract(r"loop_group_id:\s*([A-Za-z0-9_]+|null)") or ("null" if loop else None),
             "reversibility": extract(r"reversibility:\s*([a-zA-Z]+)") or "reversible",
-            "loop_risk_score": float(extract(r"loop_risk_score:\s*([0-9]*\.?[0-9]+)") or 0.0)
-        })
-
-    subtasks = []
-    n_subtasks = min(len(names), len(ranges), len(oracles), len(evidences))
-    for i in range(n_subtasks):
-        n = names[i]
-        r = ranges[i]
-        o = oracles[i]
-        e = evidences[i]
-        loop_info = loop_infos[i] if i < len(loop_infos) else {
-            "is_loop_related": False,
-            "loop_role": "none",
-            "loop_group_id": None,
-            "reversibility": "reversible",
-            "loop_risk_score": 0.0
+            "loop_risk_score": float(extract(r"loop_risk_score:\s*([0-9]*\.?[0-9]+)") or 0.0),
         }
-
         subtasks.append({
-            "id": f"S{i + 1}",
-            "name": n.strip(),
-            "step_range": r.strip(),
-            "oracle": o.strip(),
-            "evidence": e.strip(),
-            "loop_info": loop_info
+            "id": f"S{len(subtasks) + 1}",
+            "name": name,
+            "step_range": f"{int(start)}-{int(end or start)}",
+            "oracle": field("The Oracle"),
+            "evidence": field("Evidence"),
+            "loop_info": loop_info,
         })
-    return subtasks, result_text
+    return subtasks
+
 
 async def step2_generate_subtasks_edges(history_text, question, subtasks, *, call_model, zh_prompts):
     prompt = (
