@@ -2,8 +2,8 @@
 import json
 import uuid
 from .diagnosis import DEFAULT_MODE
-from .diagnosis.review_policy import UNSETTLED_STATES, review_status
-from .diagnosis.synthesis import LEGACY_COMPARISON_ENGINES, UNRESOLVED_SUMMARY, select_candidate
+from .diagnosis.review_policy import review_status
+from .diagnosis.synthesis import participating_attributions, resolve_synthesis
 from .models import Trajectory
 from .normalize import fingerprint
 
@@ -402,18 +402,17 @@ class TaskStore:
             original_step = row['critical_step']
             if review:
                 chosen = json.loads(review)
-            elif comparison_state in UNSETTLED_STATES:
-                sources = {**json.loads(alternatives or '{}'), primary: row}
-                engines = json.loads(participants) if participants is not None else LEGACY_COMPARISON_ENGINES
-                steps = {name: (sources.get(name) or {}).get('critical_step') for name in engines}
-                winner, step = select_candidate({'state': comparison_state, 'primary': primary}, steps,
-                                                json.loads(assessments or '{}') if synthesis_status == 'completed' else {})
-                row['step_pending_review'] = step is None and any(
-                    type(candidate) is int and 0 <= candidate < row['steps'] for candidate in steps.values()
-                )
+            elif comparison_state and comparison_state != 'succeeded':
+                comparison = {'state': comparison_state, 'primary': primary, 'engines': json.loads(participants or 'null')}
+                sources = participating_attributions(comparison, row, json.loads(alternatives or '{}'))
+                synthesis = resolve_synthesis(comparison, sources, {
+                    'status': synthesis_status, 'summary': synthesis_summary,
+                    'assessments': json.loads(assessments or '{}'),
+                }, step_count=row['steps'])
                 chosen = {
-                    'critical_step': step, 'category': (sources.get(winner) or {}).get('category'),
-                    'summary': synthesis_summary if synthesis_status == 'completed' else UNRESOLVED_SUMMARY,
+                    'critical_step': synthesis['critical_step'],
+                    'category': sources.get(synthesis['preferred_engine'], {}).get('category', ''),
+                    'summary': synthesis['summary'],
                 }
             else:
                 chosen = row

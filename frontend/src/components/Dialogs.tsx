@@ -3,9 +3,11 @@ import type { ReactNode } from 'react'
 import { X, Download } from 'lucide-react'
 import { post } from '../api'
 import type { Job, Message, ReviewData } from '../types'
-import {unsettledComparison} from './DiagnosisComparison'
+import {modelCriticalStep} from './DiagnosisComparison'
 
-export function Dialog({title, onClose, children, busy=false}: {title:string; onClose:()=>void; children:ReactNode; busy?:boolean}) {
+export function Dialog({title, onClose, children, busy=false, className=''}: {
+  title:string; onClose:()=>void; children:ReactNode; busy?:boolean; className?:string
+}) {
   const ref = useRef<HTMLDialogElement>(null)
   useEffect(() => {
     const dialog = ref.current!
@@ -21,7 +23,7 @@ export function Dialog({title, onClose, children, busy=false}: {title:string; on
       previous?.focus({preventScroll:true})
     }
   }, [])
-  return <dialog ref={ref} aria-label={title} className="modal ws-dialog"
+  return <dialog ref={ref} aria-label={title} className={`modal ws-dialog ${className}`}
     onCancel={event=>{event.preventDefault();if(!busy)onClose()}}>
     <header><h2>{title}</h2><button className="icon-button" aria-label="关闭" disabled={busy} onClick={onClose}><X size={19}/></button></header>
     {children}
@@ -30,13 +32,11 @@ export function Dialog({title, onClose, children, busy=false}: {title:string; on
 
 export function ReviewDialog({job, messages, onClose, onDone}: {job:Job; messages?:Message[]; onClose:()=>void; onDone:()=>void}) {
   const report = job.result!
-  const synthesis = report.synthesis?.status === 'completed' ? report.synthesis : undefined
+  const synthesis = report.synthesis
   const preferred = synthesis?.preferred_engine
   const source = preferred && preferred !== report.comparison?.primary ? report.engine_runs?.[preferred]?.report : report
-  const original = synthesis ? {
-    critical_step:synthesis.critical_step, summary:synthesis.summary, category:preferred ? source?.attribution?.category ?? '' : '',
-  } : report.task_outcome !== 'succeeded' && unsettledComparison.has(report.comparison?.state ?? '') ? {
-    critical_step:null, category:'', summary:'各路定位尚未形成一致结论，关键步骤待人工复核。',
+  const original = synthesis?.summary ? {
+    critical_step:modelCriticalStep(report), summary:synthesis.summary, category:preferred ? source?.attribution?.category ?? '' : '',
   } : report.attribution!
   const saved = job.reviews?.[0]?.data
   const initial = saved ?? original

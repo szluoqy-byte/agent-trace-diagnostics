@@ -11,13 +11,20 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from ..model_headers import merge_headers
 from ..model_concurrency import ModelSlots
 from ..prompt_language import normalize_prompt_language
-from .review_policy import AGREEMENT_STATES, UNSETTLED_STATES
+from .review_policy import AGREEMENT_STATES
 
-SUPPORT_LABELS = {"high": "高", "medium": "中", "low": "低", "insufficient": "证据不足"}
-SUPPORT_ALIASES = {label: key for key, label in SUPPORT_LABELS.items()}
+SUPPORT_LABELS = {"high": "高", "medium": "中", "low": "低"}
+SUPPORT_ALIASES = {**{label: key for key, label in SUPPORT_LABELS.items()}, "insufficient": "low", "证据不足": "low"}
 SUPPORT_RANK = {"high": 3, "medium": 2, "low": 1}
 LEGACY_COMPARISON_ENGINES = ("trajdebug", "agentdebugx")
-UNRESOLVED_SUMMARY = "各路定位尚未形成一致结论，关键步骤待人工复核。"
+NO_CANDIDATE_SUMMARY = "已完成的引擎均未定位到有效关键步骤。"
+
+
+def normalize_support(value):
+    if isinstance(value, str):
+        value = value.strip().lower()
+        return SUPPORT_ALIASES.get(value, value)
+    return None
 
 PROMPTS = {
     "zh": (
@@ -54,12 +61,12 @@ FORMAT_RULES = {
 }
 ASSESSMENT_RULES = {
     "zh": (
-        "assessments 的键必须与 conclusions 中的引擎 ID 完全一致。每项 support 只能填 high、medium、low 或 insufficient "
-        "中的一个，reason 为一句话。无法定位或证据不足时也要保留该项，support 填 insufficient。"
+        "assessments 的键必须与 conclusions 中的引擎 ID 完全一致。每项 support 只能填 high、medium、low 中的一个，"
+        "reason 为一句话。未定位或证据不足时仍保留该项，support 填 low，在 reason 说明原因。"
     ),
     "en": (
-        "The assessment keys must exactly match the engine IDs in conclusions. Each support must be exactly one of high, medium, "
-        "low or insufficient, with a one-sentence reason. Keep the entry and use insufficient when evidence is unavailable."
+        "The assessment keys must exactly match the engine IDs in conclusions. Each support must be high, medium or low, "
+        "with a one-sentence reason. Keep the entry and use low if a step or evidence is unavailable. Explain this in reason."
     ),
 }
 RETRY_RULES = {
@@ -71,16 +78,13 @@ RETRY_RULES = {
 class Assessment(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    support: Literal["high", "medium", "low", "insufficient"]
+    support: Literal["high", "medium", "low"]
     reason: str = Field(min_length=1, max_length=1000)
 
     @field_validator("support", mode="before")
     @classmethod
-    def normalize_support(cls, value):
-        if isinstance(value, str):
-            label = value.strip().lower()
-            return SUPPORT_ALIASES.get(label, label)
-        return value
+    def normalize_label(cls, value):
+        return normalize_support(value)
 
 
 class SynthesisAnswer(BaseModel):
@@ -204,75 +208,94 @@ def collect_candidates(trace, reports, evidence_by_engine):
     return candidates, evidence
 
 
-def select_candidate(comparison, steps, assessments):
-    if comparison.get("state") in AGREEMENT_STATES:
-        engine = comparison["primary"]
-        return engine, steps.get(engine)
-
+def select_candidate(comparison, steps, assessments, *, step_count=None):
     support_by_step = {}
     for engine, step in steps.items():
-        rank = SUPPORT_RANK.get(assessments.get(engine, {}).get("support"), 0)
-        if type(step) is int and step >= 0 and rank:
+        if type(step) is int and step >= 0 and (step_count is None or step < step_count):
+            support = normalize_support((assessments.get(engine) or {}).get("support"))
+            rank = SUPPORT_RANK.get(support, SUPPORT_RANK["low"])
             support_by_step.setdefault(step, []).append((engine, rank))
+    if not support_by_step:
+        return None, None, None
 
     # Compare the strongest support first. Further support for the same step can break a tie.
     profiles = {step: tuple(sorted((rank for _, rank in supporters), reverse=True))
                 for step, supporters in support_by_step.items()}
-    highest = max(profiles.values(), default=())
+    highest = max(profiles.values())
     leaders = [step for step, profile in profiles.items() if profile == highest]
-    if len(leaders) != 1:
-        return None, None
-    step = leaders[0]
     primary = comparison.get("primary")
-    engine, _ = max(support_by_step[step], key=lambda supporter: (supporter[1], supporter[0] == primary))
-    return engine, step
+    primary_step = steps.get(primary)
+    if type(primary_step) is not int:
+        primary_step = None
+    step = primary_step if primary_step in leaders else min(leaders)
+    engine, _ = min(support_by_step[step], key=lambda supporter: (-supporter[1], supporter[0] != primary, supporter[0]))
+    tie_break = ("primary" if step == primary_step else "earliest") if len(leaders) > 1 else None
+    return engine, step, tie_break
+
+
+def participating_attributions(comparison, primary_attribution, completed):
+    primary = comparison.get("primary")
+    participants = comparison.get("engines") or LEGACY_COMPARISON_ENGINES
+    return {name: (primary_attribution if name == primary else completed[name]) or {}
+            for name in participants if name in completed or name == primary}
+
+
+def resolve_synthesis(comparison, attributions, synthesis, *, step_count=None):
+    """Select a step from the same inputs in saved reports, lists and live results."""
+    clean = {key: value for key, value in synthesis.items() if key not in {"confidence", "assessments"}}
+    steps = {engine: attribution.get("critical_step") for engine, attribution in attributions.items()}
+    assessments = {}
+    if comparison.get("state") not in AGREEMENT_STATES and synthesis.get("status") == "completed":
+        for engine, assessment in (synthesis.get("assessments") or {}).items():
+            support = normalize_support(assessment.get("support"))
+            if engine in attributions:
+                assessments[engine] = {**assessment, "support": support if support in SUPPORT_RANK else "low"}
+    preferred, step, tie_break = select_candidate(comparison, steps, assessments, step_count=step_count)
+    if assessments:
+        clean["assessments"] = assessments
+    summary = clean.get("summary") or attributions.get(preferred, {}).get("summary") or (
+        "已根据引擎诊断定位关键步骤。" if step is not None else NO_CANDIDATE_SUMMARY
+    )
+    return {**clean, "summary": summary, "preferred_engine": preferred, "critical_step": step, "tie_break": tie_break}
 
 
 def ground_answer(answer, candidates, evidence, comparison):
     result = answer.model_dump(exclude={"evidence_ids"}, exclude_none=True)
     references = [evidence[key] for key in dict.fromkeys(answer.evidence_ids) if key in evidence][:8]
-    if comparison["state"] in AGREEMENT_STATES:
-        result.pop("assessments", None)
     assessments = result.get("assessments") or {}
     for engine, assessment in assessments.items():
-        if not any(ref["engine"] == engine and ref["step"] == candidates[engine]["critical_step"] for ref in references):
-            assessment["support"] = "insufficient"
-    steps = {engine: candidate["critical_step"] for engine, candidate in candidates.items()}
-    preferred, step = select_candidate(comparison, steps, assessments)
-    return {**result, "preferred_engine": preferred, "critical_step": step, "evidence": references}
+        if not any(ref["engine"] == engine and ref["step"] == candidates.get(engine, {}).get("critical_step")
+                   for ref in references):
+            assessment["support"] = "low"
+    resolved = resolve_synthesis(comparison, candidates, {**result, "status": "completed", "evidence": references})
+    resolved.pop("status")
+    return resolved
 
 
-def project_synthesis(report):
+def project_synthesis(report, *, step_count=None, outcome=None):
     """Apply current selection rules to saved reports without rewriting them."""
     synthesis = report.get("synthesis") or {}
     comparison = report.get("comparison") or {}
-    if synthesis.get("status") != "completed" or not comparison:
+    if (not comparison or synthesis.get("status") in {"running", "not_needed"}
+            or comparison.get("state") == "succeeded" or (outcome or report.get("task_outcome")) == "succeeded"):
         return report
-    primary = comparison["primary"]
-    participants = comparison.get("engines", LEGACY_COMPARISON_ENGINES)
-    steps = {
-        name: ((report if name == primary else run.get("report") or {}).get("attribution") or {}).get("critical_step")
-        for name, run in report.get("engine_runs", {}).items()
-        if name in participants and run["status"] == "completed"
-    }
-    preferred, step = select_candidate(comparison, steps, synthesis.get("assessments") or {})
-    clean = {key: value for key, value in synthesis.items() if key != "confidence"}
-    if comparison["state"] in AGREEMENT_STATES:
-        clean.pop("assessments", None)
-    return {**report, "synthesis": {**clean, "preferred_engine": preferred, "critical_step": step}}
+    completed = {name: (run.get("report") or {}).get("attribution")
+                 for name, run in (report.get("engine_runs") or {}).items() if run["status"] == "completed"}
+    attributions = participating_attributions(comparison, report.get("attribution"), completed)
+    return {**report, "synthesis": resolve_synthesis(
+        comparison, attributions, {"status": "incomplete", **synthesis}, step_count=step_count,
+    )}
 
 
-def review_target(report):
-    synthesis = project_synthesis(report).get("synthesis") or {}
+def review_target(report, *, step_count=None, outcome=None):
+    synthesis = project_synthesis(report, step_count=step_count, outcome=outcome).get("synthesis") or {}
     original = report["attribution"]
     algorithm = report.get("algorithm")
     comparison = report.get("comparison") or {}
-    if synthesis.get("status") != "completed":
-        if report.get("task_outcome") != "succeeded" and comparison.get("state") in UNSETTLED_STATES:
-            return {"summary": UNRESOLVED_SUMMARY, "critical_step": None, "category": ""}, algorithm
+    if "critical_step" not in synthesis or not comparison:
         return original, algorithm
     preferred = synthesis["preferred_engine"]
-    source = report if preferred == report["comparison"]["primary"] else report["engine_runs"].get(preferred, {}).get("report")
+    source = report if preferred == comparison.get("primary") else (report.get("engine_runs") or {}).get(preferred, {}).get("report")
     category = ((source or {}).get("attribution") or {}).get("category", "")
     conclusion = {"summary": synthesis["summary"], "critical_step": synthesis["critical_step"], "category": category}
     return conclusion, (source or {}).get("algorithm", algorithm)
@@ -285,7 +308,7 @@ async def synthesize(trace, reports, evidence_by_engine, settings, comparison):
     aligned = comparison["state"] in AGREEMENT_STATES
     output_format = ALIGNED_OUTPUT_FORMAT if aligned else json.dumps({
         "summary": "...",
-        "assessments": {engine: {"support": "insufficient", "reason": "..."} for engine in candidates},
+        "assessments": {engine: {"support": "low", "reason": "..."} for engine in candidates},
         "evidence_ids": [],
     })
     language = normalize_prompt_language(settings.prompt_language)

@@ -54,14 +54,14 @@ def dual_answer(system, user=None):
     return agentdebugx_answer(system)
 
 
-def test_synthesis_cannot_select_candidate_with_unverified_evidence():
+def test_synthesis_reduces_unverified_candidate_to_low_support():
     answer = SynthesisAnswer.model_validate(dual_answer("You synthesize Agent"))
     candidates = {"trajdebug": {"critical_step": 1}, "agentdebugx": {"critical_step": 3}}
     evidence = {"E1": {"engine": "trajdebug", "step": 1, "quote": "verified"}}
     result = ground_answer(answer, candidates, evidence, {"state":"different", "primary":"trajdebug"})
     assert result["preferred_engine"] == "trajdebug" and result["critical_step"] == 1
     assert "confidence" not in result
-    assert result["assessments"]["agentdebugx"]["support"] == "insufficient"
+    assert result["assessments"]["agentdebugx"]["support"] == "low"
     assert result["evidence"] == [evidence["E1"]]
 
 
@@ -74,6 +74,8 @@ def test_synthesis_accepts_fenced_json_and_normalizes_supported_labels():
     assert answer.assessments["trajdebug"].support == "high"
     assert answer.assessments["agentdebugx"].support == "medium"
     assert answer.evidence_ids == []
+    response["assessments"]["agentdebugx"]["support"] = "证据不足"
+    assert parse_synthesis_answer(json.dumps(response), aligned=False, engines=engines).assessments["agentdebugx"].support == "low"
     with pytest.raises(ValueError):
         parse_synthesis_answer('{"summary":"output one"}\n{"summary":"output two"}', aligned=True, engines=engines)
     with pytest.raises(ValueError):
@@ -171,7 +173,7 @@ def test_workspace_model_limit_can_shrink_below_occupied_slots(tmp_path):
     lease.release()
 
 
-def test_aligned_step_is_final_and_disagreement_ties_are_unresolved():
+def test_aligned_step_is_final_and_exact_ties_prefer_primary():
     answer = SynthesisAnswer.model_validate(dual_answer("You synthesize Agent"))
     candidates = {"trajdebug": {"critical_step": 1}, "agentdebugx": {"critical_step": 1}}
     aligned = ground_answer(answer, candidates, {}, {"state":"aligned", "primary":"trajdebug"})
@@ -186,16 +188,17 @@ def test_aligned_step_is_final_and_disagreement_ties_are_unresolved():
                       "assessments": {"trajdebug":{"support":"high"}, "agentdebugx":{"support":"high"}}},
     }
     projected = project_synthesis(legacy)["synthesis"]
-    assert projected["critical_step"] is None and projected["preferred_engine"] is None
+    assert projected["critical_step"] == 1 and projected["preferred_engine"] == "trajdebug"
+    assert projected["tie_break"] == "primary"
     assert "confidence" not in projected and legacy["synthesis"]["confidence"] == "high"
 
 
 @pytest.mark.parametrize("supports, evidence_ids, expected", [
     (("high", "medium", "high"), ["E1", "E2", "E3"], ("trajdebug", 14)),
     (("high", "high", "high"), ["E1", "E2", "E3"], ("trajdebug", 14)),
-    (("high", "medium", "high"), ["E1", "E3"], (None, None)),
+    (("high", "medium", "high"), ["E1", "E3"], ("trajdebug", 14)),
     (("medium", "medium", "high"), ["E1", "E2", "E3"], ("chief", 12)),
-    (("high", "high", "high"), [], (None, None)),
+    (("high", "high", "high"), [], ("trajdebug", 14)),
 ])
 def test_synthesis_ranks_verified_support_by_step(supports, evidence_ids, expected):
     steps = {"trajdebug": 14, "agentdebugx": 14, "chief": 12}
@@ -209,7 +212,7 @@ def test_synthesis_ranks_verified_support_by_step(supports, evidence_ids, expect
     result = ground_answer(answer, candidates, evidence, {"state": "different", "primary": "trajdebug"})
     assert (result["preferred_engine"], result["critical_step"]) == expected
     if "E2" not in evidence_ids:
-        assert result["assessments"]["agentdebugx"]["support"] == "insufficient"
+        assert result["assessments"]["agentdebugx"]["support"] == "low"
 
 
 @pytest.mark.parametrize("corroborated", [False, True])
@@ -258,8 +261,8 @@ def test_conflict_uses_ranked_candidate_in_review_task_list_feedback_and_export(
         tied["synthesis"]["assessments"]["agentdebugx"]["support"] = "insufficient"
         store.update(job_id, result=tied)
         item = client.get(base).json()["items"][0]
-        assert item["critical_step"] is None and item["step_pending_review"] is True
-        assert client.post(f"/api/jobs/{job_id}/feedback").status_code == 409
+        assert item["critical_step"] == 1 and item["review_status"] is None
+        assert client.get(f"/api/jobs/{job_id}").json()["feedback_eligible"] is True
         store.update(job_id, result=reports)
     response = client.post(f"/api/jobs/{job_id}/reviews", json={
         "decision":"modified", "summary":"人工判断", "critical_step":2, "category":"type-review",
@@ -337,6 +340,53 @@ def test_saved_step_agreement_shows_key_step_and_waives_review(tmp_path, synthes
     assert client.get(route, params={"review":"pending"}).json()["total"] == 0
     markdown = client.get(f"/api/jobs/{job_id}/export?format=md").text
     assert "人工复核：免复核" in markdown and "关键步骤：#1" in markdown
+
+
+@pytest.mark.parametrize("synthesis_status, candidates, expected", [
+    ("completed", (3, 2, 2), 2),
+    ("failed", (3, 2, 2), 2),
+    ("incomplete", (3, None, None), 3),
+    ("failed", (None, 3, 2), 2),
+    ("failed", (None, None, 99), None),
+])
+def test_saved_reports_show_valid_candidate_in_every_synthesis_state(tmp_path, synthesis_status, candidates, expected):
+    app = create_app(Settings(data_dir=tmp_path, base_url="http://127.0.0.1:9/v1", model="fixture"))
+    store = app.state.store
+    trace_id = store.add_trace(pipeline_trace())["id"]
+    client = TestClient(app)
+    task = client.post("/api/tasks", json={"name":"历史综合", "trace_ids":[trace_id], "start":True,
+                                          "diagnosis_mode":"deep"}).json()
+    route = f"/api/tasks/{task['task_id']}/runs/{task['run_id']}/traces"
+    job_id = store.run_rows(task["run_id"])[0]["job_id"]
+    names = ("trajdebug", "agentdebugx", "chief")
+    reports = {name:{"attribution":{"critical_step":step, "summary":"引擎结论", "reasoning":"依据原文", "category":name}}
+               for name, step in zip(names, candidates, strict=True)}
+    synthesis = {"status":synthesis_status}
+    runs = {name: {"status":"completed", "report":report} for name, report in reports.items()}
+    if synthesis_status == "incomplete":
+        runs["agentdebugx"] = runs["chief"] = {"status":"failed"}
+    if synthesis_status == "completed":
+        synthesis.update(summary="历史综合结论", critical_step=None, preferred_engine=None, assessments={
+            "trajdebug":{"support":"high"}, "agentdebugx":{"support":"insufficient"}, "chief":{"support":"high"},
+        })
+    report = {**reports["trajdebug"], "schema_version":2, "mode":"live", "algorithm":"TrajDebug",
+              "comparison":{"state":"incomplete" if synthesis_status == "incomplete" else "different",
+                            "engines":list(names), "primary":"trajdebug"}, "engine_runs":runs, "synthesis":synthesis}
+    store.update(job_id, status="completed", result=report)
+    row = client.get(route).json()["items"][0]
+    detail = client.get(f"{route}/{trace_id}").json()["job"]
+    assert row["critical_step"] == detail["result"]["synthesis"]["critical_step"] == expected
+    assert row["review_status"] is None and detail["review_status"] is None
+    assert detail["feedback_eligible"] is (expected is not None)
+    markdown = client.get(f"/api/jobs/{job_id}/export?format=md").text
+    assert (f"关键步骤：#{expected}" if expected is not None else "暂无有效候选步骤") in markdown
+    if synthesis_status == "completed":
+        assert detail["result"]["synthesis"]["assessments"]["agentdebugx"]["support"] == "low"
+        response = client.post(f"/api/jobs/{job_id}/reviews", json={
+            "decision":"confirmed", "summary":"历史综合结论", "critical_step":2, "category":"chief",
+        })
+        assert response.status_code == 200, response.text
+    assert store.job(job_id)["result"] == report
 
 
 @pytest.mark.parametrize("language", ["en", "zh"])

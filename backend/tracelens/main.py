@@ -223,7 +223,10 @@ def create_app(settings=None, *, frontend_dir=None):
         except ValueError:
             read_only = True
         reviews = store.reviews(job_id)
-        result = project_synthesis(current['result']) if current.get('result') else current.get('result')
+        result = current.get('result')
+        if result and result.get('comparison'):
+            trace = require_trace(current['trace_id'])['data']
+            result = project_synthesis(result, step_count=len(trace['messages']), outcome=trace['outcome'])
         return {**current, 'result': result, 'reviews': reviews, 'review_status': job_review_status(current, reviews),
                 'feedback': store.latest_feedback(job_id),
                 'feedback_eligible': eligible and not read_only, 'feedback_unavailable_reason': '历史分析记录只读' if read_only else reason,
@@ -319,8 +322,8 @@ def create_app(settings=None, *, frontend_dir=None):
             raise HTTPException(409, "请等待诊断完成后复核")
         if body.decision == "rejected" and body.critical_step is not None:
             raise HTTPException(422, "驳回结论时关键步骤应留空")
-        original, algorithm = review_target(job["result"])
         trace = require_trace(job["trace_id"])["data"]
+        original, algorithm = review_target(job["result"], step_count=len(trace["messages"]), outcome=trace["outcome"])
         if body.critical_step is not None:
             invalid_step = body.critical_step >= len(trace["messages"])
             if not invalid_step and algorithm not in {"AgentDebugX", "CHIEF"}:
@@ -369,7 +372,8 @@ def create_app(settings=None, *, frontend_dir=None):
         trace = require_trace(job["trace_id"])
         reviews = store.reviews(job_id)
         feedback = store.latest_feedback(job_id)
-        job = {**job, "result": project_synthesis(job["result"])}
+        job = {**job, "result": project_synthesis(job["result"], step_count=len(trace["data"]["messages"]),
+                                                  outcome=trace["data"]["outcome"])}
         payload = {"trace": trace_with_source_summary(trace), "job": {**job, "review_status": job_review_status(job, reviews)}, "reviews": reviews,
                    "feedback": feedback, "feedback_history": store.feedback_history(job_id)}
         headers = {"Content-Disposition": f'attachment; filename="tianluo-diagnosis-{job_id[:8]}.{format}"'}

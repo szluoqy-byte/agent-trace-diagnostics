@@ -119,7 +119,7 @@ it('opens dual synthesis first and keeps engine-specific inspection tabs', () =>
   expect(screen.queryByText(/综合分析引文/)).toBeNull()
   fireEvent.click(screen.getByRole('button',{name:'关键步骤 #7'}))
   expect(jump).toHaveBeenLastCalledWith({step:7,quote:''})
-  fireEvent.click(screen.getByRole('button',{name:/暂定关键步骤 #4.*定位轨迹/}))
+  fireEvent.click(screen.getByRole('button',{name:/综合关键步骤 #4.*定位轨迹/}))
   expect(jump).toHaveBeenLastCalledWith({step:4,quote:''})
   fireEvent.click(screen.getByRole('tab',{name:'TrajDebug'}))
   expect(within(screen.getByRole('tablist',{name:'引擎诊断内容'})).queryByRole('tab',{name:'改进建议'})).toBeNull()
@@ -171,8 +171,8 @@ it('shows the waiver and keeps manual review available for aligned results', () 
 it.each(['completed', 'failed'] as const)('shows the clickable agreed step with missing quotes and %s synthesis', status => {
   const dual: Report = {...report, comparison:{state:'same_step',primary:'trajdebug'},
     engine_runs:{trajdebug:{status:'completed'},agentdebugx:{status:'completed'},chief:{status:'completed'}},
-    synthesis:status === 'completed' ? {status, summary:'引擎选中同一步骤', critical_step:null, preferred_engine:null,
-      evidence:[], model:'fixture', calls:1} : {status, failure:'format'}}
+    synthesis:status === 'completed' ? {status, summary:'引擎选中同一步骤', critical_step:7, preferred_engine:'trajdebug',
+      evidence:[], model:'fixture', calls:1} : {status, failure:'format',critical_step:7}}
   const jump = vi.fn()
   render(<Inspector job={{...job,result:dual,review_status:'waived'}} report={dual} onJump={jump} onReview={vi.fn()}/>)
   expect(screen.getByText('免复核')).toBeTruthy()
@@ -185,6 +185,32 @@ it.each(['completed', 'failed'] as const)('shows the clickable agreed step with 
   expect(screen.getByText('免复核')).toBeTruthy()
 })
 
+it('keeps the fallback step visible with a separate review status when synthesis fails', () => {
+  const combined: Report = {...report,
+    comparison:{state:'different',primary:'trajdebug',engines:['trajdebug','agentdebugx']},
+    engine_runs:{trajdebug:{status:'completed'}, agentdebugx:{status:'completed'}},
+    synthesis:{status:'failed', failure:'format', critical_step:2, preferred_engine:'agentdebugx', summary:'依据引擎结论'},
+  }
+  const jump = vi.fn()
+  const {rerender} = render(<Inspector job={{...job,result:combined}} report={combined} onJump={jump} onReview={vi.fn()}/>)
+  expect(screen.getByText('待人工复核')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button',{name:/综合关键步骤 #2.*定位轨迹/}))
+  expect(jump).toHaveBeenCalledWith({step:2,quote:''})
+  const rejected = {id:'review', created_at:'', data:{decision:'rejected', critical_step:null, category:'', summary:'驳回结论', notes:''}}
+  rerender(<Inspector job={{...job,result:combined,reviews:[rejected]}} report={combined} onJump={jump} onReview={vi.fn()}/>)
+  expect(screen.getByRole('button',{name:/原综合关键步骤 #2.*定位轨迹/})).toBeTruthy()
+  expect(screen.getByText('已驳回')).toBeTruthy()
+})
+
+it('shows an explicit key-step placeholder when every candidate is invalid', () => {
+  const combined: Report = {...report, comparison:{state:'unresolved',primary:'trajdebug'},
+    engine_runs:{trajdebug:{status:'completed'},agentdebugx:{status:'completed'}},
+    synthesis:{status:'incomplete',critical_step:null,preferred_engine:null}}
+  render(<Inspector job={{...job,result:combined}} report={combined} onJump={vi.fn()} onReview={vi.fn()}/>)
+  expect(screen.getByText('暂无有效候选步骤', {exact:false})).toBeTruthy()
+  expect(screen.queryByRole('button',{name:/综合关键步骤/})).toBeNull()
+})
+
 it('shows all three participants and can adopt and inspect the CHIEF candidate', () => {
   const source = {step:3, quote:'refund completed', matched:true, original_matched:true}
   const chief: Report = {...report, algorithm:'CHIEF', triggers:[], instances:[], evidence:[source],
@@ -194,7 +220,8 @@ it('shows all three participants and can adopt and inspect the CHIEF candidate',
       candidates:{candidate_error_steps:[{step_id:3, agent_in_step:['billing'], irrecoverability_issue:{reason:'不可撤销'},
         data_issue:{explanation:''}}]}}}
   const combined: Report = {...report, comparison:{state:'different',primary:'trajdebug',engines:['trajdebug','agentdebugx','chief']},
-    engine_runs:{trajdebug:{status:'completed'}, agentdebugx:{status:'completed'}, chief:{status:'completed',report:chief}},
+    engine_runs:{trajdebug:{status:'completed'}, agentdebugx:{status:'completed',report:{...report,
+      algorithm:'AgentDebugX', attribution:{...report.attribution!,critical_step:3}}}, chief:{status:'completed',report:chief}},
     synthesis:{status:'completed',summary:'三路对退款根因给出不同步骤。',preferred_engine:'chief',critical_step:3,
       assessments:{trajdebug:{support:'medium',reason:'部分支持'},agentdebugx:{support:'low',reason:'证据较弱'},
         chief:{support:'high',reason:'有原文'}},evidence:[{...source,engine:'chief'}],model:'fixture',calls:1}}
@@ -204,7 +231,9 @@ it('shows all three participants and can adopt and inspect the CHIEF candidate',
   expect(screen.queryByText('历史复核参考')).toBeNull()
   const chiefCard = screen.getByRole('heading',{name:'CHIEF'}).closest('section')!
   expect(within(chiefCard).getByText('高')).toBeTruthy()
-  fireEvent.click(screen.getByRole('button',{name:/暂定关键步骤 #3.*定位轨迹/}))
+  const adCard = screen.getByRole('heading',{name:'AgentDebugX'}).closest('section')!
+  expect(within(adCard).getByText('低')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button',{name:/综合关键步骤 #3.*定位轨迹/}))
   expect(jump).toHaveBeenLastCalledWith({step:3,quote:''})
   fireEvent.click(screen.getByRole('button',{name:'查看CHIEF详情'}))
   expect(screen.getByText('根因 Agent · billing')).toBeTruthy()
@@ -244,7 +273,7 @@ it('distinguishes a missing CHIEF key step from a successful trace', () => {
   expect(screen.queryByRole('tab',{name:'证据与候选'})).toBeNull()
 })
 
-it('links the overview to the reviewed step and clears the link on rejection', () => {
+it('links to the reviewed step and retains the original step for reference after rejection', () => {
   const combined: Report = {...report, comparison:{state:'different',primary:'trajdebug'},
     engine_runs:{trajdebug:{status:'completed'},chief:{status:'completed',report:{...report,algorithm:'CHIEF'}}},
     synthesis:{status:'completed',summary:'模型综合结论',critical_step:7,preferred_engine:'trajdebug',
@@ -260,7 +289,8 @@ it('links the overview to the reviewed step and clears the link on rejection', (
   expect(screen.getByText('人工选择步骤四')).toBeTruthy()
   expect(screen.getAllByRole('button',{name:'关键步骤 #7'})).toHaveLength(2)
   rerender(<Inspector job={{...reviewedJob,reviews:[{...review,data:{...review.data,decision:'rejected',critical_step:null}}]}} {...props}/>)
-  expect(screen.queryByRole('button',{name:/定位轨迹/})).toBeNull()
+  expect(screen.queryByRole('button',{name:/人工复核关键步骤/})).toBeNull()
+  expect(screen.getByRole('button',{name:/原综合关键步骤 #7.*定位轨迹/})).toBeTruthy()
   expect(screen.getByText('已驳回')).toBeTruthy()
 })
 

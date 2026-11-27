@@ -1,5 +1,7 @@
+import {ChartColumn} from 'lucide-react'
 import type {ModelUsage, Report} from '../types'
 import {engineLabels, engines} from './DiagnosisComparison'
+import TraceInfoPanel from './TraceInfoPanel'
 
 const integers = new Intl.NumberFormat('zh-CN')
 const decimals = new Intl.NumberFormat('zh-CN', {maximumFractionDigits:2})
@@ -58,24 +60,23 @@ export default function DiagnosisUsage({report}: {report:Report}) {
   }
   if (!rows.length || report.mode === 'demo') return null
 
-  return <details className="diagnosis-usage" name="trace-disclosures">
-    <summary>算法用量</summary>
-    <div className="trace-disclosure-body">
-    <table aria-label="算法用量">
-      <thead><tr><th scope="col">算法</th><th scope="col">请求 / 调用</th><th scope="col">耗时</th><th scope="col">本轮 Tokens</th></tr></thead>
-      <tbody>{rows.map(({label,seconds,usage}) => {
-        const tokens = totalTokens(usage)
-        return <tr key={label}>
-          <th scope="row">{label}</th>
-          <td>
-            {usage?.requests == null ? '—' : `${integers.format(usage.requests)} 次`}
-            {usage?.cache_hits ? <small className="diagnosis-cache-hits">缓存命中 {integers.format(usage.cache_hits)} 次</small> : null}
-          </td>
-          <td>{seconds == null ? '—' : `${decimals.format(seconds)} 秒`}</td>
-          <td>{tokens == null ? '—' : integers.format(tokens)}</td>
-        </tr>
-      })}</tbody>
-    </table>
+  return <TraceInfoPanel title="算法用量" icon={ChartColumn}>
+    <div className="diagnosis-usage">
+      <table aria-label="算法用量明细">
+        <thead><tr><th scope="col">算法</th><th scope="col">调用次数</th><th scope="col">耗时</th><th scope="col">Tokens</th></tr></thead>
+        <tbody>{rows.map(({label,seconds,usage}) => {
+          const tokens = totalTokens(usage)
+          return <tr key={label}>
+            <th scope="row">{label}</th>
+            <td>
+              {usage?.requests == null ? '—' : `${integers.format(usage.requests)} 次`}
+              {usage?.cache_hits ? <small className="diagnosis-cache-hits">缓存命中 {integers.format(usage.cache_hits)} 次</small> : null}
+            </td>
+            <td>{seconds == null ? '—' : `${decimals.format(seconds)} 秒`}</td>
+            <td>{tokens == null ? '—' : integers.format(tokens)}</td>
+          </tr>
+        })}</tbody>
+      </table>
     </div>
-  </details>
+  </TraceInfoPanel>
 }

@@ -1,7 +1,7 @@
 export type EngineName = 'trajdebug' | 'agentdebugx' | 'chief'
 export type DiagnosisLevel = 'fast' | 'standard' | 'deep'
 export type DiagnosisMode = DiagnosisLevel | EngineName | 'dual' | 'dual_chief'
-export type EvidenceSupport = 'high' | 'medium' | 'low' | 'insufficient'
+export type EvidenceSupport = 'high' | 'medium' | 'low'
 export interface ModelUsage {
   requests: number
   prompt_tokens?: number
@@ -11,6 +11,7 @@ export interface ModelUsage {
 }
 export type DiagnosisSynthesis = {
   duration_seconds?: number; requests?: number; prompt_tokens?: number; completion_tokens?: number
+  critical_step?: number | null; preferred_engine?: EngineName | null; summary?: string; tie_break?: 'primary' | 'earliest' | null
 } & (
   | {status: 'running' | 'incomplete' | 'not_needed' | 'insufficient'}
   | {status: 'failed'; failure?: 'http' | 'connection' | 'format' | 'empty' | 'length' | 'filtered'; http_status?: number; model?: string}

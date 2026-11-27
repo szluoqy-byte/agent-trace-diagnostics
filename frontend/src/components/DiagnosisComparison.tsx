@@ -6,19 +6,24 @@ export const engineLabels = {trajdebug: 'TrajDebug', agentdebugx: 'AgentDebugX',
 export const engines = ['trajdebug', 'agentdebugx', 'chief'] as const
 const synthesisStatusLabels = {
   running: '正在综合已完成的诊断结果…',
-  incomplete: '至少两路完成后才会生成综合分析。可查看各引擎状态。',
+  incomplete: '综合评估未完成。',
   not_needed: '业务运行成功，无需评估失败归因。',
   insufficient: '缺少可核验的根因原文，证据不足。',
-  failed: '综合分析失败，可查看各引擎的原始结论。',
+  failed: '综合评估请求失败。',
 }
-export const unsettledComparison = new Set(['different', 'unresolved', 'incomplete'])
-const supportLabels: Record<EvidenceSupport, string> = {high:'高', medium:'中', low:'低', insufficient:'证据不足'}
+const supportLabels: Record<EvidenceSupport, string> = {high:'高', medium:'中', low:'低'}
 const synthesisFailureLabels = {
   connection: '模型连接失败或超时',
   format: '模型输出未通过 JSON 格式校验',
   empty: '模型未返回评估内容',
   length: '评估输出达到 token 上限并被截断',
   filtered: '模型拒绝返回评估内容或服务触发了内容过滤',
+}
+
+export function modelCriticalStep(report?: Report | null) {
+  if (report?.task_outcome === 'succeeded' || report?.comparison?.state === 'succeeded'
+    || report?.synthesis?.status === 'not_needed') return null
+  return report?.synthesis?.critical_step !== undefined ? report.synthesis.critical_step : report?.attribution?.critical_step ?? null
 }
 
 export function AgentDebugXDetails({report, jobId, onJump, section = 'all'}: {
@@ -61,10 +66,12 @@ export default function DiagnosisComparison({report, onJump, onEngine, reviewWai
   const sameStep = comparison?.state === 'same_step'
   const agreed = comparison?.state === 'aligned' || sameStep
   const included = comparison?.engines
-  const modelStep = agreed ? report.attribution?.critical_step
-    : synthesis?.status === 'completed' ? synthesis.critical_step : null
-  const finalStep = review ? review.decision === 'rejected' ? null : review.critical_step : modelStep
-  const stepLabel = review ? '人工复核关键步骤' : agreed ? '一致关键步骤' : '暂定关键步骤'
+  const modelStep = modelCriticalStep(report)
+  const reviewedStep = review?.decision === 'rejected' ? null : review?.critical_step
+  const finalStep = reviewedStep ?? modelStep
+  const showStep = report.task_outcome !== 'succeeded' && comparison?.state !== 'succeeded' && synthesis?.status !== 'not_needed'
+  const stepLabel = reviewedStep != null ? '人工复核关键步骤' : review && modelStep != null ? '原综合关键步骤'
+    : agreed && finalStep != null ? '一致关键步骤' : '综合关键步骤'
   const synthesisError = synthesis?.status === 'failed' && synthesis.failure
     ? synthesis.failure === 'http' ? `模型服务返回 HTTP ${synthesis.http_status}` : synthesisFailureLabels[synthesis.failure]
     : null
@@ -73,29 +80,24 @@ export default function DiagnosisComparison({report, onJump, onEngine, reviewWai
     <div className="section-title"><h2>综合结论</h2>
       {review ? <span className={review.decision === 'rejected' ? 'status-tag' : 'status-tag green'}>
         {review.decision === 'rejected' ? '已驳回' : '已复核'}
-      </span> : reviewWaived ? <span className="status-tag green">免复核</span> : null}
+      </span> : reviewWaived ? <span className="status-tag green">免复核</span>
+        : showStep && comparison ? <span className="status-tag">待人工复核</span> : null}
     </div>
     {included && included.length >= 2 && synthesis?.status !== 'not_needed' ? <p className="muted">
       纳入综合评估 {included.length} 路{comparison?.state === 'incomplete' ? '，部分引擎未完成。' : ''}
     </p> : null}
-    {finalStep != null ? <button type="button" className="synthesis-step" onClick={() => onJump({step:finalStep, quote:''})}>
-      <span className="synthesis-step-main">
-        <span className="synthesis-step-label">{stepLabel} <strong>#{finalStep}</strong></span>
-        {!agreed && !review ? <span className="status-tag">待人工复核</span> : null}
-      </span>
+    {showStep && (finalStep != null ? <button type="button" className="synthesis-step" onClick={() => onJump({step:finalStep, quote:''})}>
+      <span className="synthesis-step-label">{stepLabel} <strong>#{finalStep}</strong></span>
       <span className="synthesis-step-action">定位轨迹 <ArrowUpRight size={18} aria-hidden="true"/></span>
-    </button> : null}
+    </button> : <div className="synthesis-step-empty"><strong>{stepLabel}</strong> · 暂无有效候选步骤</div>)}
     <div className="diagnosis-summary-text">
-    {synthesis?.status === 'completed' ? <>
-      <div className="conclusion"><strong>{synthesis.summary}</strong></div>
-      {finalStep == null && !review ? <p className="muted">关键步骤待人工复核。</p> : null}
-    </> : agreed && modelStep != null ? <>
-      <div className="conclusion"><strong>参与综合的各路均定位到该关键步骤。</strong></div>
-      {synthesis?.status === 'failed' ? <p className="muted">综合说明生成失败，可查看引擎详情。
-        {synthesisError ? ` ${synthesisError}。` : null}</p> : null}
-    </> : <p className="muted">{synthesis ? synthesisStatusLabels[synthesis.status]
-      : comparison ? '此历史记录可查看各引擎原始结论。重新生成诊断可生成综合分析。' : '等待引擎诊断结果…'}
-      {synthesisError ? ` ${synthesisError}。` : null}</p>}
+    {synthesis?.summary ? <div className="conclusion"><strong>{synthesis.summary}</strong></div> : null}
+    {synthesis?.status !== 'completed' ? <p className="muted">{synthesis ? synthesisStatusLabels[synthesis.status]
+      : comparison ? '可查看各引擎原始结论。' : '等待引擎诊断结果…'}
+      {synthesisError ? ` ${synthesisError}。` : null}
+      {modelStep != null ? '关键步骤依据已完成的引擎诊断。' : null}</p> : null}
+    {synthesis?.tie_break === 'primary' ? <p className="muted">候选同分，优先展示主引擎定位的步骤。</p> : null}
+    {synthesis?.tie_break === 'earliest' ? <p className="muted">候选同分，优先展示轨迹中较早的候选步骤。</p> : null}
     {sameStep ? <p className="muted">部分引擎缺少可核验的原文引用，可点击关键步骤查看轨迹。</p> : null}
     {review ? <div className="review-note"><CircleCheck size={15}/><div>人工复核结论<p>{review.summary}</p></div></div> : null}
     </div>
@@ -114,12 +116,12 @@ export default function DiagnosisComparison({report, onJump, onEngine, reviewWai
           {legacyReference ? <span className="mini-meta">历史复核参考</span> : null}
           {!assessment ? <span className="mini-meta">{run.status === 'completed' ? '已完成' : run.status === 'failed' ? '失败' : '运行中'}</span> : null}
         </div>
-        {step != null || assessment ? <div className="engine-candidate">
-          {step != null ? <button type="button" className="engine-candidate-step"
+        {step != null ? <div className="engine-candidate">
+          <button type="button" className="engine-candidate-step"
             onClick={() => onJump({step, quote:''})}>关键步骤 <strong>#{step}</strong>
             <ArrowUpRight size={14} aria-hidden="true"/>
-          </button> : null}
-          {assessment ? <span className="engine-candidate-confidence">候选置信度 <strong>{supportLabels[assessment.support]}</strong></span> : null}
+          </button>
+          {assessment ? <span className="engine-candidate-confidence" title={assessment.reason}>候选置信度 <strong>{supportLabels[assessment.support] ?? '低'}</strong></span> : null}
         </div> : null}
         {run.error || conclusion?.summary ? <p>{run.error || conclusion?.summary}</p> : null}
         <button type="button" className="text-button" onClick={() => onEngine(engine)}>查看{engineLabels[engine]}详情</button>

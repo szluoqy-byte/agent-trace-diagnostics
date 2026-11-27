@@ -1,6 +1,6 @@
 import {useCallback,useEffect,useState} from 'react'
 import {ArrowLeft,ChevronLeft,ChevronRight,Download,Play,RotateCcw} from 'lucide-react'
-import {sourceLabel,uiText} from '../branding'
+import {uiText} from '../branding'
 import {dateLabel,post} from '../api'
 import type {Evidence} from '../types'
 import {ExportDialog,ReviewDialog} from '../components/Dialogs'
@@ -8,10 +8,11 @@ import Citation from '../components/Citation'
 import {patternTaskPath} from '../patterns'
 import type {PatternMembers} from '../patterns'
 import Inspector from '../components/Inspector'
-import {unsettledComparison} from '../components/DiagnosisComparison'
+import {modelCriticalStep} from '../components/DiagnosisComparison'
 import DiagnosisUsage from '../components/DiagnosisUsage'
 import ExecutionTrace from '../components/ExecutionTrace'
 import TraceDetailLayout from '../components/TraceDetailLayout'
+import {TraceContextPanel} from '../components/TraceInfoPanel'
 import {Badge,diagnosisStatus,filterQuery,formatLabel,taskPath,tracePath,useResource,useWorkspace} from '../workspace'
 import type {ActionResult,AnalysisTask,TraceDetail} from '../workspace'
 
@@ -48,8 +49,7 @@ export default function TrajectoryDetail({id,traceId,params}:{id:string;traceId:
   const report=job?.result??null,review=job?.reviews?.[0]?.data
   const readonly=data.read_only
   const inspectorJob=job&&readonly?{...job,read_only:true,feedback_eligible:false,feedback_unavailable_reason:'历史分析记录只读'}:job
-  const modelStep=report?.synthesis?.status==='completed'?report.synthesis.critical_step
-    :unsettledComparison.has(report?.comparison?.state??'')?null:report?.attribution?.critical_step??null
+  const modelStep=modelCriticalStep(report)
   const legacy=!!report&&report.schema_version!==2,critical=legacy?null:review?review.decision==='rejected'?null:review.critical_step:modelStep
   const query=new URLSearchParams(params);query.delete('pattern_task');query.delete('pattern_run');query.delete('pattern_id');query.delete('evidence_step');query.delete('run');query.delete('improvement')
   const size=[10,20,50].includes(Number(params.get('page_size')))?Number(params.get('page_size')):10
@@ -83,9 +83,9 @@ export default function TrajectoryDetail({id,traceId,params}:{id:string;traceId:
   {job?.status==='queued'||job?.status==='running'?<progress className="diagnosis-progress" max={100} value={job.progress} aria-label="诊断进度"/>:null}
   <div className="trace-detail-tools">
     <div className="trace-detail-disclosures">
-      <details className="ws-trace-context" name="trace-disclosures"><summary>轨迹任务说明及来源</summary><div className="trace-disclosure-body"><p>{trace.data.task_description||'未提供任务说明。'}</p><p className="muted">来源：{sourceLabel(trace.data.source)}</p></div></details>
-      {data.attempts.length>1?<details className="ws-attempts" name="trace-disclosures"><summary>诊断请求记录 · {data.attempts.length} 次尝试</summary><div className="trace-disclosure-body">{data.attempts.map(a=><div key={a.id}><span>第 {a.attempt} 次 · {dateLabel(a.created_at)} · {diagnosisStatus[a.status]}</span>{a.error?<small>{uiText(a.error)}</small>:null}</div>)}</div></details>:null}
+      <TraceContextPanel description={trace.data.task_description} source={trace.data.source}/>
       {report?<DiagnosisUsage report={report}/>:null}
+      {data.attempts.length>1?<details className="ws-attempts"><summary>诊断请求记录 · {data.attempts.length} 次尝试</summary><div className="trace-disclosure-body">{data.attempts.map(a=><div key={a.id}><span>第 {a.attempt} 次 · {dateLabel(a.created_at)} · {diagnosisStatus[a.status]}</span>{a.error?<small>{uiText(a.error)}</small>:null}</div>)}</div></details>:null}
     </div>
     <div className="ws-detail-status">
       {job?.status!=='completed'?<span>{uiText(job?.stage)||'尚未开始分析'}{job?.status==='running'?` · ${job.progress}%`:''}</span>:null}

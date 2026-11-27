@@ -48,13 +48,13 @@ def trace_feedback_context(store, job):
     if decision == 'rejected':
         raise ValueError('诊断结论已驳回，请重新诊断或复核关键步骤后再生成建议。')
     comparison = report.get('comparison') or {}
+    messages = trace['messages']
     if decision in {'confirmed', 'modified'}:
         conclusion, basis = review['data'], 'review'
     else:
-        conclusion, _ = review_target(report)
+        conclusion, _ = review_target(report, step_count=len(messages), outcome=trace['outcome'])
         basis = ('provisional' if comparison.get('state') in UNSETTLED_STATES else
                  'synthesis' if comparison else 'diagnosis')
-    messages = trace['messages']
     step = conclusion.get('critical_step')
     if type(step) is not int or not 0 <= step < len(messages):
         raise ValueError('请先通过诊断或人工复核确定可定位的关键失败步骤。')

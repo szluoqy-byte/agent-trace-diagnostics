@@ -1,10 +1,10 @@
 import {ArrowLeft} from 'lucide-react'
 import {dateLabel} from '../api'
-import {sourceLabel} from '../branding'
 import {patternTaskPath} from '../patterns'
 import DeleteRecord, {traceDeletionBlock} from '../components/DeleteRecord'
 import ExecutionTrace from '../components/ExecutionTrace'
 import TraceDetailLayout from '../components/TraceDetailLayout'
+import {TraceContextPanel} from '../components/TraceInfoPanel'
 import {businessOutcomes, libraryDiagnosis, libraryPath} from '../traceLibrary'
 import type {LibraryHistory} from '../traceLibrary'
 import type {Trace} from '../types'
@@ -28,7 +28,7 @@ export default function LibraryTraceDetail({id, params, onDeleted}: {id: string;
     <div className="ws-breadcrumb"><a href={back}>轨迹库</a><span>/</span><span>轨迹详情</span></div>
     <div className="ws-heading">
       <div><div className="ws-heading-title"><h1>{title}</h1><Badge value={outcome}>{businessOutcomes[outcome as keyof typeof businessOutcomes]}</Badge></div>
-        <p>{formatLabel(input_format ?? (otel ? 'otel_genai' : 'messages'))} · {deepagent ? `${deepagent.span_count} 个调用` : `${messages.length} 条消息`}{source ? ` · ${sourceLabel(source)}` : ''}{agent_identity?<span className="trace-detail-agent"> · Agent <strong>{agent_identity.name}</strong></span>:null}</p></div>
+        <p>{formatLabel(input_format ?? (otel ? 'otel_genai' : 'messages'))} · {deepagent ? `${deepagent.span_count} 个调用` : `${messages.length} 条消息`}{agent_identity?<span className="trace-detail-agent"> · Agent <strong>{agent_identity.name}</strong></span>:null}</p></div>
       <div className="ws-actions">
         <a className="secondary" href={back}><ArrowLeft size={15}/>返回轨迹库</a>
         <DeleteRecord id={id} name={title} kind="trace"
@@ -36,7 +36,7 @@ export default function LibraryTraceDetail({id, params, onDeleted}: {id: string;
           onDeleted={() => {onDeleted(id); go(libraryPath(params), true)}}/>
       </div>
     </div>
-    {task_description ? <div className="trace-detail-disclosures"><details className="ws-trace-context"><summary>轨迹任务说明</summary><div className="trace-disclosure-body"><p>{task_description}</p></div></details></div> : null}
+    <div className="trace-detail-disclosures"><TraceContextPanel description={task_description} source={source}/></div>
     </>} trace={<ExecutionTrace key={id} trace={trace} criticalStep={null} selection={null}/>}
     details={<section className="ws-surface library-history" aria-busy={!history && !historyError}>
         <h2>当前诊断</h2>

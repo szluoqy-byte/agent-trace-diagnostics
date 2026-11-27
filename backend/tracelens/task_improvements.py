@@ -82,9 +82,10 @@ def collect_case(data, report, review):
     comparison = report.get('comparison')
     if comparison and comparison.get('state') not in AGREEMENT_STATES and decision not in {'confirmed', 'modified'}:
         return 'pending_review', None
-    conclusion = review if decision in {'confirmed', 'modified'} else review_target(report)[0]
-    step = conclusion.get('critical_step')
     messages = data['messages']
+    conclusion = (review if decision in {'confirmed', 'modified'} else
+                  review_target(report, step_count=len(messages), outcome=data['outcome'])[0])
+    step = conclusion.get('critical_step')
     if type(step) is not int or not 0 <= step < len(messages):
         return 'missing_step', None
     message = messages[step]

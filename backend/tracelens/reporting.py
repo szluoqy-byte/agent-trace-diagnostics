@@ -25,9 +25,12 @@ INSTANCE_LABELS = {
 
 
 def markdown_report(trace, job, reviews, feedback=None):
-    result = project_synthesis(job["result"])
+    data = trace.get("data", {})
+    messages = data.get("messages")
+    step_count = len(messages) if messages is not None else None
+    result = project_synthesis(job["result"], step_count=step_count, outcome=data.get("outcome"))
     ai = result["attribution"]
-    final = reviews[0]["data"] if reviews else review_target(result)[0]
+    final = reviews[0]["data"] if reviews else review_target(result, step_count=step_count, outcome=data.get("outcome"))[0]
     step = final.get("critical_step")
     comparison = result.get("comparison") or {}
     runs = result.get("engine_runs") or {}
@@ -40,7 +43,8 @@ def markdown_report(trace, job, reviews, feedback=None):
             lines += ["诊断引擎：CHIEF", ""]
             if agent := result.get("root_cause_agent"):
                 lines += [f"根因 Agent：{agent}", ""]
-    if (synthesis := result.get("synthesis", {})).get("status") == "completed":
+    synthesis = result.get("synthesis") or {}
+    if "critical_step" in synthesis:
         lines += ["## 综合分析", "", synthesis["summary"], ""]
         preferred_step = synthesis.get("critical_step")
         if preferred_step is not None:
@@ -48,7 +52,9 @@ def markdown_report(trace, job, reviews, feedback=None):
                      else "模型候选步骤" if reviews else "暂定关键步骤（待人工复核）")
             lines += [f"{label} #{preferred_step}", ""]
         else:
-            lines += ["关键失败步骤待人工判断。", ""]
+            lines += ["暂无有效候选步骤。", ""]
+        if preferred_step is not None and synthesis.get("status") != "completed":
+            lines += ["综合评估未完成，关键步骤依据已完成的引擎诊断。", ""]
         for engine, assessment in (synthesis.get("assessments") or {}).items():
             branch = result if engine == comparison.get("primary") else (runs.get(engine, {}).get("report") or {})
             candidate = (branch.get("attribution") or {}).get("critical_step")
