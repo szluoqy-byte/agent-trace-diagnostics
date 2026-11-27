@@ -11,7 +11,7 @@ type Suggestion = {priority:'high'|'medium'|'low'; problem:string; change:string
 type GroupResult = {status:'completed'|'failed'; suggestions?:Suggestion[]; error?:string}
 type Report = ReportSummary & {
   error?: string
-  snapshot:{total:number; failed:number; included:number; exclusions:Record<string,number>; agents:AgentGroup[]}
+  snapshot:{version:string; total:number; failed:number; included:number; exclusions:Record<string,number>; agents:AgentGroup[]}
   results:Record<string,GroupResult>
 }
 type ImprovementPage = {report:Report|null}
@@ -22,7 +22,7 @@ const statusLabels: Record<Status,string> = {
 const priorities = {high:'高优先级', medium:'中优先级', low:'低优先级'}
 const exclusions: Record<string,string> = {
   missing_diagnosis:'缺少可用诊断', rejected:'归因已驳回', pending_review:'待人工复核',
-  missing_step:'缺少关键步骤', missing_evidence:'缺少关键步骤原文证据', unknown_agent:'Agent 归属待确认',
+  missing_step:'缺少关键步骤', missing_evidence:'缺少关键步骤原文证据', unknown_agent:'轨迹的 Agent 未识别',
 }
 const active = (status?:Status) => status === 'queued' || status === 'running'
 const polling = (data:ImprovementPage) => active(data.report?.status) ? 1800 : 0
@@ -34,6 +34,7 @@ export default function TaskImprovements({taskId, runId}: {taskId:string; runId:
   const [submissionError, setSubmissionError] = useState('')
   const report = data?.report
   const generating = active(report?.status)
+  const legacyGrouping = report?.snapshot.version === 'agent-improvements-v1'
 
   async function generate() {
     setSubmissionError('')
@@ -47,7 +48,7 @@ export default function TaskImprovements({taskId, runId}: {taskId:string; runId:
 
   return <div className="task-improvements">
     <section className="ws-surface improvement-intro">
-      <div><h2>任务改进建议</h2><p>汇总当前分析的可核验失败证据，按关键失败步骤所属的 Agent 提出改进和回归验证建议。</p></div>
+      <div><h2>任务改进建议</h2><p>按轨迹所属的 Agent 汇总可核验的失败证据，提出改进和回归验证建议。</p></div>
       <button type="button" className="primary" disabled={busy || generating || loading || !!error} onClick={() => void generate()}>
         <Sparkles size={15}/>{generating && report ? statusLabels[report.status] : report?.status === 'partial' || report?.status === 'failed' ? '重试生成' : report ? '重新生成' : '生成改进建议'}
       </button>
@@ -64,8 +65,9 @@ export default function TaskImprovements({taskId, runId}: {taskId:string; runId:
           <span>纳入 {report.snapshot.included} 条</span><span>{report.snapshot.agents.length} 个 Agent</span></div>
         <p className="muted">{dateLabel(report.created_at)}{report.model && report.status !== 'insufficient' ? ` · ${report.model}` : ''}</p>
         {Object.keys(report.snapshot.exclusions).length ? <ul className="improvement-exclusions">
-          {Object.entries(report.snapshot.exclusions).map(([reason,count]) => <li key={reason}>{exclusions[reason] ?? reason} {count} 条</li>)}
+          {Object.entries(report.snapshot.exclusions).map(([reason,count]) => <li key={reason}>{legacyGrouping && reason === 'unknown_agent' ? '关键步骤的 Agent 归属待确认' : exclusions[reason] ?? reason} {count} 条</li>)}
         </ul> : null}
+        {legacyGrouping && !generating ? <p className="muted">此报告使用旧版 Agent 分组规则。重新生成可按轨迹所属的 Agent 分组。</p> : null}
         {report.status === 'insufficient' ? <p>可在诊断和复核完成后重新生成。建议需要关键步骤、原文证据和可识别的 Agent。</p> : null}
         {report.error ? <p className="error-inline" role="alert">{report.error}</p> : null}
       </section>

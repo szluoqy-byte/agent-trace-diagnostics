@@ -42,12 +42,15 @@ class TaskStore:
         with self.connect() as db:
             db.executescript(SCHEMA)
             db.execute('BEGIN IMMEDIATE')
-            if not any(row['name'] == 'draft_auto_feedback' for row in db.execute('PRAGMA table_info(analysis_tasks)')):
+            task_columns = {row['name'] for row in db.execute('PRAGMA table_info(analysis_tasks)')}
+            if 'draft_auto_feedback' not in task_columns:
                 db.execute('ALTER TABLE analysis_tasks ADD COLUMN draft_auto_feedback INTEGER NOT NULL DEFAULT 0')
-            if not any(row['name'] == 'prompt_language' for row in db.execute('PRAGMA table_info(analysis_tasks)')):
+            if 'prompt_language' not in task_columns:
                 db.execute("ALTER TABLE analysis_tasks ADD COLUMN prompt_language TEXT NOT NULL DEFAULT 'en'")
-            if not any(row['name'] == 'diagnosis_mode' for row in db.execute('PRAGMA table_info(analysis_tasks)')):
+            if 'diagnosis_mode' not in task_columns:
                 db.execute("ALTER TABLE analysis_tasks ADD COLUMN diagnosis_mode TEXT NOT NULL DEFAULT 'trajdebug'")
+            if 'model_connection_id' not in task_columns:
+                db.execute('ALTER TABLE analysis_tasks ADD COLUMN model_connection_id TEXT')
             if not any(row['name'] == 'fresh_cache' for row in db.execute('PRAGMA table_info(run_attempts)')):
                 db.execute('ALTER TABLE run_attempts ADD COLUMN fresh_cache INTEGER NOT NULL DEFAULT 0')
             if db.execute("SELECT 1 FROM workspace_meta WHERE key='task_migration_v1'").fetchone():
@@ -255,19 +258,22 @@ class TaskStore:
                 raise ValueError('所选轨迹已删除，请刷新后重试')
             task_id = uuid.uuid4().hex
             db.execute('''INSERT INTO analysis_tasks
-                (id,name,agent,version,goal,prompt_language,created_at,draft_auto_feedback,diagnosis_mode)
-                VALUES (?,?,?,?,?,?,?,?,?)''',
+                (id,name,agent,version,goal,prompt_language,created_at,draft_auto_feedback,diagnosis_mode,model_connection_id)
+                VALUES (?,?,?,?,?,?,?,?,?,?)''',
                 (task_id, *(fields[k] for k in ('name','agent','version','goal','prompt_language')),
-                 now(), int(auto_feedback), fields.get('diagnosis_mode', DEFAULT_MODE)))
+                 now(), int(auto_feedback), fields.get('diagnosis_mode', DEFAULT_MODE), fields.get('model_connection_id')))
             for i, trace_id in enumerate(ids):
                 db.execute('INSERT INTO task_traces VALUES (?,?,?)', (task_id, trace_id, i))
             run_id = self._start_run(db, task_id, config, auto_feedback) if config is not None else None
         return task_id, run_id
 
-    def start_run(self, task_id, config, auto_feedback):
+    def start_run(self, task_id, config, auto_feedback, *, model_connection_id=None):
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
-            return self._start_run(db, task_id, config, auto_feedback)
+            run_id = self._start_run(db, task_id, config, auto_feedback)
+            if model_connection_id is not None:
+                db.execute('UPDATE analysis_tasks SET model_connection_id=? WHERE id=?', (model_connection_id, task_id))
+            return run_id
 
     def _start_run(self, db, task_id, config, auto_feedback):
         from .store import now

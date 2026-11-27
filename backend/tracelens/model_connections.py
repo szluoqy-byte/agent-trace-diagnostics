@@ -10,6 +10,7 @@ from typing import Literal
 
 ModelPurpose = Literal['diagnosis', 'playground']
 DATABASE_NAME = 'model-connections.sqlite3'
+ENVIRONMENT_ID = 'environment'
 
 
 class ModelConnections:

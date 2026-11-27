@@ -8,7 +8,7 @@ from .models import Contract, Trajectory, trajectory_format
 from .deepagent import trace_with_source_summary
 from .deletion import DeleteSelection
 from .normalize import WORKBENCH_FORMAT_ERROR, parse_upload, fingerprint
-from .execution import active_execution, snapshot, job_settings, run_settings
+from .execution import selected_execution, snapshot, job_settings, run_settings
 from .feedback import feedback_availability
 from .official_samples import load_official_samples
 from .prompt_language import normalize_prompt_language
@@ -22,6 +22,7 @@ class TaskCreate(Contract):
     goal: str = Field(default='', max_length=3000)
     prompt_language: Literal['en', 'zh'] = 'en'
     diagnosis_mode: DiagnosisMode = DEFAULT_MODE
+    model_connection_id: str | None = Field(default=None, min_length=1, max_length=100)
     preview_id: str | None = None
     source_task_id: str | None = None
     trace_ids: list[str] | None = Field(default=None, min_length=1, max_length=500)
@@ -34,6 +35,7 @@ class TaskCreate(Contract):
 class RunCreate(Contract):
     auto_feedback: bool = False
     diagnosis_mode: DiagnosisMode | None = None
+    model_connection_id: str | None = Field(default=None, min_length=1, max_length=100)
 
 
 class RunAction(Contract):
@@ -211,7 +213,7 @@ def attach_task_routes(app, store, settings, job_view):
         if any(t.outcome=='unknown' for t in traces):
             raise HTTPException(422, '请补齐未知业务结果后保存任务，不会自动将未知项视为失败')
         if start and any(t.kind!='demo' for t in traces) and not execution.ready:
-            raise HTTPException(409, '请在系统设置中启用默认诊断模型，或先保存草稿')
+            raise HTTPException(409, '请选择可用的诊断模型，或先保存草稿。')
 
     @router.post('/tasks')
     def create_task(body: TaskCreate):
@@ -251,7 +253,7 @@ def attach_task_routes(app, store, settings, job_view):
                 if not trace:
                     raise HTTPException(404, '复用的轨迹不存在')
                 traces.append(Trajectory.model_validate(trace['data']))
-        execution, connection_id = active_execution(store, settings)
+        execution, connection_id = checked(lambda: selected_execution(store, settings, body.model_connection_id))
         validate_inputs(traces, start=body.start, execution=execution)
         fields = {**body.model_dump(), 'name': body.name.strip(),
                   'prompt_language': normalize_prompt_language(body.prompt_language)}
@@ -265,12 +267,14 @@ def attach_task_routes(app, store, settings, job_view):
     @router.post('/tasks/{task_id}/runs')
     def start_run(task_id: str, body: RunCreate):
         task = require_task(task_id)
-        execution, connection_id = active_execution(store, settings)
+        preferred_model = body.model_connection_id or task['model_connection_id']
+        execution, connection_id = checked(lambda: selected_execution(store, settings, preferred_model))
         validate_inputs([Trajectory.model_validate(t['data']) for t in store.task_inputs(task_id)],
                         start=True, execution=execution)
         mode = body.diagnosis_mode or task['diagnosis_mode']
         config = snapshot(execution, connection_id, task['prompt_language'], mode)
-        run_id = checked(lambda:store.start_run(task_id, config, body.auto_feedback))
+        run_id = checked(lambda: store.start_run(task_id, config, body.auto_feedback,
+                                                model_connection_id=body.model_connection_id))
         return {'run_id':run_id}
 
     def trace_scope(task_id, run_id):

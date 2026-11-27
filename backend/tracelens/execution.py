@@ -3,19 +3,37 @@ from dataclasses import replace
 from .diagnosis import AGENTDEBUGX_COMMIT, AGENTDEBUGX_VERSION, CHIEF_COMMIT, CHIEF_VERSION, MODE_ENGINES
 from .diagnosis.agentdebugx_prompts import prompt_profile
 from .diagnosis.chief import prompt_profile as chief_prompt_profile
+from .model_connections import ENVIRONMENT_ID
 from .trajdebug import ENGINE_VERSION, UPSTREAM_COMMIT
 
 FIELDS = ('base_url', 'model', 'prompt_language', 'max_retries', 'timeout', 'llm_concurrency', 'max_tokens', 'cluster_json_mode')
 RUNTIME_FIELDS = ('concurrency', 'max_retries', 'timeout', 'llm_concurrency', 'max_tokens', 'cluster_json_mode')
 
 
+def connection_settings(settings, connection):
+    runtime = {key: connection['runtime'][key] for key in RUNTIME_FIELDS if key in connection['runtime']}
+    return replace(settings, base_url=connection['base_url'], model=connection['model'],
+                   api_key=connection['api_key'], headers=connection.get('headers', {}), **runtime)
+
+
 def active_execution(store, settings):
     connection = store.model_connections.default()
     if connection is None:
         return settings, None
-    runtime = {key: connection['runtime'][key] for key in RUNTIME_FIELDS if key in connection['runtime']}
-    return replace(settings, base_url=connection['base_url'], model=connection['model'],
-                   api_key=connection['api_key'], headers=connection.get('headers', {}), **runtime), connection['id']
+    return connection_settings(settings, connection), connection['id']
+
+
+def selected_execution(store, settings, connection_id):
+    active, active_id = active_execution(store, settings)
+    if connection_id is None or connection_id == active_id:
+        return active, active_id
+    if connection_id == ENVIRONMENT_ID and settings.ready:
+        selected = settings
+    elif connection := store.model_connections.get(connection_id):
+        selected = connection_settings(settings, connection)
+    else:
+        raise ValueError('所选诊断模型不可用，请重新选择。')
+    return replace(selected, concurrency=active.concurrency, llm_concurrency=active.llm_concurrency), connection_id
 
 
 def load_runtime_settings(store, settings):
@@ -61,10 +79,11 @@ def run_settings(store, settings, config):
     frozen = {k: config[k] for k in FIELDS if k in config and k != 'llm_concurrency'}
     active, _ = active_execution(store, settings)
     frozen.update(concurrency=active.concurrency, llm_concurrency=active.llm_concurrency)
-    if connection_id := config.get('model_connection_id'):
+    connection_id = config.get('model_connection_id')
+    if connection_id and connection_id != ENVIRONMENT_ID:
         connection = store.model_connections.get(connection_id)
         if connection and connection['base_url'] == frozen['base_url'] and connection['model'] == frozen.get('model'):
             return replace(settings, **frozen, api_key=connection['api_key'], headers=connection.get('headers', {}))
-    elif frozen['base_url'].rstrip('/') == settings.base_url.rstrip('/'):
+    elif (connection_id is None or settings.ready) and frozen['base_url'].rstrip('/') == settings.base_url.rstrip('/'):
         return replace(settings, **frozen)
     return replace(settings, **{**frozen, 'base_url': '', 'api_key': '', 'headers': {}})

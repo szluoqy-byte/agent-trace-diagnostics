@@ -185,12 +185,17 @@ def provider():
             calls.append({"stage": stage, "request": request,
                           "headers": {key.lower(): value for key, value in self.headers.items()},
                           "authorization": self.headers.get_all("Authorization", [])})
-            content = value if isinstance(value, str) else json.dumps(value)
-            response = {"id": "fixture", "object": "chat.completion", "created": 0, "model": "fixture", "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}}
-            if override := state.get("override_response"):
-                override(response)
+            if state.get("reject_json_mode") and request.get("response_format"):
+                status = 400
+                response = {"error": {"message": "Unsupported parameter: response_format", "param": "response_format"}}
+            else:
+                status = 200
+                content = value if isinstance(value, str) else json.dumps(value)
+                response = {"id": "fixture", "object": "chat.completion", "created": 0, "model": "fixture", "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}}
+                if override := state.get("override_response"):
+                    override(response)
             body = json.dumps(response).encode()
-            self.send_response(200)
+            self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()

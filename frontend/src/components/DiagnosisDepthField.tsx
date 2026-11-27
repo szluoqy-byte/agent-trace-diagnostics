@@ -15,7 +15,7 @@ const options: Record<DiagnosisLevel, {label:string; name:string; note:string; t
     tip: '兼顾诊断深度和推理成本，适合常规问题排查。',
   },
   deep: {
-    label: 'Deep', name: '深度诊断', note: '三路',
+    label: 'Deep', name: '深度诊断', note: '多路',
     tip: '从多个角度交叉验证，适合疑难问题和复杂长轨迹。',
   },
 }

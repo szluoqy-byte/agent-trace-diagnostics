@@ -9,6 +9,13 @@ vi.mock('../api', async importOriginal => ({...await importOriginal<typeof impor
 afterEach(() => {cleanup(); vi.clearAllMocks()})
 
 function renderUpload() {
+  const request = vi.mocked(api).getMockImplementation()
+  vi.mocked(api).mockImplementation((path, options) => path === '/model-configurations'
+    ? Promise.resolve({items:[
+      {id:'default', name:'默认连接', model:'model-default', is_default:true},
+      {id:'alternate', name:'备用连接', model:'model-alternate', is_default:false},
+    ]} as never)
+    : request!(path,options))
   render(<WorkspaceContext value={{
     config: null, busy: false, version: 0,
     action: async work => work(), notify: vi.fn(), refresh: vi.fn(), go: vi.fn(), openSettings: vi.fn(),
@@ -40,8 +47,7 @@ it('accepts DeepAgent and OTel through the shared uploader', async () => {
   fireEvent.change(screen.getByLabelText('选择轨迹文件'), {target:{files}})
   expect(await screen.findByText('genai.json')).toBeTruthy()
   expect(screen.getByText('deepagent.json')).toBeTruthy()
-  const [path, request] = vi.mocked(api).mock.calls[0]
-  expect(path).toBe('/import/preview')
+  const [, request] = vi.mocked(api).mock.calls.find(([path]) => path === '/import/preview')!
   expect((request?.body as FormData).getAll('files')).toHaveLength(2)
   expect((screen.getByRole('button',{name:'保存草稿'}) as HTMLButtonElement).disabled).toBe(false)
 })
@@ -74,7 +80,7 @@ it('preselects Standard, describes when to use each level, and saves Deep', asyn
   expect(standard.checked).toBe(true)
   expect(group.getByRole('radio', {name:'Fast 快速诊断', description:/^单路 .*批量轨迹诊断/})).toBe(fast)
   expect(group.getByRole('radio', {name:'Standard 标准诊断', description:/^双路 · 默认推荐 .*常规问题排查/})).toBe(standard)
-  expect(group.getByRole('radio', {name:'Deep 深度诊断', description:/^三路 .*复杂长轨迹/})).toBe(deep)
+  expect(group.getByRole('radio', {name:'Deep 深度诊断', description:/^多路 .*复杂长轨迹/})).toBe(deep)
   expect(group.queryByText(/AgentDebugX|CHIEF|TrajDebug|RSI/)).toBeNull()
   expect(screen.getByRole<HTMLInputElement>('checkbox', {name:/自动生成改进建议/}).checked).toBe(false)
 
@@ -82,9 +88,20 @@ it('preselects Standard, describes when to use each level, and saves Deep', asyn
   expect(deep.checked && !standard.checked).toBe(true)
   expect(screen.getByText('Deep · 深度诊断')).toBeTruthy()
   expect(screen.getByRole('checkbox', {name:/自动生成改进建议/})).toBeTruthy()
+  expect(screen.queryByLabelText(/Agent 名称|Agent 版本|排查目标/)).toBeNull()
+  const modelSelect=screen.getByRole<HTMLSelectElement>('combobox', {name:'诊断模型'})
+  await waitFor(() => expect(modelSelect.value).toBe('default'))
+  fireEvent.change(modelSelect, {target:{value:'alternate'}})
+  expect(screen.getByText('model-alternate', {selector:'dd'})).toBeTruthy()
   fireEvent.change(screen.getByLabelText('选择轨迹文件'), {target:{files:[new File(['{}'], 'deepagent.json')]}})
   await screen.findByRole('status', {name:''})
   await waitFor(() => expect((screen.getByRole('button',{name:'保存草稿'}) as HTMLButtonElement).disabled).toBe(false))
   fireEvent.click(screen.getByRole('button',{name:'保存草稿'}))
-  expect(post).toHaveBeenCalledWith('/tasks', expect.objectContaining({diagnosis_mode:'deep', start:false}))
+  expect(post).toHaveBeenCalledWith('/tasks', expect.objectContaining({
+    diagnosis_mode:'deep', model_connection_id:'alternate', start:false,
+  }))
+  const [, payload] = vi.mocked(post).mock.calls[0]
+  for(const field of ['agent','version','goal'])expect(payload).not.toHaveProperty(field)
+  fireEvent.click(screen.getByRole('button',{name:'创建并开始分析'}))
+  expect(post).toHaveBeenLastCalledWith('/tasks', expect.objectContaining({model_connection_id:'alternate', start:true}))
 })

@@ -1,4 +1,4 @@
-"""Resolve Agent ownership from recorded span attributes and links."""
+"""Resolve a trajectory's Agent identity from recorded span attributes and links."""
 
 from dataclasses import dataclass
 import json
@@ -93,28 +93,3 @@ class AgentOwnership:
     def unique(spans):
         identities = {span.identity.key: span.identity for span in spans if span.identity}
         return next(iter(identities.values())) if len(identities) == 1 else None
-
-    def for_message(self, message):
-        if self.deepagent:
-            span_id, separator, _ = message.get('source_step', '').rpartition(':')
-            if not separator:
-                return None
-        else:
-            refs = message.get('source_refs') or []
-            if not refs:
-                return None
-            # Later input snapshots can reference earlier messages. The first
-            # source records where the message was produced or first observed.
-            span_id = refs[0]['span_id'].lower()
-        identity = None
-        for span in self.ancestry(span_id):
-            candidate = span.identity
-            if span.invocation:
-                if self.deepagent or identity is None:
-                    return candidate or identity
-                # A model span may repeat the invocation's name without its ID.
-                if candidate and candidate.name == identity.name and candidate.agent_id and not identity.agent_id:
-                    return candidate
-                return identity
-            identity = identity or candidate
-        return identity

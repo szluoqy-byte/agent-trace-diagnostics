@@ -72,7 +72,9 @@ class ModelSlots:
         except Timeout:
             return None
         except sqlite3.OperationalError as exc:
-            if getattr(exc, "sqlite_errorcode", None) == sqlite3.SQLITE_BUSY:
+            # Extended SQLite codes such as SQLITE_BUSY_RECOVERY retain the primary code.
+            error_code = getattr(exc, "sqlite_errorcode", 0)
+            if error_code & 0xff == sqlite3.SQLITE_BUSY:
                 return None
             raise
 

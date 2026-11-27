@@ -441,3 +441,5 @@
     border:1px solid var(--border);border-radius:6px;box-shadow:0 5px 15px #22365520
   }
 }
+.modal-body .diagnosis-model-field{display:grid;gap:7px;font-size:13px;color:var(--muted);margin:14px 0}
+.modal-body .diagnosis-model-field select{width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:6px;background:white}

@@ -28,7 +28,7 @@ export default function LibraryTraceDetail({id, params, onDeleted}: {id: string;
     <div className="ws-breadcrumb"><a href={back}>轨迹库</a><span>/</span><span>轨迹详情</span></div>
     <div className="ws-heading">
       <div><div className="ws-heading-title"><h1>{title}</h1><Badge value={outcome}>{businessOutcomes[outcome as keyof typeof businessOutcomes]}</Badge></div>
-        <p>{formatLabel(input_format ?? (otel ? 'otel_genai' : 'messages'))} · {deepagent ? `${deepagent.span_count} 个调用` : `${messages.length} 条消息`}{source ? ` · ${sourceLabel(source)}` : ''}{agent_identity?<span className="trace-detail-agent"> · 入口 Agent <strong>{agent_identity.name}</strong></span>:null}</p></div>
+        <p>{formatLabel(input_format ?? (otel ? 'otel_genai' : 'messages'))} · {deepagent ? `${deepagent.span_count} 个调用` : `${messages.length} 条消息`}{source ? ` · ${sourceLabel(source)}` : ''}{agent_identity?<span className="trace-detail-agent"> · Agent <strong>{agent_identity.name}</strong></span>:null}</p></div>
       <div className="ws-actions">
         <a className="secondary" href={back}><ArrowLeft size={15}/>返回轨迹库</a>
         <DeleteRecord id={id} name={title} kind="trace"

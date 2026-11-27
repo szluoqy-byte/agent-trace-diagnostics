@@ -9,14 +9,13 @@ from fastapi import APIRouter, HTTPException
 from pydantic import Field, SecretStr, field_validator
 
 from .execution import runtime_snapshot
-from .model_connections import ModelPurpose
+from .model_connections import ENVIRONMENT_ID, ModelPurpose
 from .model_headers import merge_headers
 from .model_concurrency import ModelSlots
 from .models import Contract
 from .runtime_settings_api import RuntimeSettingsInput
 
 MODEL_SETTINGS_PATH = '/api/model-configurations'
-ENVIRONMENT_ID = 'environment'
 
 
 class ModelConnectionInput(Contract):

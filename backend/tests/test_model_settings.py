@@ -1,4 +1,5 @@
 import asyncio
+import sqlite3
 import stat
 
 import httpx
@@ -14,6 +15,21 @@ from tracelens.store import Store
 
 
 PATH = '/api/model-configurations'
+
+
+def test_model_slots_retries_extended_sqlite_busy_code(tmp_path, monkeypatch):
+    slots = ModelSlots(tmp_path, 1)
+
+    def recovering():
+        exc = sqlite3.OperationalError('database is locked')
+        exc.sqlite_errorcode = sqlite3.SQLITE_BUSY_RECOVERY
+        raise exc
+
+    with monkeypatch.context() as patch:
+        patch.setattr(slots, 'limit', recovering)
+        assert slots.try_acquire() is None
+    with slots.request():
+        assert slots.try_acquire() is None
 
 
 def test_default_switch_freezes_each_run_and_keeps_credentials_private(tmp_path):
@@ -69,6 +85,52 @@ def test_default_switch_freezes_each_run_and_keeps_credentials_private(tmp_path)
     assert restored.get('/api/config').json()['model'] == 'second-model'
     assert restored.post(PATH + '/environment/default').status_code == 200
     assert restored.get('/api/config').json()['model'] == 'environment-model'
+
+
+def test_task_can_select_a_diagnosis_model_and_keep_it_in_a_draft(tmp_path):
+    settings = Settings(data_dir=tmp_path, base_url='https://environment.example/v1',
+                        model='environment-model', api_key='environment-secret')
+    app = create_app(settings)
+    store = app.state.store
+    client = TestClient(app)
+    default = store.model_connections.add(name='Default', model='default-model',
+                                          base_url='https://default.example/v1', api_key='', make_default=True,
+                                          runtime={'concurrency': 3, 'llm_concurrency': 4})
+    alternate = store.model_connections.add(name='Alternate', model='alternate-model',
+                                            base_url='https://alternate.example/v1', api_key='alternate-secret',
+                                            headers={'X-Tenant': 'alternate'}, runtime={'timeout': 42, 'max_tokens': 6000})
+    playground = store.model_connections.add(name='Playground', model='playground-model',
+                                             base_url='https://playground.example/v1', api_key='', purpose='playground')
+    trace_id = store.add_trace(normalize({'outcome': 'failed', 'messages': [{'role': 'assistant', 'content': 'done'}]}))['id']
+    task_fields = {'name': 'Task with a selected model', 'trace_ids': [trace_id]}
+    assert client.post('/api/tasks', json={**task_fields, 'model_connection_id': playground}).status_code == 409
+
+    started = client.post('/api/tasks', json={**task_fields, 'model_connection_id': alternate, 'start': True})
+    assert started.status_code == 200, started.text
+    draft = client.post('/api/tasks', json={**task_fields, 'model_connection_id': alternate})
+    assert draft.status_code == 200, draft.text
+    task_path = '/api/tasks/' + draft.json()['task_id']
+    assert client.get(task_path).json()['model_connection_id'] == alternate
+
+    launched = client.post(task_path + '/runs', json={})
+    assert launched.status_code == 200, launched.text
+    for response in (started, launched):
+        job_id = store.run_rows(response.json()['run_id'])[0]['job_id']
+        actual = job_settings(store, settings, job_id)
+        assert actual.model == 'alternate-model' and actual.api_key == 'alternate-secret'
+        assert actual.headers == {'X-Tenant': 'alternate'}
+        assert actual.timeout == 42 and actual.max_tokens == 6000
+        assert (actual.concurrency, actual.llm_concurrency) == (3, 4)
+        assert store.job_config(job_id)['model_connection_id'] == alternate
+
+    store.update(job_id, status='completed')
+    rerun = client.post(task_path + '/runs', json={'model_connection_id': 'environment'})
+    assert rerun.status_code == 200, rerun.text
+    env_job = store.run_rows(rerun.json()['run_id'])[0]['job_id']
+    assert job_settings(store, settings, env_job).api_key == 'environment-secret'
+    assert client.get(task_path).json()['model_connection_id'] == 'environment'
+    assert store.model_connections.default()['id'] == default
+    assert client.get('/api/config').json()['model'] == 'default-model'
 
 
 def test_connection_probe_and_validation_do_not_return_secrets(tmp_path, monkeypatch):

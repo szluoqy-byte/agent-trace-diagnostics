@@ -1,4 +1,5 @@
 import DiagnosisDepthField, {defaultDiagnosisLevel, diagnosisDepthLabel, diagnosisLevelFor} from '../components/DiagnosisDepthField'
+import DiagnosisModelField, {useDiagnosisModels} from '../components/DiagnosisModelField'
 import type {DiagnosisLevel,DiagnosisMode} from '../types'
 import TaskImprovements from './TaskImprovements'
 import {useCallback,useEffect,useLayoutEffect,useRef,useState} from 'react'
@@ -21,15 +22,25 @@ export function TaskStats({counts}: {counts:Counts}) {
 }
 
 export default function TaskDetail({id,params}:{id:string;params:URLSearchParams}) {
-  const {version,busy,config,action,go,openSettings}=useWorkspace(),{data:task,error}=useResource<AnalysisTask>(`/tasks/${id}`,version,2000)
+  const {version,busy,config,action,go}=useWorkspace(),{data:task,error}=useResource<AnalysisTask>(`/tasks/${id}`,version,2000)
   const [modal,setModal]=useState(false),[autoFeedback,setAutoFeedback]=useState(false),[startError,setStartError]=useState('')
   const [diagnosisMode,setDiagnosisMode]=useState<DiagnosisLevel>(defaultDiagnosisLevel)
+  const [modelId,setModelId]=useState('')
+  const models=useDiagnosisModels(modelId,modal)
+  const runtime=models.selected?.runtime
   const [showStats,setShowStats]=useState(false)
   const close=useCallback(()=>setModal(false),[])
   const run=task?.runs[0]
   const requestedTab=params.get('tab')||''
   const tab=requestedTab==='config'||(requestedTab==='improvements'&&run)?requestedTab:'data'
-  function openStart(){setDiagnosisMode(diagnosisLevelFor((run?.config.diagnosis_mode as DiagnosisMode|undefined)??task?.diagnosis_mode));setAutoFeedback(run?.auto_feedback??task?.draft_auto_feedback??false);setStartError('');setModal(true)}
+  function openStart(){
+    const runModel=run?.config.model_connection_id
+    setModelId(task?.model_connection_id??(typeof runModel==='string'?runModel:''))
+    setDiagnosisMode(diagnosisLevelFor((run?.config.diagnosis_mode as DiagnosisMode|undefined)??task?.diagnosis_mode))
+    setAutoFeedback(run?.auto_feedback??task?.draft_auto_feedback??false)
+    setStartError('')
+    setModal(true)
+  }
   const query=new URLSearchParams(params)
   query.delete('run')
   query.delete('improvement')
@@ -41,8 +52,9 @@ export default function TaskDetail({id,params}:{id:string;params:URLSearchParams
   },[canonicalQuery,go,id,params])
   function switchTab(next:string){const q=new URLSearchParams(query);q.set('tab',next);go(taskPath(id,q))}
   async function start(){
+    if(!models.selected||models.error)return
     const result=await action(()=>post<{run_id:string}>(`/tasks/${id}/runs`,{
-      diagnosis_mode:diagnosisMode,auto_feedback:autoFeedback,
+      diagnosis_mode:diagnosisMode,auto_feedback:autoFeedback,model_connection_id:models.selected?.id,
     }),run?'轨迹已加入重新分析队列':'轨迹已加入分析队列',setStartError)
     if(result){close();go(taskPath(id,new URLSearchParams()),true)}
   }
@@ -66,11 +78,34 @@ export default function TaskDetail({id,params}:{id:string;params:URLSearchParams
     id={`task-panel-${tab}`} aria-labelledby={`task-tab-${tab}`}>
   {tab==='data'?<>
     {!run?<div className="ws-surface ws-draft-banner"><div><h2>任务草稿</h2><p>首次启动前可核对轨迹和诊断模型。</p></div>
-      {config?.ready?<button className="primary" disabled={busy} onClick={openStart}><Play size={15}/>启动分析</button>:<button className="secondary" onClick={openSettings}>配置模型</button>}
+      <button className="primary" disabled={busy} onClick={openStart}><Play size={15}/>启动分析</button>
     </div>:null}
     <TraceTable key={`${id}/${run?.id??'draft'}`} task={task} run={run} params={query}/>
   </>:tab==='improvements'&&run?<TaskImprovements key={run.id} taskId={id} runId={run.id}/>:<TaskConfig task={task} run={run}/>}</div>
-  {modal?<Dialog title={run?'重新分析':'启动首次分析'} onClose={close} busy={busy}><div className="modal-body"><p>使用当前任务的 {task.input_count} 条轨迹。{run?'重新分析会更新任务展示的诊断结果和改进建议。请复核新结论。':''}</p><dl className="settings-list"><dt>提示词语言</dt><dd>{task.prompt_language==='zh'?'中文':'English'}</dd><dt>诊断模型</dt><dd>{config?.model||'尚未配置'}</dd><dt>轨迹并发上限</dt><dd>{config?.concurrency}</dd><dt>模型请求并发上限</dt><dd>{config?.llm_concurrency}</dd><dt>请求重试次数</dt><dd>{config?.max_retries}</dd><dt>请求超时</dt><dd>{config?.timeout} 秒</dd><dt>输出上限</dt><dd>{config?.max_tokens} tokens</dd>{diagnosisMode==='deep'?<><dt>聚类 JSON 模式</dt><dd>{config?.cluster_json_mode?'已开启':'已关闭'}</dd></>:null}</dl><DiagnosisDepthField value={diagnosisMode} onChange={setDiagnosisMode} disabled={busy}/><label className="ws-check"><input type="checkbox" checked={autoFeedback} onChange={e=>setAutoFeedback(e.target.checked)}/><span>诊断后自动生成单条建议<small>对已定位关键失败步骤的轨迹逐条生成建议，会额外调用模型。</small></span></label><p className="ws-help">使用当前系统配置保存本次分析配置。如需重试失败项，请使用轨迹列表中的「重试失败诊断」。</p>{startError?<p role="alert" className="error-inline">{startError}</p>:null}</div><footer><button className="secondary" disabled={busy} onClick={close}>取消</button><button className="primary" disabled={busy||!config?.ready||active} onClick={()=>void start()}>{busy?'正在提交…':'开始分析'}</button></footer></Dialog>:null}</>
+  {modal?<Dialog title={run?'重新分析':'启动首次分析'} onClose={close} busy={busy}>
+    <div className="modal-body">
+      <p>使用当前任务的 {task.input_count} 条轨迹。{run?'重新分析会更新任务展示的诊断结果和改进建议。请复核新结论。':''}</p>
+      <DiagnosisModelField options={models} onChange={setModelId} disabled={busy}/>
+      <dl className="settings-list">
+        <dt>提示词语言</dt><dd>{task.prompt_language==='zh'?'中文':'English'}</dd>
+        {runtime?<><dt>轨迹并发上限</dt><dd>{config?.concurrency??'—'}</dd>
+          <dt>模型请求并发上限</dt><dd>{config?.llm_concurrency??'—'}</dd>
+          <dt>请求重试次数</dt><dd>{runtime.max_retries}</dd>
+          <dt>请求超时</dt><dd>{runtime.timeout} 秒</dd>
+          <dt>输出上限</dt><dd>{runtime.max_tokens} tokens</dd>
+          {diagnosisMode==='deep'?<><dt>聚类 JSON 模式</dt><dd>{runtime.cluster_json_mode?'已开启':'已关闭'}</dd></>:null}
+        </>:null}
+      </dl>
+      <DiagnosisDepthField value={diagnosisMode} onChange={setDiagnosisMode} disabled={busy}/>
+      <label className="ws-check"><input type="checkbox" checked={autoFeedback} onChange={e=>setAutoFeedback(e.target.checked)}/>
+        <span>诊断后自动生成单条建议<small>对已定位关键失败步骤的轨迹逐条生成建议，会额外调用模型。</small></span>
+      </label>
+      {startError?<p role="alert" className="error-inline">{startError}</p>:null}
+    </div>
+    <footer><button className="secondary" disabled={busy} onClick={close}>取消</button>
+      <button className="primary" disabled={busy||!models.selected||!!models.error||active} onClick={()=>void start()}>{busy?'正在提交…':'开始分析'}</button>
+    </footer>
+  </Dialog>:null}</>
 }
 
 function TraceTable({task,run,params}:{task:AnalysisTask;run:AnalysisRun|undefined;params:URLSearchParams}) {
