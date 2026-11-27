@@ -79,6 +79,12 @@ def test_task_suggestions_use_verified_multi_engine_evidence_and_retry_per_agent
                   'instances': [], 'evidence': [{'step': step, 'quote': quote, 'original_matched': True}]}
         if index:
             report['comparison'] = {'state': 'aligned' if index == 1 else 'different', 'primary': 'agentdebugx'}
+        if index == 1:
+            report['engine_runs'] = {'agentdebugx': {'status': 'completed'}, 'chief': {
+                'status': 'completed', 'report': {'attribution': {'critical_step': step}},
+            }}
+            report['synthesis'] = {'status': 'completed', 'summary': '综合结论',
+                                   'evidence': report.pop('evidence')}
         store.update(row['job_id'], status='completed', result=report)
 
     allow_refund = False

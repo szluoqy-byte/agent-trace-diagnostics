@@ -244,6 +244,26 @@ it('distinguishes a missing CHIEF key step from a successful trace', () => {
   expect(screen.queryByRole('tab',{name:'证据与候选'})).toBeNull()
 })
 
+it('links the overview to the reviewed step and clears the link on rejection', () => {
+  const combined: Report = {...report, comparison:{state:'different',primary:'trajdebug'},
+    engine_runs:{trajdebug:{status:'completed'},chief:{status:'completed',report:{...report,algorithm:'CHIEF'}}},
+    synthesis:{status:'completed',summary:'模型综合结论',critical_step:7,preferred_engine:'trajdebug',
+      evidence:[],model:'fixture',calls:1}}
+  const jump = vi.fn()
+  const review = {id:'review',created_at:job.created_at,
+    data:{decision:'modified',critical_step:4,category:'',summary:'人工选择步骤四',notes:''}}
+  const props = {report:combined,onJump:jump,onReview:vi.fn()}
+  const reviewedJob = {...job,result:combined,reviews:[review]}
+  const {rerender} = render(<Inspector job={reviewedJob} {...props}/>)
+  fireEvent.click(screen.getByRole('button',{name:/人工复核关键步骤 #4/}))
+  expect(jump).toHaveBeenCalledWith({step:4,quote:''})
+  expect(screen.getByText('人工选择步骤四')).toBeTruthy()
+  expect(screen.getAllByRole('button',{name:'关键步骤 #7'})).toHaveLength(2)
+  rerender(<Inspector job={{...reviewedJob,reviews:[{...review,data:{...review.data,decision:'rejected',critical_step:null}}]}} {...props}/>)
+  expect(screen.queryByRole('button',{name:/定位轨迹/})).toBeNull()
+  expect(screen.getByText('已驳回')).toBeTruthy()
+})
+
 it('shows partial multi-engine synthesis and requires review', () => {
   const combined: Report = {...report, comparison:{state:'incomplete',primary:'trajdebug',engines:['trajdebug','agentdebugx']},
     engine_runs:{trajdebug:{status:'completed'},agentdebugx:{status:'completed'},chief:{status:'failed',error:'模型超时'}},

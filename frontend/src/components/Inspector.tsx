@@ -178,7 +178,7 @@ export default function Inspector({job, report: combined, onJump, onReview, onFe
           aria-labelledby={activeEngines.length ? `inspection-engine-tab-${engine}` : undefined}>
           {overview && combined ? <>
             <DiagnosisComparison report={combined} onJump={onJump} onEngine={selectEngine}
-              reviewWaived={reviewWaived} reviewed={!!job?.reviews?.length} reviewSummary={job?.reviews?.[0]?.data.summary}/>
+              reviewWaived={reviewWaived} review={job?.reviews?.[0]?.data}/>
             {reviewButton}
           </> : details}
         </div>

@@ -208,14 +208,24 @@ def select_candidate(comparison, steps, assessments):
     if comparison.get("state") in AGREEMENT_STATES:
         engine = comparison["primary"]
         return engine, steps.get(engine)
-    scores = {engine: SUPPORT_RANK.get(assessments.get(engine, {}).get("support"), 0)
-              for engine, step in steps.items() if type(step) is int}
-    highest = max(scores.values(), default=0)
-    leaders = [engine for engine, score in scores.items() if score == highest and score > 0]
-    if len({steps[engine] for engine in leaders}) != 1:
+
+    support_by_step = {}
+    for engine, step in steps.items():
+        rank = SUPPORT_RANK.get(assessments.get(engine, {}).get("support"), 0)
+        if type(step) is int and step >= 0 and rank:
+            support_by_step.setdefault(step, []).append((engine, rank))
+
+    # Compare the strongest support first. Further support for the same step can break a tie.
+    profiles = {step: tuple(sorted((rank for _, rank in supporters), reverse=True))
+                for step, supporters in support_by_step.items()}
+    highest = max(profiles.values(), default=())
+    leaders = [step for step, profile in profiles.items() if profile == highest]
+    if len(leaders) != 1:
         return None, None
-    engine = leaders[0]
-    return engine, steps[engine]
+    step = leaders[0]
+    primary = comparison.get("primary")
+    engine, _ = max(support_by_step[step], key=lambda supporter: (supporter[1], supporter[0] == primary))
+    return engine, step
 
 
 def ground_answer(answer, candidates, evidence, comparison):

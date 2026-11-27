@@ -46,8 +46,8 @@ FORMAT_RETRY = {
 
 def evidence_at_step(report, step, content):
     runs = report.get('engine_runs') or {}
-    sources = [report, *(run['report'] for run in runs.values()
-                        if run.get('status') == 'completed' and run.get('report'))]
+    sources = [report.get('synthesis') or {}, report, *(run['report'] for run in runs.values()
+               if run.get('status') == 'completed' and run.get('report'))]
     for source in sources:
         refs = list(source.get('evidence') or [])
         refs.extend(trigger['commitment'] for trigger in source.get('triggers', []) if trigger.get('commitment'))

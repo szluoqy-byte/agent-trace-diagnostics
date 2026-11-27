@@ -390,6 +390,7 @@ class TaskStore:
                 row['review_status'] = review_status(comparison_state, row['review_status'])
             row['attempts'] = row['attempts'] or 0
             row['feedback_applicable'] = False
+            row['step_pending_review'] = False
             if row['diagnosis'] != 'completed' or row['outcome'] != 'failed':
                 continue
             original_step = row['critical_step']
@@ -401,6 +402,9 @@ class TaskStore:
                 steps = {name: (sources.get(name) or {}).get('critical_step') for name in engines}
                 winner, step = select_candidate({'state': comparison_state, 'primary': primary}, steps,
                                                 json.loads(assessments or '{}') if synthesis_status == 'completed' else {})
+                row['step_pending_review'] = step is None and any(
+                    type(candidate) is int and 0 <= candidate < row['steps'] for candidate in steps.values()
+                )
                 chosen = {
                     'critical_step': step, 'category': (sources.get(winner) or {}).get('category'),
                     'summary': synthesis_summary if synthesis_status == 'completed' else UNRESOLVED_SUMMARY,

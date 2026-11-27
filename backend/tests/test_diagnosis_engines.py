@@ -14,7 +14,7 @@ from tracelens.config import Settings
 from tracelens.diagnosis.agentdebugx import diagnose_agentdebugx, locate_engine_quote, to_agentdebugx
 from tracelens.diagnosis.agentdebugx_prompts import ZH_PROFILE, EN_PROFILE
 from tracelens.diagnosis.compare import diagnose_dual
-from tracelens.diagnosis.synthesis import SynthesisAnswer, ground_answer, parse_synthesis_answer, project_synthesis, select_candidate, synthesize
+from tracelens.diagnosis.synthesis import SynthesisAnswer, ground_answer, parse_synthesis_answer, project_synthesis, synthesize
 from tracelens.engine import diagnose
 from tracelens.main import create_app
 from tracelens.feedback import generate_feedback
@@ -190,27 +190,41 @@ def test_aligned_step_is_final_and_disagreement_ties_are_unresolved():
     assert "confidence" not in projected and legacy["synthesis"]["confidence"] == "high"
 
 
-def test_multi_engine_ties_are_resolved_by_distinct_step_not_engine_count():
-    comparison = {"state": "different", "primary": "trajdebug"}
-    steps = {"trajdebug": 1, "agentdebugx": 1, "chief": 3}
-    assessments = {"trajdebug": {"support": "high"}, "agentdebugx": {"support": "high"}, "chief": {"support": "medium"}}
-    assert select_candidate(comparison, steps, assessments) == ("trajdebug", 1)
-    assessments["chief"]["support"] = "high"
-    assert select_candidate(comparison, steps, assessments) == (None, None)
+@pytest.mark.parametrize("supports, evidence_ids, expected", [
+    (("high", "medium", "high"), ["E1", "E2", "E3"], ("trajdebug", 14)),
+    (("high", "high", "high"), ["E1", "E2", "E3"], ("trajdebug", 14)),
+    (("high", "medium", "high"), ["E1", "E3"], (None, None)),
+    (("medium", "medium", "high"), ["E1", "E2", "E3"], ("chief", 12)),
+    (("high", "high", "high"), [], (None, None)),
+])
+def test_synthesis_ranks_verified_support_by_step(supports, evidence_ids, expected):
+    steps = {"trajdebug": 14, "agentdebugx": 14, "chief": 12}
+    candidates = {engine: {"critical_step": step} for engine, step in steps.items()}
+    evidence = {f"E{index}": {"engine": engine, "step": step, "quote": f"原文 #{step}"}
+                for index, (engine, step) in enumerate(steps.items(), 1)}
+    assessments = {engine: {"support": support, "reason": "依据轨迹原文"}
+                   for engine, support in zip(steps, supports, strict=True)}
+    answer = SynthesisAnswer.model_validate({"summary": "三路诊断方向一致", "assessments": assessments,
+                                            "evidence_ids": evidence_ids})
+    result = ground_answer(answer, candidates, evidence, {"state": "different", "primary": "trajdebug"})
+    assert (result["preferred_engine"], result["critical_step"]) == expected
+    if "E2" not in evidence_ids:
+        assert result["assessments"]["agentdebugx"]["support"] == "insufficient"
 
 
-def test_conflict_uses_ranked_candidate_in_review_and_task_list(tmp_path):
+@pytest.mark.parametrize("corroborated", [False, True])
+def test_conflict_uses_ranked_candidate_in_review_task_list_feedback_and_export(tmp_path, corroborated):
     app = create_app(Settings(data_dir=tmp_path, base_url="http://127.0.0.1:9/v1", model="fixture"))
     store = app.state.store
     trace_id = store.add_trace(pipeline_trace())["id"]
     client = TestClient(app)
     task = client.post("/api/tasks", json={"name":"分歧轨迹", "trace_ids":[trace_id], "start":True,
-                                          "diagnosis_mode":"dual"}).json()
+                                          "diagnosis_mode":"deep" if corroborated else "dual"}).json()
     base = f"/api/tasks/{task['task_id']}/runs/{task['run_id']}/traces"
     job_id = store.run_rows(task["run_id"])[0]["job_id"]
     reports = {
         "schema_version":2, "mode":"live", "algorithm":"TrajDebug",
-        "attribution":{"critical_step":1, "summary":"标准结论", "category":"type-a"},
+        "attribution":{"critical_step":1, "summary":"标准结论", "category":"type-a", "reasoning":"缺少审批"},
         "comparison":{"state":"different","primary":"trajdebug"},
         "engine_runs":{"trajdebug":{"status":"completed"}, "agentdebugx":{"status":"completed", "report":{
             "algorithm":"AgentDebugX", "attribution":{"critical_step":3, "summary":"候选结论", "category":"type-b"},
@@ -218,17 +232,49 @@ def test_conflict_uses_ranked_candidate_in_review_and_task_list(tmp_path):
         "synthesis":{"status":"completed", "critical_step":1, "preferred_engine":"trajdebug", "summary":"综合结论",
                      "assessments":{"trajdebug":{"support":"low"}, "agentdebugx":{"support":"high"}}},
     }
+    expected = (3, "type-b")
+    if corroborated:
+        reports["comparison"]["engines"] = ["trajdebug", "agentdebugx", "chief"]
+        reports["engine_runs"]["agentdebugx"]["report"]["attribution"]["critical_step"] = 1
+        reports["engine_runs"]["chief"] = {"status":"completed", "report":{
+            "algorithm":"CHIEF", "attribution":{"critical_step":3, "summary":"末步仍有异常", "category":""},
+        }}
+        reports["synthesis"].update(critical_step=None, preferred_engine=None, assessments={
+            "trajdebug":{"support":"high"}, "agentdebugx":{"support":"medium"}, "chief":{"support":"high"},
+        })
+        expected = (1, "type-a")
     store.update(job_id, status="completed", result=reports)
     item = client.get(base, params={"review":"pending"}).json()["items"][0]
-    assert item["critical_step"] == 3 and item["category"] == "type-b"
+    assert (item["critical_step"], item["category"]) == expected
+    assert item["feedback_applicable"] is True
     view = client.get(f"{base}/{trace_id}").json()["job"]
-    assert view["review_status"] is None and view["result"]["synthesis"]["critical_step"] == 3
+    assert view["review_status"] is None and view["result"]["synthesis"]["critical_step"] == expected[0]
+    assert view["feedback_eligible"] is True
+    exported = client.get(f"/api/jobs/{job_id}/export").json()
+    assert exported["job"]["result"]["synthesis"]["critical_step"] == expected[0]
+    assert store.job(job_id)["result"] == reports
+    if corroborated:
+        tied = deepcopy(reports)
+        tied["synthesis"]["assessments"]["agentdebugx"]["support"] = "insufficient"
+        store.update(job_id, result=tied)
+        item = client.get(base).json()["items"][0]
+        assert item["critical_step"] is None and item["step_pending_review"] is True
+        assert client.post(f"/api/jobs/{job_id}/feedback").status_code == 409
+        store.update(job_id, result=reports)
     response = client.post(f"/api/jobs/{job_id}/reviews", json={
-        "decision":"modified", "summary":"人工判断", "critical_step":1, "category":"type-a",
+        "decision":"modified", "summary":"人工判断", "critical_step":2, "category":"type-review",
     })
     assert response.status_code == 200, response.text
     item = client.get(base, params={"review":"modified"}).json()["items"][0]
-    assert item["critical_step"] == 1 and item["summary"] == "人工判断"
+    assert item["critical_step"] == 2 and item["summary"] == "人工判断"
+    assert client.get(f"/api/jobs/{job_id}").json()["feedback_eligible"] is True
+    response = client.post(f"/api/jobs/{job_id}/reviews", json={
+        "decision":"rejected", "summary":"人工驳回", "critical_step":None, "category":"",
+    })
+    assert response.status_code == 200, response.text
+    item = client.get(base, params={"review":"rejected"}).json()["items"][0]
+    assert item["critical_step"] is None and item["feedback_applicable"] is False
+    assert client.post(f"/api/jobs/{job_id}/feedback").status_code == 409
 
 
 @pytest.mark.parametrize("same_step", [False, True])
