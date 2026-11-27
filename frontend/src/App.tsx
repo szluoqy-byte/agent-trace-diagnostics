@@ -36,7 +36,8 @@ export default function App(){
   const workspaceHash=settingsBack?.hash??hash
   const workspaceState=settingsPage?settingsBack?.state:history.state
   const url=new URL(workspaceHash,location.origin),parts=url.pathname.split('/').filter(Boolean),id=parts[1],traceId=parts[3]
-  const page=parts[0]==='library'?(id?'library-detail':'library'):parts[0]!=='tasks'?'missing':id==='new'?'new':traceId?'trace':id?'task':'tasks'
+  const planned=url.pathname==='/playground'?'Playground':url.pathname==='/knowledge'?'诊断知识库':undefined
+  const page=planned?'planned':parts[0]==='library'?(id?'library-detail':'library'):parts[0]!=='tasks'?'missing':id==='new'?'new':traceId?'trace':id?'task':'tasks'
   const patterns=parts[0]==='tasks'&&id==='patterns'
   const patternId=parts[2]
   const fromLibrary=page==='new'&&url.searchParams.get('from')==='library'
@@ -59,8 +60,10 @@ export default function App(){
     <aside className="ws-sidebar"><nav className="ws-sidebar-nav" aria-label="工作台导航">
       <a href="#/tasks" aria-current={!settingsPage&&parts[0]==='tasks'&&!fromLibrary?'page':undefined}>分析任务</a>
       <a href="#/library" aria-current={!settingsPage&&libraryActive?'page':undefined}>轨迹库</a>
+      <a href="#/playground" aria-current={!settingsPage&&url.pathname==='/playground'?'page':undefined}>Playground</a>
+      <a href="#/knowledge" aria-current={!settingsPage&&url.pathname==='/knowledge'?'page':undefined}>诊断知识库</a>
       <div className="ws-sidebar-bottom">
-        <a href="#/settings" aria-current={settingsPage?'page':undefined} onClick={event=>{
+        <a href="#/settings" aria-label="系统设置" aria-current={settingsPage?'page':undefined} onClick={event=>{
           if(event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return
           event.preventDefault();openSettings()
         }}><Settings size={16}/><span>系统设置</span></a>
@@ -75,5 +78,6 @@ export default function App(){
     :page==='task'?<TaskDetail key={id} id={id} params={url.searchParams}/>:page==='trace'?<TrajectoryDetail id={id} traceId={traceId} params={url.searchParams}/>
     :page==='library'?<TraceLibrary params={url.searchParams} selected={librarySelection.filters===libraryFilters?librarySelection.items:[]} onSelect={items=>setLibrarySelection({filters:libraryFilters,items})}/>
     :page==='library-detail'?<LibraryTraceDetail key={id} id={id} params={url.searchParams} onDeleted={traceId=>setLibrarySelection(current=>({...current,items:current.items.filter(item=>item.id!==traceId)}))}/>
+    :planned?<><div className="ws-heading"><h1>{planned}</h1></div><section className="ws-surface empty"><p>待规划</p></section></>
     :<div className="empty"><h1>页面不存在</h1><p>请检查链接，或返回分析任务列表。</p><a href="#/tasks">返回分析任务</a></div>}</div>:null}</main></div></div></WorkspaceContext>
 }

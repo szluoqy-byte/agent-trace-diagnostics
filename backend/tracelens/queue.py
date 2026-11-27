@@ -7,7 +7,7 @@ from .diagnosis.chief import diagnose_chief
 from .diagnosis.compare import diagnose_dual
 from .engine import diagnose
 from .feedback import generate_feedback, feedback_availability
-from .execution import job_settings, run_settings
+from .execution import active_execution, job_settings, run_settings
 from .llm import ModelError
 from .models import Trajectory
 from .task_improvements import generate_agent_suggestions
@@ -19,7 +19,9 @@ logger = logging.getLogger(__name__)
 class JobQueue:
     def __init__(self, store, settings):
         self.store, self.settings = store, settings
-        self.tasks = []
+        self.tasks = {}
+        self.active_slots = set()
+        self.worker_limit = settings.concurrency
         self.started = False
 
     async def start(self):
@@ -27,92 +29,99 @@ class JobQueue:
         self.prune_superseded_runs()
         self.schedule_feedback()
         self.started = True
-        self.tasks = [asyncio.create_task(self.worker(slot)) for slot in range(self.settings.concurrency)]
+        await self.apply_settings()
 
     async def stop(self):
         self.started = False
-        for task in self.tasks:
+        for task in self.tasks.values():
             task.cancel()
-        await asyncio.gather(*self.tasks, return_exceptions=True)
-        self.tasks = []
+        await asyncio.gather(*self.tasks.values(), return_exceptions=True)
+        self.tasks.clear()
 
     async def apply_settings(self):
-        """Apply a new concurrency limit without interrupting active jobs."""
+        """Apply the active diagnostic model's limit without interrupting running work."""
+        execution, _ = active_execution(self.store, self.settings)
+        self.worker_limit = execution.concurrency
         if not self.started:
             return
-        self.tasks = [task for task in self.tasks if not task.done()]
-        while len(self.tasks) < self.settings.concurrency:
-            self.tasks.append(asyncio.create_task(self.worker(len(self.tasks))))
+        self.tasks = {slot: task for slot, task in self.tasks.items() if not task.done()}
+        for slot in range(self.worker_limit):
+            if slot not in self.tasks:
+                self.tasks[slot] = asyncio.create_task(self.worker(slot))
 
     async def worker(self, slot):
-        while True:
-            if slot >= self.settings.concurrency:
-                return
-            job = self.store.claim()
-            if not job:
-                improvement = self.store.claim_task_improvement()
-                if improvement:
-                    await self.task_improvement(improvement)
-                    continue
-                feedback = self.store.claim_feedback()
-                if feedback:
-                    await self.feedback(feedback)
-                    continue
+        handlers = ((self.store.claim, self.diagnose_job),
+                    (self.store.claim_task_improvement, self.task_improvement),
+                    (self.store.claim_feedback, self.feedback))
+        while slot < self.worker_limit:
+            if len(self.active_slots) >= self.worker_limit:
                 await asyncio.sleep(0.3)
                 continue
-            async def progress(stage, value, partial):
-                self.store.update(job["id"], stage=stage, progress=value, result=partial)
-            execution = self.settings
-            try:
-                trace = Trajectory.model_validate(self.store.trace(job["trace_id"])["data"])
-                if job["mode"] == "demo":
-                    if not self.settings.enable_validation_data:
-                        raise ValueError("该历史诊断不可执行")
-                    if trace.kind != "demo":
-                        raise ValueError("演示模式仅适用于内置合成样例")
-                    for stage, value in [("加载演示轨迹", 10), ("展示触发证据", 40), ("展示错误实例", 70), ("展示归因结果", 90)]:
-                        await progress(stage, value, {})
-                        await asyncio.sleep(0.25)
-                    report = demo_report()
-                else:
-                    config = self.store.job_config(job['id']) or {}
-                    execution = run_settings(self.store, self.settings, config)
-                    mode = config.get("diagnosis_mode", LEGACY_DEFAULT_MODE)
-                    engines = MODE_ENGINES[mode]
-                    fresh = self.store.uses_fresh_diagnosis_cache(job['id'])
-                    if len(engines) > 1:
-                        report = await diagnose_dual(trace, execution, progress, diagnose, mode=mode, fresh_cache=fresh)
-                    elif engines[0] == "agentdebugx":
-                        report = await diagnose_agentdebugx(trace, execution, progress)
-                    elif engines[0] == "chief":
-                        report = await diagnose_chief(trace, execution, progress)
-                    elif fresh:
-                        report = await diagnose(trace, execution, progress, fresh_cache=True)
-                    else:
-                        report = await diagnose(trace, execution, progress)
-                self.store.update(job["id"], status="completed", stage="诊断完成", progress=100, result=report)
-                self.schedule_feedback()
-            except asyncio.CancelledError:
-                self.store.update(job["id"], status="failed", stage="运行中断", error="服务停止，任务可重试")
-                raise
-            except Exception as exc:
-                # Never persist provider payloads, authorization headers, or unknown exception text.
-                message = str(exc) if isinstance(exc, (ModelError, ValueError)) else "诊断运行失败，请检查服务日志后重试"
-                if execution.api_key:
-                    message = message.replace(execution.api_key, "[redacted]")
-                fields = {}
-                if isinstance(exc, ModelError) and exc.issues:
-                    partial = self.store.job(job['id']).get('result') or {}
-                    fields['result'] = {**partial, 'contract_issues': exc.issues,
-                                        'usage': exc.usage or partial.get('usage'),
-                                        'model_validation': exc.validation_events or partial.get('model_validation', [])}
-                elif isinstance(exc, ModelError) and exc.usage:
-                    partial = self.store.job(job['id']).get('result') or {}
-                    fields['result'] = {**partial, 'usage': exc.usage}
-                self.store.update(job["id"], status="failed", stage="诊断失败", error=message, **fields)
-                logger.warning("Diagnosis job %s failed (%s)", job["id"], type(exc).__name__)
+            for claim, handle in handlers:
+                if item := claim():
+                    self.active_slots.add(slot)
+                    try:
+                        await handle(item)
+                    finally:
+                        self.active_slots.remove(slot)
+                    break
             else:
-                self.prune_superseded_runs(job['id'])
+                await asyncio.sleep(0.3)
+
+    async def diagnose_job(self, job):
+        async def progress(stage, value, partial):
+            self.store.update(job["id"], stage=stage, progress=value, result=partial)
+        execution = self.settings
+        try:
+            trace = Trajectory.model_validate(self.store.trace(job["trace_id"])["data"])
+            if job["mode"] == "demo":
+                if not self.settings.enable_validation_data:
+                    raise ValueError("该历史诊断不可执行")
+                if trace.kind != "demo":
+                    raise ValueError("演示模式仅适用于内置合成样例")
+                for stage, value in [("加载演示轨迹", 10), ("展示触发证据", 40), ("展示错误实例", 70), ("展示归因结果", 90)]:
+                    await progress(stage, value, {})
+                    await asyncio.sleep(0.25)
+                report = demo_report()
+            else:
+                config = self.store.job_config(job['id']) or {}
+                execution = run_settings(self.store, self.settings, config)
+                mode = config.get("diagnosis_mode", LEGACY_DEFAULT_MODE)
+                engines = MODE_ENGINES[mode]
+                fresh = self.store.uses_fresh_diagnosis_cache(job['id'])
+                if len(engines) > 1:
+                    report = await diagnose_dual(trace, execution, progress, diagnose, mode=mode, fresh_cache=fresh)
+                elif engines[0] == "agentdebugx":
+                    report = await diagnose_agentdebugx(trace, execution, progress)
+                elif engines[0] == "chief":
+                    report = await diagnose_chief(trace, execution, progress)
+                elif fresh:
+                    report = await diagnose(trace, execution, progress, fresh_cache=True)
+                else:
+                    report = await diagnose(trace, execution, progress)
+            self.store.update(job["id"], status="completed", stage="诊断完成", progress=100, result=report)
+            self.schedule_feedback()
+        except asyncio.CancelledError:
+            self.store.update(job["id"], status="failed", stage="运行中断", error="服务停止，任务可重试")
+            raise
+        except Exception as exc:
+            # Never persist provider payloads, authorization headers, or unknown exception text.
+            message = str(exc) if isinstance(exc, (ModelError, ValueError)) else "诊断运行失败，请检查服务日志后重试"
+            if execution.api_key:
+                message = message.replace(execution.api_key, "[redacted]")
+            fields = {}
+            if isinstance(exc, ModelError) and exc.issues:
+                partial = self.store.job(job['id']).get('result') or {}
+                fields['result'] = {**partial, 'contract_issues': exc.issues,
+                                    'usage': exc.usage or partial.get('usage'),
+                                    'model_validation': exc.validation_events or partial.get('model_validation', [])}
+            elif isinstance(exc, ModelError) and exc.usage:
+                partial = self.store.job(job['id']).get('result') or {}
+                fields['result'] = {**partial, 'usage': exc.usage}
+            self.store.update(job["id"], status="failed", stage="诊断失败", error=message, **fields)
+            logger.warning("Diagnosis job %s failed (%s)", job["id"], type(exc).__name__)
+        else:
+            self.prune_superseded_runs(job['id'])
 
     def prune_superseded_runs(self, job_id=None):
         try:

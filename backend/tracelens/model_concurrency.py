@@ -9,6 +9,8 @@ import time
 
 from filelock import FileLock, Timeout
 
+from .model_connections import DATABASE_NAME
+
 
 MAX_MODEL_CONCURRENCY = 16
 POLL_INTERVAL = 0.05
@@ -37,6 +39,20 @@ class ModelSlots:
         return cls(workspace, int(os.environ[LIMIT_ENV])) if workspace else None
 
     def limit(self):
+        connections = self.workspace / DATABASE_NAME
+        if connections.is_file():
+            try:
+                with closing(sqlite3.connect(connections.as_uri() + "?mode=ro", uri=True, timeout=0)) as db:
+                    row = db.execute("""
+                        SELECT json_extract(runtime, '$.llm_concurrency')
+                        FROM model_connections WHERE purpose='diagnosis' AND is_default=1
+                    """).fetchone()
+                if row and type(row[0]) is int:
+                    return max(1, min(MAX_MODEL_CONCURRENCY, row[0]))
+            except sqlite3.OperationalError as exc:
+                # Offline runners can open a workspace before the app upgrades its connection schema.
+                if not str(exc).startswith(("no such column:", "no such table:")):
+                    raise
         database = self.workspace / "tracelens.sqlite3"
         if database.is_file():
             with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=0)) as db:

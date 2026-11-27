@@ -5,16 +5,22 @@ import json
 import os
 import sqlite3
 from uuid import uuid4
+from typing import Literal
+
+
+ModelPurpose = Literal['diagnosis', 'playground']
+DATABASE_NAME = 'model-connections.sqlite3'
 
 
 class ModelConnections:
     def __init__(self, directory):
-        self.path = directory / 'model-connections.sqlite3'
+        self.path = directory / DATABASE_NAME
         fd = os.open(self.path, os.O_CREAT | os.O_WRONLY, 0o600)
         os.close(fd)
         self.path.chmod(0o600)
         with self.connect() as db:
-            db.executescript("""
+            db.execute('BEGIN IMMEDIATE')
+            db.execute("""
                 CREATE TABLE IF NOT EXISTS model_connections (
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
@@ -22,14 +28,21 @@ class ModelConnections:
                     model TEXT NOT NULL,
                     api_key TEXT NOT NULL,
                     headers TEXT NOT NULL DEFAULT '{}',
-                    is_default INTEGER NOT NULL DEFAULT 0
-                );
-                CREATE UNIQUE INDEX IF NOT EXISTS one_default_model_connection
-                    ON model_connections(is_default) WHERE is_default=1;
+                    is_default INTEGER NOT NULL DEFAULT 0,
+                    purpose TEXT NOT NULL DEFAULT 'diagnosis',
+                    runtime TEXT
+                )
             """)
             columns = {row['name'] for row in db.execute('PRAGMA table_info(model_connections)')}
             if 'headers' not in columns:
                 db.execute("ALTER TABLE model_connections ADD COLUMN headers TEXT NOT NULL DEFAULT '{}'")
+            if 'purpose' not in columns:
+                db.execute("ALTER TABLE model_connections ADD COLUMN purpose TEXT NOT NULL DEFAULT 'diagnosis'")
+            if 'runtime' not in columns:
+                db.execute('ALTER TABLE model_connections ADD COLUMN runtime TEXT')
+            db.execute('DROP INDEX IF EXISTS one_default_model_connection')
+            db.execute('''CREATE UNIQUE INDEX IF NOT EXISTS one_default_model_per_purpose
+                          ON model_connections(purpose) WHERE is_default=1''')
 
     @contextmanager
     def connect(self):
@@ -38,11 +51,16 @@ class ModelConnections:
             with db:
                 yield db
 
-    def list(self):
+    def migrate_runtime(self, defaults):
         with self.connect() as db:
-            return [dict(row) for row in db.execute("""SELECT id,name,base_url,model,
-                api_key != '' AS has_key,headers != '{}' AS has_headers,is_default
-                FROM model_connections ORDER BY rowid""")]
+            db.execute("UPDATE model_connections SET runtime=? WHERE purpose='diagnosis' AND runtime IS NULL",
+                       (json.dumps(defaults),))
+
+    def list(self, purpose: ModelPurpose = 'diagnosis'):
+        with self.connect() as db:
+            return [{**dict(row), 'runtime': json.loads(row['runtime'] or '{}')} for row in db.execute("""
+                SELECT id,name,base_url,model,api_key != '' AS has_key,headers != '{}' AS has_headers,is_default,runtime
+                FROM model_connections WHERE purpose=? ORDER BY rowid""", (purpose,))]
 
     @staticmethod
     def _decode(row):
@@ -51,57 +69,76 @@ class ModelConnections:
             value['headers'] = json.loads(value.get('headers') or '{}')
         except (TypeError, ValueError):
             value['headers'] = {}
+        value['runtime'] = json.loads(value['runtime'] or '{}')
         return value
 
-    def get(self, connection_id):
+    def get(self, connection_id, purpose: ModelPurpose = 'diagnosis'):
         with self.connect() as db:
-            row = db.execute('SELECT * FROM model_connections WHERE id=?', (connection_id,)).fetchone()
+            row = db.execute('SELECT * FROM model_connections WHERE id=? AND purpose=?', (connection_id, purpose)).fetchone()
             return self._decode(row) if row else None
 
-    def default(self):
+    def default(self, purpose: ModelPurpose = 'diagnosis'):
         with self.connect() as db:
-            row = db.execute('SELECT * FROM model_connections WHERE is_default=1').fetchone()
+            row = db.execute('SELECT * FROM model_connections WHERE is_default=1 AND purpose=?', (purpose,)).fetchone()
             return self._decode(row) if row else None
 
-    def add(self, *, name, base_url, model, api_key, headers=None, make_default=False):
+    def add(self, *, name, base_url, model, api_key, headers=None, make_default=False,
+            purpose: ModelPurpose = 'diagnosis', runtime=None):
         connection_id = uuid4().hex
         with self.connect() as db:
             if make_default:
-                db.execute('UPDATE model_connections SET is_default=0 WHERE is_default=1')
-            db.execute('INSERT INTO model_connections (id,name,base_url,model,api_key,headers,is_default) VALUES (?,?,?,?,?,?,?)',
+                db.execute('UPDATE model_connections SET is_default=0 WHERE is_default=1 AND purpose=?', (purpose,))
+            db.execute('''INSERT INTO model_connections (id,name,base_url,model,api_key,headers,is_default,purpose,runtime)
+                          VALUES (?,?,?,?,?,?,?,?,?)''',
                        (connection_id, name, base_url, model, api_key,
-                        json.dumps(headers or {}, ensure_ascii=False, sort_keys=True), int(make_default)))
+                        json.dumps(headers or {}, ensure_ascii=False, sort_keys=True), int(make_default), purpose,
+                        json.dumps(runtime) if runtime is not None else None))
         return connection_id
 
-    def update(self, connection_id, *, name, base_url, model, api_key=None, headers=None, make_default=False):
+    def update(self, connection_id, *, name, base_url, model, api_key=None, headers=None, make_default=False,
+               purpose: ModelPurpose = 'diagnosis', runtime=None):
         with self.connect() as db:
-            row = db.execute('SELECT api_key,headers FROM model_connections WHERE id=?', (connection_id,)).fetchone()
+            db.execute('BEGIN IMMEDIATE')
+            row = db.execute('SELECT api_key,headers,runtime FROM model_connections WHERE id=? AND purpose=?',
+                             (connection_id, purpose)).fetchone()
             if row is None:
                 return False
             stored_headers = json.loads(row['headers'] or '{}')
             next_key = api_key if api_key else row['api_key']
             next_headers = stored_headers if headers is None else headers
             if make_default:
-                db.execute('UPDATE model_connections SET is_default=0 WHERE is_default=1')
+                db.execute('UPDATE model_connections SET is_default=0 WHERE is_default=1 AND purpose=?', (purpose,))
+            next_runtime = (json.dumps({**json.loads(row['runtime'] or '{}'), **runtime})
+                            if runtime is not None else row['runtime'])
             db.execute('''UPDATE model_connections
-                          SET name=?,base_url=?,model=?,api_key=?,headers=?,is_default=?
+                          SET name=?,base_url=?,model=?,api_key=?,headers=?,is_default=?,runtime=?
                           WHERE id=?''',
                        (name, base_url, model, next_key,
-                        json.dumps(next_headers, ensure_ascii=False, sort_keys=True), int(make_default), connection_id))
+                        json.dumps(next_headers, ensure_ascii=False, sort_keys=True), int(make_default), next_runtime,
+                        connection_id))
             return True
 
-    def delete(self, connection_id):
+    def update_default_runtime(self, changes):
         with self.connect() as db:
-            result = db.execute('DELETE FROM model_connections WHERE id=?', (connection_id,))
+            row = db.execute("""UPDATE model_connections
+                                SET runtime=json_patch(COALESCE(runtime,'{}'),?)
+                                WHERE purpose='diagnosis' AND is_default=1 RETURNING runtime""",
+                             (json.dumps(changes),)).fetchone()
+            return json.loads(row['runtime']) if row else None
+
+    def delete(self, connection_id, purpose: ModelPurpose = 'diagnosis'):
+        with self.connect() as db:
+            result = db.execute('DELETE FROM model_connections WHERE id=? AND purpose=?', (connection_id, purpose))
             return result.rowcount > 0
 
-    def set_default(self, connection_id):
+    def set_default(self, connection_id, purpose: ModelPurpose = 'diagnosis'):
         """A null ID selects the environment configuration."""
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
-            if connection_id and not db.execute('SELECT 1 FROM model_connections WHERE id=?', (connection_id,)).fetchone():
+            if connection_id and not db.execute('SELECT 1 FROM model_connections WHERE id=? AND purpose=?',
+                                                (connection_id, purpose)).fetchone():
                 return False
-            db.execute('UPDATE model_connections SET is_default=0 WHERE is_default=1')
+            db.execute('UPDATE model_connections SET is_default=0 WHERE is_default=1 AND purpose=?', (purpose,))
             if connection_id:
                 db.execute('UPDATE model_connections SET is_default=1 WHERE id=?', (connection_id,))
             return True

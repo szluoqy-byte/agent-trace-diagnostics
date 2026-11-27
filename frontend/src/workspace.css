@@ -98,35 +98,42 @@
 .ws-settings-link{display:inline-flex;align-items:center;gap:6px}
 .model-settings{overflow:hidden}
 .model-settings-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap;padding:20px}
-.model-settings-heading h2,.model-runtime h2{font-size:16px;margin:0}
 .model-settings-heading p{color:var(--muted);font-size:13px;margin:6px 0 0}
 .model-connections{list-style:none;margin:0;padding:0}
 .model-connection{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;padding:18px 20px;border-top:1px solid var(--border)}
 .model-connection-details{min-width:0}
 .model-connection-title{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.model-connection-title h3{font-size:14px;margin:0;overflow-wrap:anywhere}
+.model-connection-title h2{font-size:16px;margin:0;overflow-wrap:anywhere}
 .model-connection dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:5px 14px;margin:10px 0 0;font-size:13px}
 .model-connection dt{color:var(--muted)}
 .model-connection dd{margin:0;overflow-wrap:anywhere}
 .model-connection-actions{flex-shrink:0}
 .model-connection-details>p{margin:8px 0 0;font-size:12px}
 .model-settings-empty{padding:24px 20px;border-top:1px solid var(--border);margin:0}
-.model-runtime{margin-top:16px}
-.model-runtime .model-runtime-values{margin-bottom:0}
-.runtime-settings-form{padding:0 20px 20px}
+.settings-model-tabs{flex-shrink:0;margin:0 0 12px}
+.model-runtime-summary{margin-top:10px}
+.model-runtime-summary summary{cursor:pointer;color:var(--accent);font-size:13px}
+.model-runtime-fields{min-width:0;margin:6px 0 0;padding:10px 12px 12px;border:1px solid var(--border);border-radius:6px}
+.model-runtime-fields legend{padding-inline:6px;font-weight:600}
 .runtime-settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px 20px}
 .runtime-settings-grid label:not(.ws-check){display:grid;gap:6px;font-size:13px;color:var(--text)}
 .runtime-settings-grid input[type=number]{width:100%}
 .runtime-settings-grid small{font-size:11px;line-height:1.5;color:var(--muted);font-weight:400}
 .runtime-json-mode{align-items:start;padding-top:25px}
 .runtime-json-mode span{display:grid;gap:4px}
-.runtime-settings-actions{justify-content:flex-end;margin-top:20px}
 .model-configuration-form{display:grid;gap:10px}
 .model-configuration-form label:not(.ws-check){display:grid;gap:5px}
 .model-configuration-form p{margin:0}
-.model-form-test span{font-size:12px}
+.model-configuration-form :is(input:not([type=checkbox]),textarea){
+  min-width:0;min-height:34px;padding:6px 9px;border:1px solid var(--border);border-radius:5px;
+  background:#fff;color:var(--text);font:inherit
+}
+.ws-dialog:has(.model-configuration-form)[open]{display:flex;flex-direction:column;width:min(640px,calc(100% - 24px));overflow:hidden}
+.ws-dialog:has(.model-configuration-form)>form{display:flex;flex-direction:column;min-height:0}
+.ws-dialog:has(.model-configuration-form) :is(header,footer){flex-shrink:0}
+.model-configuration-form{overflow:auto;overscroll-behavior:contain;scrollbar-width:thin}
 @media(max-width:640px){.model-connection{flex-direction:column;gap:12px}}
-@media(max-width:700px){.runtime-settings-form{padding:0 16px 16px}.runtime-settings-grid{grid-template-columns:1fr}.runtime-json-mode{padding-top:0}}
+@media(max-width:520px){.runtime-settings-grid{grid-template-columns:1fr}.runtime-json-mode{padding-top:0}}
 
 .ws-choice-group {
   display:grid;
@@ -418,6 +425,11 @@
   .ws-table-frame .ws-trace-table th:nth-child(-n+2){z-index:4}
   .ws-table-frame .ws-trace-table th:first-child{z-index:5}
   .ws-fit-route .ws-table-scroll-hint{font-size:11px;margin-bottom:4px}
+}
+@media(max-width:480px){
+  .ws-sidebar-nav{gap:3px}
+  .ws-sidebar-nav a{padding-inline:7px;font-size:12px}
+  .ws-sidebar-bottom a span{display:none}
 }
 @media(max-width:650px) and (max-height:760px){
   .ws-task-table-tools{position:relative;margin-block:6px}

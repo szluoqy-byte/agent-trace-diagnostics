@@ -13,8 +13,9 @@ def active_execution(store, settings):
     connection = store.model_connections.default()
     if connection is None:
         return settings, None
+    runtime = {key: connection['runtime'][key] for key in RUNTIME_FIELDS if key in connection['runtime']}
     return replace(settings, base_url=connection['base_url'], model=connection['model'],
-                   api_key=connection['api_key'], headers=connection.get('headers', {})), connection['id']
+                   api_key=connection['api_key'], headers=connection.get('headers', {}), **runtime), connection['id']
 
 
 def load_runtime_settings(store, settings):
@@ -56,8 +57,10 @@ def job_settings(store, settings, job_id):
 def run_settings(store, settings, config):
     if not config or 'base_url' not in config:
         return settings
-    # The shared slot limit is a live workspace policy, including for old rounds.
+    # Snapshots keep request parameters. Both shared limits follow the active diagnosis model.
     frozen = {k: config[k] for k in FIELDS if k in config and k != 'llm_concurrency'}
+    active, _ = active_execution(store, settings)
+    frozen.update(concurrency=active.concurrency, llm_concurrency=active.llm_concurrency)
     if connection_id := config.get('model_connection_id'):
         connection = store.model_connections.get(connection_id)
         if connection and connection['base_url'] == frozen['base_url'] and connection['model'] == frozen.get('model'):

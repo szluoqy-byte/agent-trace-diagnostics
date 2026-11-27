@@ -1,3 +1,4 @@
+import asyncio
 import stat
 
 import httpx
@@ -6,7 +7,10 @@ from fastapi.testclient import TestClient
 from tracelens.config import Settings
 from tracelens.execution import job_settings
 from tracelens.main import create_app
+from tracelens.model_concurrency import ModelSlots
 from tracelens.normalize import normalize
+from tracelens.queue import JobQueue
+from tracelens.store import Store
 
 
 PATH = '/api/model-configurations'
@@ -91,7 +95,7 @@ def test_connection_probe_and_validation_do_not_return_secrets(tmp_path, monkeyp
         'X-Tenant': 'tenant-a', 'authorization': 'Bearer probe-private-key',
     }}).json() == {'ok': True}
     assert calls[-1].headers.get_list('authorization') == ['Bearer probe-private-key']
-    assert client.get(PATH).json() == {'items': []}
+    assert client.get(PATH).json()['items'] == []
     config_id = client.post(PATH, json={**body, 'headers': {'X-Tenant': 'tenant-a'}, 'make_default': True}).json()['id']
     assert client.post(f'{PATH}/{config_id}/test').json() == {'ok': True}
     assert app.state.store.model_connections.get(config_id)['headers'] == {'X-Tenant': 'tenant-a'}
@@ -146,3 +150,109 @@ def test_runtime_settings_fill_backend_defaults_when_fields_are_omitted(tmp_path
     assert response.status_code == 200
     assert response.json() == {key: getattr(settings, key) for key in (
         'concurrency', 'max_retries', 'timeout', 'llm_concurrency', 'max_tokens', 'cluster_json_mode')}
+
+
+def test_model_purposes_have_independent_defaults_and_diagnosis_runtime(tmp_path):
+    settings = Settings(data_dir=tmp_path, base_url='https://environment.example/v1', model='environment',
+                        concurrency=2, llm_concurrency=8, timeout=120, max_retries=2)
+    app = create_app(settings)
+    store = app.state.store
+    client = TestClient(app)
+    base = {'name': 'Provider', 'base_url': 'https://provider.example/v1', 'model': 'diagnosis-a',
+            'api_key': 'diagnosis-key', 'headers': {'X-Tenant': 'diagnosis-tenant'}, 'make_default': True}
+    a = client.post(PATH, json={**base, 'runtime': {'timeout': 45, 'concurrency': 3, 'llm_concurrency': 4}}).json()['id']
+    b = client.post(PATH, json={**base, 'model': 'diagnosis-b', 'make_default': False,
+                               'runtime': {'max_retries': 0, 'timeout': 95, 'llm_concurrency': 2}}).json()['id']
+    play = client.post(PATH, params={'purpose': 'playground'},
+                       json={**base, 'model': 'replay', 'api_key': 'playground-key'}).json()['id']
+    assert client.get('/api/config').json()['model'] == 'diagnosis-a'
+    assert client.get('/api/config').json()['concurrency'] == 3
+    assert ModelSlots.for_settings(settings).limit() == 4
+    assert {item['id'] for item in client.get(PATH).json()['items']} == {'environment', a, b}
+    playground = client.get(PATH, params={'purpose': 'playground'}).json()['items']
+    assert [item['id'] for item in playground] == [play]
+    assert playground[0]['is_default'] is True and 'runtime' not in playground[0]
+    assert client.get(f'{PATH}/{play}').status_code == 404
+    assert client.delete(f'{PATH}/{a}', params={'purpose': 'playground'}).status_code == 404
+    assert client.post(f'{PATH}/{play}/default').status_code == 404
+    assert client.put(f'{PATH}/{play}', params={'purpose': 'playground'},
+                      json={**base, 'runtime': {'timeout': 25}}).status_code == 422
+
+    trace_id = store.add_trace(normalize({'outcome': 'failed', 'messages': [{'role': 'assistant', 'content': 'done'}]}))['id']
+    task = client.post('/api/tasks', json={'name': 'Frozen', 'trace_ids': [trace_id], 'start': True}).json()
+    job_id = store.run_rows(task['run_id'])[0]['job_id']
+    assert store.job_config(job_id)['timeout'] == 45
+    assert client.post(f'{PATH}/{b}/default').status_code == 200
+    assert ModelSlots.for_settings(settings).limit() == 2
+    assert client.get('/api/config').json()['timeout'] == 95
+    assert client.get('/api/config').json()['max_retries'] == 0
+    assert job_settings(store, settings, job_id).timeout == 45
+    assert job_settings(store, settings, job_id).llm_concurrency == 2
+    assert job_settings(store, settings, job_id).api_key == 'diagnosis-key'
+    body = {**base, 'model': 'diagnosis-b', 'runtime': {'timeout': None}}
+    assert client.put(f'{PATH}/{b}', json=body).status_code == 200
+    assert client.get('/api/config').json()['timeout'] == 120
+    assert client.get('/api/config').json()['max_retries'] == 0
+    assert client.put('/api/runtime-settings?scope=environment', json={'llm_concurrency': 5}).status_code == 200
+    assert ModelSlots.for_settings(settings).limit() == 2
+    assert client.post(f'{PATH}/environment/default').status_code == 200
+    assert ModelSlots.for_settings(settings).limit() == 5
+    assert client.delete(f'{PATH}/{play}', params={'purpose': 'playground'}).status_code == 200
+
+
+def test_legacy_connections_inherit_saved_runtime_on_upgrade(tmp_path):
+    store = Store(tmp_path)
+    store.save_runtime_settings({'timeout': 75, 'llm_concurrency': 3, 'concurrency': 4})
+    with store.model_connections.connect() as db:
+        db.execute('DROP TABLE model_connections')
+        db.executescript("""
+            CREATE TABLE model_connections (
+                id TEXT PRIMARY KEY, name TEXT, base_url TEXT, model TEXT, api_key TEXT, is_default INTEGER
+            );
+            CREATE UNIQUE INDEX one_default_model_connection ON model_connections(is_default) WHERE is_default=1;
+            INSERT INTO model_connections VALUES
+                ('original', 'Original', 'https://old.example/v1', 'old-model', 'private-key', 1);
+        """)
+    settings = Settings(data_dir=tmp_path, base_url='', model='')
+    assert ModelSlots.for_settings(settings).limit() == 3
+    app = create_app(settings)
+    client = TestClient(app)
+    [saved] = client.get(PATH).json()['items']
+    assert saved['id'] == 'original' and saved['is_default'] and saved['has_key']
+    assert saved['runtime']['timeout'] == 75 and saved['runtime']['concurrency'] == 4
+    assert ModelSlots.for_settings(settings).limit() == 3
+    assert client.get(PATH, params={'purpose': 'playground'}).json() == {'items': []}
+    assert client.put('/api/runtime-settings?scope=environment', json={'timeout': 25}).status_code == 200
+    restored = TestClient(create_app(Settings(data_dir=tmp_path, base_url='', model='')))
+    assert restored.get('/api/config').json()['timeout'] == 75
+    assert restored.get('/api/runtime-settings?scope=environment').json()['timeout'] == 25
+
+
+async def test_lowering_diagnosis_workers_waits_for_running_work(tmp_path, monkeypatch):
+    store = Store(tmp_path)
+    store.model_connections.add(name='Diagnosis', base_url='https://provider.example/v1', model='diagnosis',
+                                api_key='', make_default=True, runtime={'concurrency': 3})
+    queue = JobQueue(store, Settings(data_dir=tmp_path))
+    work = iter(range(1, 5))
+    started = asyncio.Queue()
+    release = {job: asyncio.Event() for job in range(1, 5)}
+
+    async def handle(job):
+        started.put_nowait(job)
+        await release[job].wait()
+
+    monkeypatch.setattr(store, 'claim', lambda: next(work, None))
+    monkeypatch.setattr(queue, 'diagnose_job', handle)
+    await queue.start()
+    try:
+        assert [await asyncio.wait_for(started.get(), 1) for _ in range(3)] == [1, 2, 3]
+        store.model_connections.update_default_runtime({'concurrency': 1})
+        await queue.apply_settings()
+        release[1].set()
+        release[2].set()
+        await asyncio.sleep(0.35)
+        assert started.empty()
+        release[3].set()
+        assert await asyncio.wait_for(started.get(), 1) == 4
+    finally:
+        await queue.stop()

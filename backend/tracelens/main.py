@@ -47,6 +47,7 @@ def create_app(settings=None, *, frontend_dir=None):
     loaded_settings = load_runtime_settings(store, settings)
     for key in RUNTIME_FIELDS:
         setattr(settings, key, getattr(loaded_settings, key))
+    store.model_connections.migrate_runtime(runtime_snapshot(settings))
     execution, connection_id = active_execution(store, settings)
     store.freeze_legacy_runs(snapshot(execution, connection_id))
     queue = JobQueue(store, settings)
@@ -64,7 +65,7 @@ def create_app(settings=None, *, frontend_dir=None):
     @app.exception_handler(RequestValidationError)
     async def validation_error(request: Request, exc: RequestValidationError):
         if request.url.path.startswith(MODEL_SETTINGS_PATH):
-            return JSONResponse({'detail': '请检查配置名称、接口地址、模型标识和 API 密钥的格式'}, status_code=422)
+            return JSONResponse({'detail': '请检查模型配置和运行参数的格式及取值范围'}, status_code=422)
         return await request_validation_exception_handler(request, exc)
 
     @app.middleware("http")
@@ -80,7 +81,7 @@ def create_app(settings=None, *, frontend_dir=None):
     def config():
         execution, _ = active_execution(store, settings)
         return {"ready": execution.ready, "model": execution.model, "base_url": execution.base_url,
-                "has_key": bool(execution.api_key), **runtime_snapshot(settings),
+                "has_key": bool(execution.api_key), **runtime_snapshot(execution),
                 "engine": ENGINE_VERSION, "algorithm": "TrajDebug",
                 "upstream_commit": UPSTREAM_COMMIT, "upstream_url": UPSTREAM_URL}
 
@@ -380,7 +381,7 @@ def create_app(settings=None, *, frontend_dir=None):
 
     attach_task_routes(app, store, settings, job)
     attach_pattern_routes(app, store)
-    attach_model_settings_routes(app, store.model_connections, settings)
+    attach_model_settings_routes(app, store.model_connections, settings, queue)
     attach_runtime_settings_routes(app, store, settings, queue)
 
     dist = Path(frontend_dir) if frontend_dir is not None else ROOT / "frontend" / "dist"

@@ -1,9 +1,11 @@
-"""Persist and apply workspace-level diagnosis runtime settings."""
+"""Manage diagnosis runtime settings for the active or environment model."""
+
+from typing import Literal
 
 from fastapi import APIRouter
 from pydantic import Field
 
-from .execution import RUNTIME_FIELDS, runtime_snapshot
+from .execution import active_execution, runtime_snapshot
 from .models import Contract
 
 RUNTIME_SETTINGS_PATH = '/api/runtime-settings'
@@ -22,17 +24,22 @@ def attach_runtime_settings_routes(app, store, settings, queue):
     router = APIRouter(prefix=RUNTIME_SETTINGS_PATH)
 
     @router.get('')
-    def get_runtime_settings():
-        return runtime_snapshot(settings)
+    def get_runtime_settings(scope: Literal['active', 'environment'] = 'active'):
+        execution = settings if scope == 'environment' else active_execution(store, settings)[0]
+        return runtime_snapshot(execution)
 
     @router.put('')
-    async def update_runtime_settings(body: RuntimeSettingsInput):
-        values = {key: value if value is not None else getattr(settings, key)
-                  for key, value in body.model_dump().items()}
-        store.save_runtime_settings(values)
-        for key in RUNTIME_FIELDS:
-            setattr(settings, key, values[key])
+    async def update_runtime_settings(body: RuntimeSettingsInput, scope: Literal['active', 'environment'] = 'active'):
+        changes = body.model_dump(exclude_none=True)
+        updated = store.model_connections.update_default_runtime(changes) if scope == 'active' else None
+        if updated is not None:
+            values = {**runtime_snapshot(settings), **updated}
+        else:
+            values = {**runtime_snapshot(settings), **changes}
+            store.save_runtime_settings(values)
+            for key, value in values.items():
+                setattr(settings, key, value)
         await queue.apply_settings()
-        return runtime_snapshot(settings)
+        return values
 
     app.include_router(router)
