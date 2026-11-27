@@ -98,6 +98,7 @@ export default function DiagnosisComparison({report, onJump, onEngine, reviewWai
       {modelStep != null ? '关键步骤依据已完成的引擎诊断。' : null}</p> : null}
     {synthesis?.tie_break === 'primary' ? <p className="muted">候选同分，优先展示主引擎定位的步骤。</p> : null}
     {synthesis?.tie_break === 'earliest' ? <p className="muted">候选同分，优先展示轨迹中较早的候选步骤。</p> : null}
+    {synthesis?.tie_break === 'model' ? <p className="muted">候选同分，采用有原文依据的模型推荐。{synthesis.model_recommendation?.reason}</p> : null}
     {sameStep ? <p className="muted">部分引擎缺少可核验的原文引用，可点击关键步骤查看轨迹。</p> : null}
     {review ? <div className="review-note"><CircleCheck size={15}/><div>人工复核结论<p>{review.summary}</p></div></div> : null}
     </div>
@@ -110,17 +111,18 @@ export default function DiagnosisComparison({report, onJump, onEngine, reviewWai
       const conclusion = current?.attribution
       const step = conclusion?.critical_step
       const assessment = synthesis?.status === 'completed' ? synthesis.assessments?.[engine] : undefined
+      const showMissingStep = showStep && run.status === 'completed' && step == null
       const legacyReference = engine === 'chief' && !included && comparison && run.status === 'completed'
       return <section key={engine} className="instance-card">
         <div className="instance-top"><h3>{engineLabels[engine]}</h3>
           {legacyReference ? <span className="mini-meta">历史复核参考</span> : null}
           {!assessment ? <span className="mini-meta">{run.status === 'completed' ? '已完成' : run.status === 'failed' ? '失败' : '运行中'}</span> : null}
         </div>
-        {step != null ? <div className="engine-candidate">
-          <button type="button" className="engine-candidate-step"
+        {step != null || showMissingStep || assessment ? <div className="engine-candidate">
+          {step != null ? <button type="button" className="engine-candidate-step"
             onClick={() => onJump({step, quote:''})}>关键步骤 <strong>#{step}</strong>
             <ArrowUpRight size={14} aria-hidden="true"/>
-          </button>
+          </button> : showMissingStep ? <span className="engine-candidate-confidence">关键步骤未确定</span> : null}
           {assessment ? <span className="engine-candidate-confidence" title={assessment.reason}>候选置信度 <strong>{supportLabels[assessment.support] ?? '低'}</strong></span> : null}
         </div> : null}
         {run.error || conclusion?.summary ? <p>{run.error || conclusion?.summary}</p> : null}

@@ -372,6 +372,7 @@ class TaskStore:
              json_extract(j.result,'$.synthesis.status') synthesis_status,
              json_extract(j.result,'$.synthesis.summary') synthesis_summary,
              json_extract(j.result,'$.synthesis.assessments') candidate_assessments,
+             json_extract(j.result,'$.synthesis.model_recommendation') model_recommendation,
              (SELECT json_group_object(key,json_extract(value,'$.report.attribution'))
               FROM json_each(j.result,'$.engine_runs') WHERE json_extract(value,'$.status')='completed') candidate_attributions,
              v.data review_data
@@ -389,6 +390,7 @@ class TaskStore:
             synthesis_status = row.pop('synthesis_status')
             synthesis_summary = row.pop('synthesis_summary')
             assessments = row.pop('candidate_assessments')
+            recommendation = row.pop('model_recommendation')
             alternatives = row.pop('candidate_attributions')
             review = row.pop('review_data')
             trace_feedback = row.pop('multi_engine') or row['algorithm'] in {'AgentDebugX', 'CHIEF'}
@@ -408,6 +410,7 @@ class TaskStore:
                 synthesis = resolve_synthesis(comparison, sources, {
                     'status': synthesis_status, 'summary': synthesis_summary,
                     'assessments': json.loads(assessments or '{}'),
+                    'model_recommendation': json.loads(recommendation or 'null'),
                 }, step_count=row['steps'])
                 chosen = {
                     'critical_step': synthesis['critical_step'],

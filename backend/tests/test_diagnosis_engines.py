@@ -215,6 +215,32 @@ def test_synthesis_ranks_verified_support_by_step(supports, evidence_ids, expect
         assert result["assessments"]["agentdebugx"]["support"] == "low"
 
 
+@pytest.mark.parametrize("agent_support, step, cite, expected, tie_break", [
+    ("high", 3, "E2", 3, "model"),
+    ("medium", 3, "E2", 1, None),
+    ("high", 3, "E1", 1, "primary"),
+    ("high", 3, "unknown", 1, "primary"),
+    ("high", 2, "E2", 1, "primary"),
+    ("high", "3", "E2", 1, "primary"),
+])
+def test_model_recommendation_can_only_break_a_grounded_tie(agent_support, step, cite, expected, tie_break):
+    candidates = {"trajdebug": {"critical_step": 1}, "agentdebugx": {"critical_step": 3}}
+    evidence = {
+        key: {"engine": engine, "step": item["critical_step"], "quote": key, "role": "candidate", "original_matched": True}
+        for key, (engine, item) in zip(("E1", "E2"), candidates.items(), strict=True)
+    }
+    answer = SynthesisAnswer.model_validate({
+        "summary": "退款前缺少审批", "evidence_ids": ["E1", "E2"],
+        "assessments": {"trajdebug": {"support": "high", "reason": "有原文"},
+                        "agentdebugx": {"support": agent_support, "reason": "有原文"}},
+        "recommendation": {"step": step, "reason": "最终动作实际触发失败。", "evidence_ids": [cite]},
+    })
+    result = ground_answer(answer, candidates, evidence, {"state": "different", "primary": "trajdebug"})
+    assert result["critical_step"] == expected and result["tie_break"] == tie_break
+    if tie_break == "model":
+        assert result["evidence"][0] == evidence["E2"]
+
+
 @pytest.mark.parametrize("corroborated", [False, True])
 def test_conflict_uses_ranked_candidate_in_review_task_list_feedback_and_export(tmp_path, corroborated):
     app = create_app(Settings(data_dir=tmp_path, base_url="http://127.0.0.1:9/v1", model="fixture"))
@@ -264,6 +290,15 @@ def test_conflict_uses_ranked_candidate_in_review_task_list_feedback_and_export(
         assert item["critical_step"] == 1 and item["review_status"] is None
         assert client.get(f"/api/jobs/{job_id}").json()["feedback_eligible"] is True
         store.update(job_id, result=reports)
+    else:
+        tied = deepcopy(reports)
+        tied["synthesis"]["assessments"]["trajdebug"]["support"] = "high"
+        tied["synthesis"]["model_recommendation"] = {"step": 3, "reason": "最终动作有直接原文支持。"}
+        store.update(job_id, result=tied)
+        assert client.get(base).json()["items"][0]["critical_step"] == 3
+        assert client.get(f"{base}/{trace_id}").json()["job"]["result"]["synthesis"]["tie_break"] == "model"
+        assert "采用有原文依据的模型推荐" in client.get(f"/api/jobs/{job_id}/export?format=md").text
+        store.update(job_id, result=reports)
     response = client.post(f"/api/jobs/{job_id}/reviews", json={
         "decision":"modified", "summary":"人工判断", "critical_step":2, "category":"type-review",
     })
@@ -288,6 +323,9 @@ async def test_synthesis_calls_model_without_engine_quotes(tmp_path, provider, s
         reply = dual_answer(system, user)
         if same_step:
             reply.pop("assessments")
+        else:
+            reply["assessments"]["trajdebug"]["support"] = "high"
+            reply["recommendation"] = {"step": 3, "reason": "原文明确表明失败。", "evidence_ids": reply["evidence_ids"][-1:]}
         return reply
 
     state["extra_request_reply"] = answer
@@ -299,6 +337,7 @@ async def test_synthesis_calls_model_without_engine_quotes(tmp_path, provider, s
     assert len(requests) == 1 and result["status"] == "completed" and "confidence" not in result
     assert result["preferred_engine"] == ("trajdebug" if same_step else "agentdebugx")
     assert result["critical_step"] == (1 if same_step else 3)
+    assert result["tie_break"] == (None if same_step else "model")
     assert ("assessments" in result) is not same_step
     messages = requests[0]["request"]["messages"]
     assert "最终分析结论" in messages[0]["content"]

@@ -273,6 +273,27 @@ it('distinguishes a missing CHIEF key step from a successful trace', () => {
   expect(screen.queryByRole('tab',{name:'证据与候选'})).toBeNull()
 })
 
+it('shows the combined assessment and CHIEF candidates even without a CHIEF final step', () => {
+  const chief: Report = {...report, algorithm:'CHIEF', task_outcome:'failed', triggers:[], instances:[],
+    attribution:{...report.attribution!, critical_step:null, critical_instance_id:null},
+    official_output:{candidates:{candidate_error_steps:[{step_id:3, agent_in_step:['billing'],
+      confidence:0.75, irrecoverability_issue:{reason:''}, data_issue:{explanation:'审批信息缺失'}}]}}}
+  const combined: Report = {...report, comparison:{state:'unresolved',primary:'trajdebug',engines:['trajdebug','chief']},
+    engine_runs:{trajdebug:{status:'completed'},chief:{status:'completed',report:chief}},
+    synthesis:{status:'completed',summary:'待复核审批步骤',critical_step:7,preferred_engine:'trajdebug',
+      assessments:{chief:{support:'low',reason:'CHIEF 未选出最终步骤'}},evidence:[],model:'fixture',calls:1}}
+  const jump = vi.fn()
+  render(<Inspector job={{...job,result:combined}} report={combined} onJump={jump} onReview={vi.fn()}/>)
+  const card = screen.getByRole('heading',{name:'CHIEF'}).closest('section')!
+  expect(within(card).getByText('低')).toBeTruthy()
+  expect(within(card).getByText('关键步骤未确定')).toBeTruthy()
+  fireEvent.click(within(card).getByRole('button',{name:'查看CHIEF详情'}))
+  fireEvent.click(screen.getByRole('tab',{name:'证据与候选'}))
+  expect(screen.getByText(/CHIEF 候选置信度 中/)).toBeTruthy()
+  fireEvent.click(screen.getByRole('button',{name:'步骤 #3'}))
+  expect(jump).toHaveBeenCalledWith({step:3,quote:''})
+})
+
 it('links to the reviewed step and retains the original step for reference after rejection', () => {
   const combined: Report = {...report, comparison:{state:'different',primary:'trajdebug'},
     engine_runs:{trajdebug:{status:'completed'},chief:{status:'completed',report:{...report,algorithm:'CHIEF'}}},

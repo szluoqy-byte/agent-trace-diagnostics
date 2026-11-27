@@ -21,6 +21,7 @@ interface ChiefOutput {
     candidate_error_steps: {
       step_id: number
       agent_in_step: string[]
+      confidence?: number | null
       irrecoverability_issue: {reason: string}
       data_issue: {explanation: string}
     }[]
@@ -43,6 +44,8 @@ export default function ChiefDetails({report, jobId, onJump, section}: {
         <li key={index}>
           <button type="button" className="text-button" onClick={() => onJump({step:item.step_id, quote:''})}>步骤 #{item.step_id}</button>
           {item.agent_in_step.length ? <span> · {item.agent_in_step.join('、')}</span> : null}
+          {typeof item.confidence === 'number' && item.confidence >= 0 && item.confidence <= 1
+            ? <span className="mini-meta" title={`CHIEF 原始评分 ${item.confidence}`}> · CHIEF 候选置信度 {item.confidence >= 0.8 ? '高' : item.confidence >= 0.5 ? '中' : '低'}</span> : null}
           {item.irrecoverability_issue.reason || item.data_issue.explanation ?
             <p>{item.irrecoverability_issue.reason || item.data_issue.explanation}</p> : null}
         </li>

@@ -6,7 +6,7 @@ from typing import Literal
 
 import httpx
 from openai import APIError, APIStatusError, AsyncOpenAI
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError, field_validator
 
 from ..model_headers import merge_headers
 from ..model_concurrency import ModelSlots
@@ -63,10 +63,14 @@ ASSESSMENT_RULES = {
     "zh": (
         "assessments 的键必须与 conclusions 中的引擎 ID 完全一致。每项 support 只能填 high、medium、low 中的一个，"
         "reason 为一句话。未定位或证据不足时仍保留该项，support 填 low，在 reason 说明原因。"
+        "recommendation 用于候选同分时的决胜。可从已有候选中推荐一个步骤，给出简短的因果依据和该步骤的原文证据 ID。"
+        "step 使用从 0 开始的整数，evidence_ids 最多 4 项。无法给出有原文支持的推荐时填 null。"
     ),
     "en": (
         "The assessment keys must exactly match the engine IDs in conclusions. Each support must be high, medium or low, "
-        "with a one-sentence reason. Keep the entry and use low if a step or evidence is unavailable. Explain this in reason."
+        "with a one-sentence reason. Keep the entry and use low if a step or evidence is unavailable. Explain this in reason. "
+        "Use recommendation to break ties. Choose one existing candidate with a zero-based integer step, give a short causal "
+        "reason, and cite up to four original evidence IDs from that step. Use null when no recommendation can be grounded."
     ),
 }
 RETRY_RULES = {
@@ -87,12 +91,32 @@ class Assessment(BaseModel):
         return normalize_support(value)
 
 
+class Recommendation(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    step: StrictInt = Field(ge=0)
+    reason: str = Field(min_length=1, max_length=1000)
+    evidence_ids: list[str] = Field(min_length=1, max_length=4)
+
+
 class SynthesisAnswer(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     summary: str = Field(min_length=1, max_length=2000)
     assessments: dict[str, Assessment] | None = None
     evidence_ids: list[str] = Field(default_factory=list)
+    recommendation: Recommendation | None = None
+
+    @field_validator("recommendation", mode="before")
+    @classmethod
+    def parse_recommendation(cls, value):
+        if value is not None:
+            try:
+                return Recommendation.model_validate(value)
+            except ValidationError:
+                # An invalid tie-break recommendation must not discard valid assessments.
+                return None
+        return None
 
     @field_validator("evidence_ids", mode="before")
     @classmethod
@@ -208,7 +232,7 @@ def collect_candidates(trace, reports, evidence_by_engine):
     return candidates, evidence
 
 
-def select_candidate(comparison, steps, assessments, *, step_count=None):
+def select_candidate(comparison, steps, assessments, *, step_count=None, model_step=None):
     support_by_step = {}
     for engine, step in steps.items():
         if type(step) is int and step >= 0 and (step_count is None or step < step_count):
@@ -228,8 +252,13 @@ def select_candidate(comparison, steps, assessments, *, step_count=None):
     if type(primary_step) is not int:
         primary_step = None
     step = primary_step if primary_step in leaders else min(leaders)
+    tie_break = None
+    if len(leaders) > 1:
+        if type(model_step) is int and model_step in leaders:
+            step, tie_break = model_step, "model"
+        else:
+            tie_break = "primary" if step == primary_step else "earliest"
     engine, _ = min(support_by_step[step], key=lambda supporter: (-supporter[1], supporter[0] != primary, supporter[0]))
-    tie_break = ("primary" if step == primary_step else "earliest") if len(leaders) > 1 else None
     return engine, step, tie_break
 
 
@@ -250,7 +279,10 @@ def resolve_synthesis(comparison, attributions, synthesis, *, step_count=None):
             support = normalize_support(assessment.get("support"))
             if engine in attributions:
                 assessments[engine] = {**assessment, "support": support if support in SUPPORT_RANK else "low"}
-    preferred, step, tie_break = select_candidate(comparison, steps, assessments, step_count=step_count)
+    recommendation = (synthesis.get("model_recommendation") or {}) if synthesis.get("status") == "completed" else {}
+    preferred, step, tie_break = select_candidate(
+        comparison, steps, assessments, step_count=step_count, model_step=recommendation.get("step"),
+    )
     if assessments:
         clean["assessments"] = assessments
     summary = clean.get("summary") or attributions.get(preferred, {}).get("summary") or (
@@ -260,14 +292,27 @@ def resolve_synthesis(comparison, attributions, synthesis, *, step_count=None):
 
 
 def ground_answer(answer, candidates, evidence, comparison):
-    result = answer.model_dump(exclude={"evidence_ids"}, exclude_none=True)
+    result = answer.model_dump(exclude={"evidence_ids", "recommendation"}, exclude_none=True)
     references = [evidence[key] for key in dict.fromkeys(answer.evidence_ids) if key in evidence][:8]
     assessments = result.get("assessments") or {}
     for engine, assessment in assessments.items():
         if not any(ref["engine"] == engine and ref["step"] == candidates.get(engine, {}).get("critical_step")
                    for ref in references):
             assessment["support"] = "low"
+    cited = []
+    if (recommendation := answer.recommendation) and comparison["state"] not in AGREEMENT_STATES:
+        cited = [evidence.get(key) for key in dict.fromkeys(recommendation.evidence_ids)]
+        if all(
+            ref and ref.get("original_matched") and ref["step"] == recommendation.step and ref.get("role") == "candidate"
+            and ref["step"] == candidates.get(ref["engine"], {}).get("critical_step")
+            for ref in cited
+        ):
+            result["model_recommendation"] = recommendation.model_dump(exclude={"evidence_ids"})
+        else:
+            cited = []
     resolved = resolve_synthesis(comparison, candidates, {**result, "status": "completed", "evidence": references})
+    if resolved["tie_break"] == "model":
+        resolved["evidence"] = (cited + [ref for ref in references if ref not in cited])[:8]
     resolved.pop("status")
     return resolved
 
@@ -310,6 +355,7 @@ async def synthesize(trace, reports, evidence_by_engine, settings, comparison):
         "summary": "...",
         "assessments": {engine: {"support": "low", "reason": "..."} for engine in candidates},
         "evidence_ids": [],
+        "recommendation": {"step": 0, "reason": "...", "evidence_ids": ["E1"]},
     })
     language = normalize_prompt_language(settings.prompt_language)
     rules = [PROMPTS[language], FORMAT_RULES[language]]

@@ -11,7 +11,8 @@ export interface ModelUsage {
 }
 export type DiagnosisSynthesis = {
   duration_seconds?: number; requests?: number; prompt_tokens?: number; completion_tokens?: number
-  critical_step?: number | null; preferred_engine?: EngineName | null; summary?: string; tie_break?: 'primary' | 'earliest' | null
+  critical_step?: number | null; preferred_engine?: EngineName | null; summary?: string; tie_break?: 'model' | 'primary' | 'earliest' | null
+  model_recommendation?: {step:number; reason:string}
 } & (
   | {status: 'running' | 'incomplete' | 'not_needed' | 'insufficient'}
   | {status: 'failed'; failure?: 'http' | 'connection' | 'format' | 'empty' | 'length' | 'filtered'; http_status?: number; model?: string}

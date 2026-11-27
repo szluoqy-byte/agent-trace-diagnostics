@@ -55,6 +55,8 @@ def markdown_report(trace, job, reviews, feedback=None):
             lines += ["暂无有效候选步骤。", ""]
         if preferred_step is not None and synthesis.get("status") != "completed":
             lines += ["综合评估未完成，关键步骤依据已完成的引擎诊断。", ""]
+        if synthesis.get("tie_break") == "model":
+            lines += ["候选同分，采用有原文依据的模型推荐。" + synthesis["model_recommendation"]["reason"], ""]
         for engine, assessment in (synthesis.get("assessments") or {}).items():
             branch = result if engine == comparison.get("primary") else (runs.get(engine, {}).get("report") or {})
             candidate = (branch.get("attribution") or {}).get("critical_step")

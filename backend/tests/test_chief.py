@@ -10,7 +10,7 @@ from test_diagnosis_engines import dual_answer
 from test_trajdebug import pipeline_trace, provider
 from tracelens._vendor.chief.pipeline import parse_subtasks
 from tracelens.config import Settings
-from tracelens.diagnosis.chief import diagnose_chief, run_pipeline, to_chief, valid_partition
+from tracelens.diagnosis.chief import diagnose_chief, present_chief, run_pipeline, to_chief, valid_partition
 from tracelens.llm import ModelError
 from tracelens.main import create_app
 from tracelens.model_concurrency import ModelSlots
@@ -152,6 +152,26 @@ async def test_chief_reports_empty_or_out_of_range_evidence_and_skips_success(tm
         await diagnose_chief(trace, settings, progress)
     assert error.value.usage["requests"] == 1
     assert "private gateway detail" not in str(error.value)
+
+
+@pytest.mark.parametrize("reported_step, quote, candidates, expected", [
+    (None, "issue_refund()", [1], 1),
+    (40, "issue_refund()", [1], 1),
+    (None, "issue_refund()", [1, 3], None),
+    (None, "issue_refund()", [2], None),
+    (None, "", [1], None),
+])
+def test_chief_recovers_step_only_when_final_quote_matches_a_unique_candidate(tmp_path, reported_step, quote, candidates, expected):
+    trace = pipeline_trace()
+    trace.messages[3].content += " issue_refund()"
+    final = {"mistake_step": reported_step, "reason": "Refund lacked approval.", "mistake_agent": "agent", "quote": quote}
+    native = {"final": final, "candidates": {"candidate_error_steps": [{"step_id": step} for step in candidates]}}
+    report = present_chief(trace, native, Settings(data_dir=tmp_path), "en", {}, 0)
+    assert report["attribution"]["critical_step"] == expected
+    assert bool(report["evidence"]) is (expected is not None)
+    if expected is not None:
+        assert report["evidence"][0]["step"] == expected and report["evidence"][0]["original_matched"]
+    assert report["official_output"]["final"]["mistake_step"] == reported_step
 
 
 @pytest.mark.parametrize(("mode", "scenario"), [

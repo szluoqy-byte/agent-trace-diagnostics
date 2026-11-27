@@ -104,14 +104,25 @@ async def run_pipeline(request, language, call_model):
 
 def present_chief(trace, output, settings, language, usage, seconds):
     final = output["final"]
-    step = final["mistake_step"]
+    reported_step = final["mistake_step"]
+    step = reported_step if type(reported_step) is int and 0 <= reported_step < len(trace.messages) else None
+    quote = final["quote"]
     warnings = []
-    if step is not None and not 0 <= step < len(trace.messages):
-        step = None
-        warnings.append("CHIEF 返回的关键步骤无法映射到轨迹。")
-    elif step is None and trace.outcome == "failed":
-        warnings.append("CHIEF 未确定关键失败步骤。")
-    evidence = [locate_quote(final["quote"], trace, preferred=step, exact_step=True)] if step is not None and final["quote"] else []
+    evidence = [locate_quote(quote, trace, preferred=step, exact_step=True)] if step is not None and quote else []
+    if step is None and trace.outcome == "failed":
+        candidates = (output.get("candidates") or {}).get("candidate_error_steps", [])
+        candidate_steps = {item["step_id"] for item in candidates
+                           if type(item.get("step_id")) is int and 0 <= item["step_id"] < len(trace.messages)}
+        matches = [candidate for candidate in candidate_steps if quote and quote.strip()
+                   and quote in trace.messages[candidate].content]
+        if len(matches) == 1:
+            step = matches[0]
+            evidence = [locate_quote(quote, trace, preferred=step, exact_step=True)]
+            warnings.append(f"CHIEF 的最终引文唯一匹配到候选步骤 #{step}，已据此定位。")
+        elif reported_step is not None:
+            warnings.append("CHIEF 返回的关键步骤无法映射到轨迹。")
+        else:
+            warnings.append("CHIEF 未确定关键失败步骤。")
     recorded = sum(item["original_matched"] for item in evidence)
     if step is not None and not recorded:
         warnings.append("CHIEF 的关键步骤缺少可核验的原文引用。")
