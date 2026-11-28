@@ -43,6 +43,12 @@ class RunAction(Contract):
     trace_ids: list[str] | None = Field(default=None, min_length=1, max_length=500)
 
 
+class BatchReview(Contract):
+    trace_ids: list[str] = Field(min_length=1, max_length=500)
+    decision: Literal['confirmed', 'rejected', 'reset']
+    notes: str = Field(default='', max_length=5000)
+
+
 def summary(rows):
     counts = Counter(row['diagnosis'] for row in rows)
     applicable = [r for r in rows if r.get('feedback_applicable')]
@@ -351,6 +357,14 @@ def attach_task_routes(app, store, settings, job_view):
             else:
                 skipped.append({'trace_id':row['id'],'reason':reason})
         return {'enqueued':len(created),'skipped':skipped}
+
+    @router.post('/tasks/{task_id}/runs/{run_id}/reviews')
+    def batch_review(task_id: str, run_id: str, body: BatchReview):
+        require_run(task_id, run_id, writable=True)
+        try:
+            return checked(lambda: store.batch_review(run_id, body.trace_ids, body.decision, body.notes.strip()))
+        except LookupError as exc:
+            raise HTTPException(422, str(exc)) from exc
 
     @router.get('/tasks/{task_id}/runs/{run_id}/improvements')
     def improvements(task_id: str, run_id: str, report_id: str | None = None):

@@ -1,5 +1,6 @@
 import {useEffect, useId, useMemo, useRef, useState} from 'react'
 import type {Evidence, Trace} from '../types'
+import {playgroundLink} from '../playground'
 import {useResource} from '../workspace'
 import CallTimeline, {durationLabel} from './CallTimeline'
 import Tabs from './Tabs'
@@ -51,7 +52,8 @@ function CapturedField({label, value}: {label: string; value: unknown}) {
   </section>
 }
 
-function CallRecord({call, parentTitle, steps, critical, focused, onStep}: {
+function CallRecord({call, traceId, parentTitle, steps, critical, focused, onStep}: {
+  traceId: string
   call: Call & {number: number}; parentTitle?: string; steps: number[]; critical: boolean;
   focused: boolean; onStep: (step: number) => void
 }) {
@@ -65,6 +67,7 @@ function CallRecord({call, parentTitle, steps, critical, focused, onStep}: {
     element.querySelector('summary')?.focus({preventScroll:true})
     element.scrollIntoView?.({block:'nearest'})
   }, [focused])
+  const hasModelInput = call.input != null && ['LLM', 'chat', 'text_completion', 'generate_content'].includes(String(call.kind))
 
   return <details ref={record} className={`execution-call${critical ? ' execution-critical' : ''}`}
     onToggle={event => setOpen(event.currentTarget.open)}>
@@ -85,8 +88,9 @@ function CallRecord({call, parentTitle, steps, critical, focused, onStep}: {
         <CapturedField label="输入" value={call.input}/>
         <CapturedField label="输出" value={call.output}/>
       </div>
-      {steps.length ? <div className="execution-step-links">
+      {steps.length || hasModelInput ? <div className="execution-step-links">
         {steps.map(step => <button type="button" key={step} className="text-button" onClick={() => onStep(step)}>诊断步骤 #{step}</button>)}
+        {hasModelInput ? <a className="text-button" href={playgroundLink(traceId, call.span_id)}>在 Playground 调试此调用</a> : null}
       </div> : null}
       <details>
         <summary>原始 span</summary>
@@ -177,7 +181,7 @@ export default function ExecutionTrace({trace, criticalStep, selection}: {
       </label>
       <div className="messages execution-calls" role="tabpanel" id={`${tabsId}-panel-${active}`} aria-labelledby={`${tabsId}-tab-${active}`}>
         {active === 'timeline' && totalUs != null && current.length ? <CallTimeline calls={current} totalUs={totalUs} criticalSpan={criticalSpan} onOpen={openCall}/> : null}
-        {active === 'calls' ? current.map(call => <CallRecord key={call.span_id} call={call}
+        {active === 'calls' ? current.map(call => <CallRecord key={call.span_id} call={call} traceId={trace.id}
           parentTitle={call.parent_id ? byId.get(call.parent_id)?.title : undefined}
           steps={stepsBySpan.get(call.span_id) ?? []} critical={criticalSpan === call.span_id}
           focused={focusedSpan === call.span_id} onStep={openStep}/>) : null}

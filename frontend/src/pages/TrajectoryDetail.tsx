@@ -1,5 +1,6 @@
 import {useCallback,useEffect,useState} from 'react'
 import {ArrowLeft,ChevronLeft,ChevronRight,Download,Play,RotateCcw} from 'lucide-react'
+import {playgroundLink} from '../playground'
 import {uiText} from '../branding'
 import {dateLabel,post} from '../api'
 import type {Evidence} from '../types'
@@ -85,6 +86,7 @@ export default function TrajectoryDetail({id,traceId,params}:{id:string;traceId:
     <div className="trace-detail-disclosures">
       <TraceContextPanel description={trace.data.task_description} source={trace.data.source}/>
       {report?<DiagnosisUsage report={report}/>:null}
+      <a className="secondary small" href={playgroundLink(traceId)}>在 Playground 调试</a>
       {data.attempts.length>1?<details className="ws-attempts"><summary>诊断请求记录 · {data.attempts.length} 次尝试</summary><div className="trace-disclosure-body">{data.attempts.map(a=><div key={a.id}><span>第 {a.attempt} 次 · {dateLabel(a.created_at)} · {diagnosisStatus[a.status]}</span>{a.error?<small>{uiText(a.error)}</small>:null}</div>)}</div></details>:null}
     </div>
     <div className="ws-detail-status">

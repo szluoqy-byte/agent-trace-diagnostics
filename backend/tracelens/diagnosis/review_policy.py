@@ -5,6 +5,23 @@ AGREEMENT_STATES = {"aligned", "same_step"}
 UNSETTLED_STATES = {"different", "unresolved", "incomplete"}
 
 
+def active_reviews(history):
+    """Return the decisions since the latest reset event."""
+    for index, review in enumerate(history):
+        if review["data"].get("decision") == "reset":
+            return history[:index]
+    return history
+
+
+def valid_review_step(step, messages, algorithm):
+    if step is None:
+        return True
+    if type(step) is not int or not 0 <= step < len(messages):
+        return False
+    message = messages[step]
+    return algorithm in {"AgentDebugX", "CHIEF"} or (message["role"] != "user" and message.get("judgable") is not False)
+
+
 def review_status(comparison_state, decision=None):
     if decision:
         return decision

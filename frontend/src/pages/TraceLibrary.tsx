@@ -1,5 +1,6 @@
 import {useEffect, useLayoutEffect, useRef, useState} from 'react'
 import {Plus, RefreshCw, Search, Upload} from 'lucide-react'
+import {playgroundLink} from '../playground'
 import {api, dateLabel} from '../api'
 import {sourceLabel} from '../branding'
 import DeleteRecord, {DeleteRecords, traceDeletionBlock} from '../components/DeleteRecord'
@@ -129,6 +130,9 @@ export default function TraceLibrary({params, selected, onSelect}: {
         <button className="primary small" disabled={selectionBusy || !selected.length || !!reuseBlock} onClick={() => openLibraryTask(params, selected)}>
           <Plus size={14}/>新建诊断任务
         </button>
+        <button type="button" className="secondary small" disabled={selectionBusy || selected.length !== 1}
+          title={selected.length === 1 ? undefined : '请选择一条轨迹'}
+          onClick={() => go(playgroundLink(selected[0].id).slice(1))}>在 Playground 调试</button>
         <DeleteRecords records={selected.map(row => ({id:row.id,name:row.title}))} kind="trace" disabled={selectionBusy} onDeleted={removeSelection}/>
       </div>
     </div>

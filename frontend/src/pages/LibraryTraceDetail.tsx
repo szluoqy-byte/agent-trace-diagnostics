@@ -1,4 +1,5 @@
 import {ArrowLeft} from 'lucide-react'
+import {playgroundLink} from '../playground'
 import {dateLabel} from '../api'
 import {patternTaskPath} from '../patterns'
 import DeleteRecord, {traceDeletionBlock} from '../components/DeleteRecord'
@@ -31,6 +32,7 @@ export default function LibraryTraceDetail({id, params, onDeleted}: {id: string;
         <p>{formatLabel(input_format ?? (otel ? 'otel_genai' : 'messages'))} · {deepagent ? `${deepagent.span_count} 个调用` : `${messages.length} 条消息`}{agent_identity?<span className="trace-detail-agent"> · Agent <strong>{agent_identity.name}</strong></span>:null}</p></div>
       <div className="ws-actions">
         <a className="secondary" href={back}><ArrowLeft size={15}/>返回轨迹库</a>
+        <a className="secondary" href={playgroundLink(id)}>在 Playground 调试</a>
         <DeleteRecord id={id} name={title} kind="trace"
           blocked={history ? traceDeletionBlock(history.tasks.length, history.diagnoses.some(row => ['queued', 'running'].includes(row.status))) : undefined}
           onDeleted={() => {onDeleted(id); go(libraryPath(params), true)}}/>

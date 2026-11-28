@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import App from './App'
+import {api,post} from './api'
 import TraceViewer from './components/TraceViewer'
 
 const fixtures = vi.hoisted(() => {
@@ -13,7 +14,7 @@ const fixtures = vi.hoisted(() => {
   const task={id:'one',name:'任务 one',agent:'Agent',version:'v1',goal:'排查',created_at:run.created_at,runs:[run],latest_run_id:'r1',input_count:12,formats:['messages'],counts,status:'pending',categories:[]}
   return {traces,data,task}
 })
-vi.mock('./api', async importOriginal=>({...await importOriginal<typeof import('./api')>(),api:vi.fn(async(path:string)=>{
+vi.mock('./api', async importOriginal=>({...await importOriginal<typeof import('./api')>(),post:vi.fn(),api:vi.fn(async(path:string)=>{
   const url=new URL(path,'http://localhost'),parts=url.pathname.split('/').filter(Boolean)
   if(path==='/config')return {ready:true,model:'fixture',base_url:'http://localhost/v1',has_key:false,concurrency:2,max_retries:0,engine:'test'}
   if(path==='/model-configurations')return {items:[]}
@@ -97,6 +98,28 @@ it('pagination preserves selected IDs across pages and clears them on filtering'
   await screen.findByRole('link',{name:'轨迹 second'})
   expect(screen.getByText('已选 0 条')).toBeTruthy()
   expect(screen.getByLabelText('分页状态').textContent).toBe('第 1 / 1 页')
+})
+
+it('posts cross-page reviews once and reloads the current task list', async () => {
+  window.history.replaceState(null,'','#/tasks/one')
+  vi.mocked(post).mockResolvedValueOnce({updated:11,skipped:[{trace_id:'third',title:'轨迹 third',reason:'尚未完成诊断'}]})
+  render(<App/>)
+  await screen.findByRole('link',{name:'轨迹 first'})
+  fireEvent.click(screen.getByRole('checkbox',{name:'跨页全选'}))
+  await screen.findByText('已选 12 条')
+  fireEvent.click(screen.getByRole('button',{name:'批量复核'}))
+  const dialog = within(screen.getByRole('dialog',{name:'批量复核'}))
+  fireEvent.change(dialog.getByRole('combobox',{name:'复核决定'}),{target:{value:'reset'}})
+  fireEvent.change(dialog.getByRole('textbox',{name:'复核说明（选填）'}),{target:{value:'需要重新核对'}})
+  const before = vi.mocked(api).mock.calls.filter(([path])=>path.startsWith('/tasks/one/runs/r1/traces?page=')).length
+  fireEvent.click(dialog.getByRole('button',{name:'更新复核状态'}))
+  expect(await dialog.findByText('已更新 11 条轨迹，跳过 1 条。')).toBeTruthy()
+  expect(dialog.getByText('尚未完成诊断')).toBeTruthy()
+  expect(post).toHaveBeenCalledWith('/tasks/one/runs/r1/reviews',{
+    trace_ids:fixtures.traces.map(trace=>trace.id),decision:'reset',notes:'需要重新核对',
+  })
+  await waitFor(()=>expect(vi.mocked(api).mock.calls.filter(([path])=>path.startsWith('/tasks/one/runs/r1/traces?page=')).length).toBeGreaterThan(before))
+  fireEvent.click(dialog.getByRole('button',{name:'完成'}))
 })
 
 it('search reveals and highlights a match beyond the collapsed preview of a long message', () => {

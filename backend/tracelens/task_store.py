@@ -1,10 +1,11 @@
 """Persistent task scopes and analysis rounds; diagnosis artifacts stay in jobs."""
 import json
 import uuid
+from pydantic import ValidationError
 from .diagnosis import DEFAULT_MODE
-from .diagnosis.review_policy import review_status
-from .diagnosis.synthesis import participating_attributions, resolve_synthesis
-from .models import Trajectory
+from .diagnosis.review_policy import review_status, valid_review_step
+from .diagnosis.synthesis import participating_attributions, resolve_synthesis, review_target
+from .models import Review, Trajectory
 from .normalize import fingerprint
 
 
@@ -347,6 +348,68 @@ class TaskStore:
                     created.append(job_id)
         return created
 
+    def batch_review(self, run_id, trace_ids, decision, notes):
+        updated, skipped = 0, []
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            self._assert_latest(db, run_id)
+            members = {row['trace_id'] for row in db.execute('SELECT trace_id FROM run_items WHERE run_id=?', (run_id,))}
+            if not set(trace_ids) <= members:
+                raise LookupError('所选轨迹不属于当前分析记录')
+            rows = db.execute("""SELECT x.trace_id, t.title, t.data, j.id AS job_id, j.status, j.result, v.data AS previous_review
+                FROM run_items x JOIN traces t ON t.id=x.trace_id
+                LEFT JOIN jobs j ON j.id=(SELECT job_id FROM run_attempts WHERE run_id=x.run_id AND trace_id=x.trace_id
+                    ORDER BY attempt DESC LIMIT 1)
+                LEFT JOIN reviews v ON v.rowid=(SELECT rowid FROM reviews WHERE job_id=j.id ORDER BY created_at DESC,rowid DESC LIMIT 1)
+                    AND json_extract(v.data,'$.decision') IS NOT 'reset'
+                WHERE x.run_id=? AND x.trace_id IN (SELECT value FROM json_each(?)) ORDER BY x.position""",
+                              (run_id, json.dumps(trace_ids)))
+            for row in rows:
+                previous = json.loads(row['previous_review'] or '{}')
+                reason, data = self._batch_review_record(row, decision, notes, previous)
+                if reason:
+                    skipped.append({'trace_id': row['trace_id'], 'title': row['title'], 'reason': reason})
+                    continue
+                self._insert_review(db, row['job_id'], data)
+                updated += 1
+        return {'updated': updated, 'skipped': skipped}
+
+    @staticmethod
+    def _batch_review_record(row, decision, notes, previous):
+        if row['status'] != 'completed':
+            return '尚未完成诊断', None
+        if decision == 'reset':
+            if not previous.get('decision'):
+                return '已处于系统状态', None
+            return None, {'decision': 'reset', 'notes': notes}
+        report = json.loads(row['result'] or '{}')
+        if report.get('schema_version') != 2 or not report.get('attribution'):
+            return '缺少可复核的诊断结论', None
+        if decision == 'rejected' and previous.get('decision') == 'rejected' and (
+            not notes or previous.get('notes') == notes
+        ):
+            return '已是所选复核状态', None
+        if decision == 'confirmed':
+            trace = json.loads(row['data'])
+            messages = trace['messages']
+            conclusion, algorithm = review_target(report, step_count=len(messages), outcome=trace['outcome'])
+            if not valid_review_step(conclusion.get('critical_step'), messages, algorithm):
+                return '关键步骤需要逐条核对', None
+        else:
+            conclusion = {'critical_step': None, 'category': '', 'summary': '批量驳回诊断结论。'}
+        try:
+            data = Review(
+                critical_step=conclusion.get('critical_step'), summary=conclusion.get('summary'),
+                category=conclusion.get('category') or '', decision=decision, notes=notes,
+            ).model_dump()
+        except ValidationError:
+            return '诊断结论需要逐条核对', None
+        if all(previous.get(key) == value for key, value in data.items() if key != 'notes') and (
+            not notes or previous.get('notes') == notes
+        ):
+            return '已是所选复核状态', None
+        return None, data
+
     def run_rows(self, run_id):
         with self.connect() as db:
             rows = [dict(r) for r in db.execute("""
@@ -381,6 +444,7 @@ class TaskStore:
             LEFT JOIN jobs j ON j.id=a.job_id
             LEFT JOIN feedback_runs f ON f.rowid=(SELECT rowid FROM feedback_runs WHERE job_id=j.id ORDER BY created_at DESC,rowid DESC LIMIT 1)
             LEFT JOIN reviews v ON v.rowid=(SELECT rowid FROM reviews WHERE job_id=j.id ORDER BY created_at DESC,rowid DESC LIMIT 1)
+                AND json_extract(v.data,'$.decision') IS NOT 'reset'
             WHERE x.run_id=? ORDER BY x.position
             """, (run_id,))]
         for row in rows:

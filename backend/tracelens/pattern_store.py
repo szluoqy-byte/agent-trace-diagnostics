@@ -116,6 +116,7 @@ class PatternStore:
             v.id AS review_id,v.data AS review
             FROM jobs j JOIN traces t ON t.id=j.trace_id
             LEFT JOIN reviews v ON v.rowid=(SELECT rowid FROM reviews WHERE job_id=j.id ORDER BY created_at DESC,rowid DESC LIMIT 1)
+                AND json_extract(v.data,'$.decision') IS NOT 'reset'
             WHERE j.id IN (SELECT value FROM json_each(?))""", (json.dumps(ids),))
         reports = {}
         for row in rows:

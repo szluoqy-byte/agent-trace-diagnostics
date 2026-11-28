@@ -10,6 +10,7 @@ import DeleteRecord from '../components/DeleteRecord'
 import {Dialog} from '../components/Dialogs'
 import Pagination from '../components/Pagination'
 import TableSelection, {useSelectionRequest} from '../components/TableSelection'
+import TaskReviewDialog from '../components/TaskReviewDialog'
 import Tabs from '../components/Tabs'
 import {Badge,diagnosisStatus,filterQuery,formatLabel,listKey,listScroll,reviewStatus,taskPath,tracePath,useResource,useWorkspace} from '../workspace'
 import type {ActionResult,AnalysisRun,AnalysisTask,Counts,RunPage,TaskRow} from '../workspace'
@@ -113,6 +114,8 @@ function TraceTable({task,run,params}:{task:AnalysisTask;run:AnalysisRun|undefin
   const runId=run?.id??'draft',scope=`${task.id}/${runId}`,filters=filterQuery(params)
   const [batch,setBatch]=useState<{kind:string;label:string;count:number;ids?:string[]}|null>(null)
   const [batchError,setBatchError]=useState('')
+  const [reviewTargets,setReviewTargets]=useState<string[]|null>(null)
+  const closeReview=useCallback(()=>setReviewTargets(null),[])
   const [showTools,setShowTools]=useState(false)
   const closeBatch=useCallback(()=>setBatch(null),[])
   const requestedPage=Number(params.get('page'))
@@ -188,6 +191,7 @@ function TraceTable({task,run,params}:{task:AnalysisTask;run:AnalysisRun|undefin
     <strong aria-live="polite">已选 {selected.length} 条</strong>
     {selected.length?<div className="ws-actions">
       <button className="secondary small" disabled={selectionBusy||readonly} onClick={()=>ask('diagnose','诊断所选轨迹',selected.length,selected)}>诊断所选</button>
+      <button className="secondary small" disabled={selectionBusy||readonly} onClick={()=>setReviewTargets(selected)}>批量复核</button>
       <button className="secondary small" disabled={selectionBusy||readonly} onClick={()=>ask('feedback','为所选轨迹生成建议',selected.length,selected)}>生成所选单条建议</button>
       <a className="secondary small" href={exportSelected} download>导出所选</a>
     </div>:null}
@@ -205,7 +209,9 @@ function TraceTable({task,run,params}:{task:AnalysisTask;run:AnalysisRun|undefin
       {!config?.ready?<button className="text-button" onClick={()=>{closeBatch();openSettings()}}>查看模型设置</button>:null}
     </div>
     <footer><button className="secondary" disabled={busy} onClick={closeBatch}>取消</button><button className="primary" disabled={busy} onClick={()=>void perform()}>{busy?'正在提交…':'确认提交'}</button></footer>
-  </Dialog>:null}</>
+  </Dialog>:null}
+  {run&&reviewTargets?<TaskReviewDialog path={`/tasks/${task.id}/runs/${run.id}/reviews`} ids={reviewTargets}
+    onClose={closeReview} onUpdated={select}/>:null}</>
 }
 
 function TaskConfig({task,run}:{task:AnalysisTask;run:AnalysisRun|undefined}) {

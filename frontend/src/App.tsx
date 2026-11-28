@@ -12,6 +12,7 @@ import TrajectoryDetail from './pages/TrajectoryDetail'
 import TraceLibrary from './pages/TraceLibrary'
 import PatternDetail from './pages/PatternDetail'
 import LibraryTraceDetail from './pages/LibraryTraceDetail'
+import Playground from './pages/Playground'
 import {libraryFilterQuery,libraryPath} from './traceLibrary'
 import type {LibrarySelection} from './traceLibrary'
 
@@ -36,8 +37,8 @@ export default function App(){
   const workspaceHash=settingsBack?.hash??hash
   const workspaceState=settingsPage?settingsBack?.state:history.state
   const url=new URL(workspaceHash,location.origin),parts=url.pathname.split('/').filter(Boolean),id=parts[1],traceId=parts[3]
-  const planned=url.pathname==='/playground'?'Playground':url.pathname==='/knowledge'?'诊断知识库':undefined
-  const page=planned?'planned':parts[0]==='library'?(id?'library-detail':'library'):parts[0]!=='tasks'?'missing':id==='new'?'new':traceId?'trace':id?'task':'tasks'
+  const planned=url.pathname==='/knowledge'?'诊断知识库':undefined
+  const page=url.pathname==='/playground'?'playground':planned?'planned':parts[0]==='library'?(id?'library-detail':'library'):parts[0]!=='tasks'?'missing':id==='new'?'new':traceId?'trace':id?'task':'tasks'
   const patterns=parts[0]==='tasks'&&id==='patterns'
   const patternId=parts[2]
   const fromLibrary=page==='new'&&url.searchParams.get('from')==='library'
@@ -70,7 +71,7 @@ export default function App(){
       </div>
     </nav></aside>
     <main ref={main} className={`ws-main${fitPage?' ws-fit-main':''}`}>{error||configError?<div role="alert" className="alert error"><span>{uiText(error||configError)}</span>{error?<button aria-label="关闭错误" onClick={()=>setError('')}><X size={16}/></button>:<button onClick={refresh}>重试</button>}</div>:null}{notice?<div role="status" className="alert notice ws-toast"><CircleCheck size={16}/><span>{uiText(notice)}</span><button aria-label="关闭提示" onClick={()=>setNotice('')}><X size={16}/></button></div>:null}
-  {settingsPage?<SystemSettings onBack={settingsBack?closeSettings:undefined}/>:null}
+  {settingsPage?<SystemSettings onBack={settingsBack?closeSettings:undefined} initialPurpose={page==='playground'?'playground':'diagnosis'}/>:null}
   {!settingsPage||settingsBack?<div hidden={settingsPage} className={!settingsPage&&fitPage?'ws-fit-route':undefined}>
   {patterns&&patternId?<PatternDetail key={patternId} id={patternId} requestedRun={url.searchParams.get('run')} requestedPattern={url.searchParams.get('pattern_id')}/>
     :page==='tasks'?<TaskList/>:page==='new'?<TaskCreate key={fromLibrary?'new-library':'new-'+(url.searchParams.get('source')||'upload')} source={fromLibrary?null:url.searchParams.get('source')}
@@ -78,6 +79,7 @@ export default function App(){
     :page==='task'?<TaskDetail key={id} id={id} params={url.searchParams}/>:page==='trace'?<TrajectoryDetail id={id} traceId={traceId} params={url.searchParams}/>
     :page==='library'?<TraceLibrary params={url.searchParams} selected={librarySelection.filters===libraryFilters?librarySelection.items:[]} onSelect={items=>setLibrarySelection({filters:libraryFilters,items})}/>
     :page==='library-detail'?<LibraryTraceDetail key={id} id={id} params={url.searchParams} onDeleted={traceId=>setLibrarySelection(current=>({...current,items:current.items.filter(item=>item.id!==traceId)}))}/>
+    :page==='playground'?<Playground key={url.search} traceId={url.searchParams.get('trace')} initialSpan={url.searchParams.get('span')}/>
     :planned?<><div className="ws-heading"><h1>{planned}</h1></div><section className="ws-surface empty"><p>待规划</p></section></>
     :<div className="empty"><h1>页面不存在</h1><p>请检查链接，或返回分析任务列表。</p><a href="#/tasks">返回分析任务</a></div>}</div>:null}</main></div></div></WorkspaceContext>
 }

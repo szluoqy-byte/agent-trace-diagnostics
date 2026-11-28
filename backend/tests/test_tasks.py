@@ -87,6 +87,53 @@ def test_task_prompt_language_is_persisted_and_frozen_per_run(tmp_path):
     assert app.state.store.job_config(app.state.store.run_rows(run_id)[0]['job_id'])['prompt_language'] == 'zh'
 
 
+def test_bulk_review_updates_across_pages_and_reset_preserves_history(tmp_path):
+    app, client, ids = setup(tmp_path, 13)
+    store = app.state.store
+    task = create(client, ids[:12], start=True)
+    scope = endpoint(task)
+    jobs = store.run_rows(task['run_id'])
+    for index, row in enumerate(jobs[:11]):
+        report = demo_report()
+        if index == 0:
+            report['comparison'] = {'state': 'aligned', 'primary': 'trajdebug', 'engines': ['trajdebug', 'chief']}
+            report['engine_runs'] = {'trajdebug': {'status': 'completed'}, 'chief': {'status': 'completed',
+                                     'report': {'attribution': dict(report['attribution'])}}}
+        store.update(row['job_id'], status='completed', result=report)
+    first_job = jobs[0]['job_id']
+    manual = {'decision': 'modified', 'critical_step': 7, 'summary': '已人工修改', 'category': '', 'notes': ''}
+    assert client.post(f'/api/jobs/{first_job}/reviews', json=manual).status_code == 200
+    action = {'decision': 'confirmed', 'trace_ids': [ids[0], ids[-1]]}
+    assert client.post(scope+'/reviews', json=action).status_code == 422
+    assert store.reviews(first_job)[0]['data'] == manual
+
+    select = client.get(scope+'/traces', params={'selection': 'true'}).json()['items']
+    action = {'decision': 'confirmed', 'trace_ids': select, 'notes': '同批复核'}
+    result = client.post(scope+'/reviews', json=action).json()
+    assert result['updated'] == 11 and result['skipped'] == [
+        {'trace_id': ids[11], 'title': '案例 012', 'reason': '尚未完成诊断'},
+    ]
+    page = client.get(scope+'/traces', params={'review': 'confirmed', 'page': 2}).json()
+    assert page['total'] == 11 and page['counts']['reviewed'] == 11 and page['items'][0]['id'] == ids[10]
+    confirmed = store.reviews(first_job)[0]['data']
+    assert confirmed['decision'] == 'confirmed' and confirmed['critical_step'] == 4 and confirmed['notes'] == '同批复核'
+    assert client.post(scope+'/reviews', json=action).json()['updated'] == 0
+
+    rejected = client.post(scope+'/reviews', json={'decision': 'rejected', 'trace_ids': select[:11]}).json()
+    assert rejected['updated'] == 11 and client.get(scope+'/traces?review=rejected').json()['total'] == 11
+    assert store.reviews(first_job)[0]['data']['critical_step'] is None
+    reset = client.post(scope+'/reviews', json={'decision': 'reset', 'trace_ids': select[:11]}).json()
+    assert reset['updated'] == 11
+    assert client.get(scope+'/traces?review=waived').json()['total'] == 1
+    assert client.get(scope+'/traces?review=pending').json()['total'] == 10
+    assert store.reviews(first_job) == []
+    exported = client.get(f'/api/jobs/{first_job}/export').json()
+    assert exported['job']['review_status'] == 'waived' and exported['reviews'] == []
+    assert [event['data']['decision'] for event in exported['review_history']] == ['reset', 'rejected', 'confirmed', 'modified']
+    assert client.post(f'/api/jobs/{first_job}/reviews', json=manual).status_code == 200
+    assert [event['data']['decision'] for event in store.reviews(first_job)] == ['modified']
+
+
 def test_retries_stay_in_analysis_and_history_is_read_only(tmp_path):
     app,client,ids=setup(tmp_path,2)
     task=create(client,ids,start=True)
@@ -111,6 +158,7 @@ def test_retries_stay_in_analysis_and_history_is_read_only(tmp_path):
     for action in ['pending','retry_failed','diagnose','feedback']:
         assert client.post(endpoint(task)+'/actions',json={'action':action}).status_code==409
     assert client.post(f'/api/jobs/{job}/reviews',json=review).status_code==409
+    assert client.post(endpoint(task)+'/reviews',json={'decision':'reset','trace_ids':[ids[0]]}).status_code==409
     assert client.post(f'/api/jobs/{job}/feedback').status_code==409
     assert client.get(f'/api/jobs/{job}').json()['read_only'] is True
     assert app.state.store.job(job)['result']==original_result

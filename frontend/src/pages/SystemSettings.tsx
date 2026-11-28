@@ -61,8 +61,8 @@ function runtimePayload(value: RuntimeDraft) {
   }
 }
 
-export default function SystemSettings({onBack}: {onBack?: () => void}) {
-  const [purpose, setPurpose] = useState<ModelPurpose>('diagnosis')
+export default function SystemSettings({onBack, initialPurpose = 'diagnosis'}: {onBack?: () => void; initialPurpose?: ModelPurpose}) {
+  const [purpose, setPurpose] = useState<ModelPurpose>(initialPurpose)
   return <>
     <div className="ws-heading">
       <div><h1>系统设置</h1><p>管理诊断分析与 Playground 使用的模型连接。</p></div>

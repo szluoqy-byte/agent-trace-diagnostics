@@ -24,11 +24,12 @@ from .official_samples import load_official_samples
 from .feedback import feedback_availability
 from .execution import RUNTIME_FIELDS, active_execution, job_settings, load_runtime_settings, runtime_snapshot, snapshot
 from .diagnosis.synthesis import project_synthesis, review_target
-from .diagnosis.review_policy import job_review_status
+from .diagnosis.review_policy import active_reviews, job_review_status, valid_review_step
 from .model_settings_api import MODEL_SETTINGS_PATH, attach_model_settings_routes
 from .runtime_settings_api import attach_runtime_settings_routes
 from .task_api import attach_task_routes
 from .pattern_api import attach_pattern_routes
+from .playground import attach_playground_routes
 
 
 class BatchRequest(Contract):
@@ -66,6 +67,8 @@ def create_app(settings=None, *, frontend_dir=None):
     async def validation_error(request: Request, exc: RequestValidationError):
         if request.url.path.startswith(MODEL_SETTINGS_PATH):
             return JSONResponse({'detail': '请检查模型配置和运行参数的格式及取值范围'}, status_code=422)
+        if request.url.path == "/api/playground/run":
+            return JSONResponse({"detail": "请检查请求参数。需要有效的 messages 和 Playground 模型，模型 ID 由模型选择器提供。"}, status_code=422)
         return await request_validation_exception_handler(request, exc)
 
     @app.middleware("http")
@@ -324,13 +327,8 @@ def create_app(settings=None, *, frontend_dir=None):
             raise HTTPException(422, "驳回结论时关键步骤应留空")
         trace = require_trace(job["trace_id"])["data"]
         original, algorithm = review_target(job["result"], step_count=len(trace["messages"]), outcome=trace["outcome"])
-        if body.critical_step is not None:
-            invalid_step = body.critical_step >= len(trace["messages"])
-            if not invalid_step and algorithm not in {"AgentDebugX", "CHIEF"}:
-                message = trace["messages"][body.critical_step]
-                invalid_step = message["role"] == "user" or message.get("judgable") is False
-            if invalid_step:
-                raise HTTPException(422, "关键步骤必须是轨迹中的可诊断消息")
+        if not valid_review_step(body.critical_step, trace["messages"], algorithm):
+            raise HTTPException(422, "关键步骤必须是轨迹中的可诊断消息")
         if body.decision == "confirmed" and any(getattr(body, k) != original[k] for k in ("critical_step", "category", "summary")):
             raise HTTPException(422, "结论有变动时请选择修改结论")
         write(lambda:store.add_review(job_id, body.model_dump()))
@@ -370,7 +368,8 @@ def create_app(settings=None, *, frontend_dir=None):
         if job["status"] != "completed":
             raise HTTPException(409, "请等待诊断完成后导出")
         trace = require_trace(job["trace_id"])
-        reviews = store.reviews(job_id)
+        review_history = store.reviews(job_id, include_history=True)
+        reviews = active_reviews(review_history)
         feedback = store.latest_feedback(job_id)
         job = {**job, "result": project_synthesis(job["result"], step_count=len(trace["data"]["messages"]),
                                                   outcome=trace["data"]["outcome"])}
@@ -378,6 +377,8 @@ def create_app(settings=None, *, frontend_dir=None):
                    "feedback": feedback, "feedback_history": store.feedback_history(job_id)}
         headers = {"Content-Disposition": f'attachment; filename="tianluo-diagnosis-{job_id[:8]}.{format}"'}
         if format == "json":
+            if len(review_history) != len(reviews):
+                payload["review_history"] = review_history
             return Response(json.dumps(payload, ensure_ascii=False, indent=2), media_type="application/json", headers=headers)
         if format != "md":
             raise HTTPException(422, "format 仅支持 json 或 md")
@@ -385,6 +386,7 @@ def create_app(settings=None, *, frontend_dir=None):
 
     attach_task_routes(app, store, settings, job)
     attach_pattern_routes(app, store)
+    attach_playground_routes(app, store, settings)
     attach_model_settings_routes(app, store.model_connections, settings, queue)
     attach_runtime_settings_routes(app, store, settings, queue)
 

@@ -34,6 +34,7 @@ class TaskImprovementStore:
                     WHERE a.run_id=x.run_id AND a.trace_id=x.trace_id ORDER BY a.attempt DESC LIMIT 1)
                 LEFT JOIN reviews v ON v.rowid=(SELECT r.rowid FROM reviews r
                     WHERE r.job_id=j.id ORDER BY r.created_at DESC,r.rowid DESC LIMIT 1)
+                    AND json_extract(v.data,'$.decision') IS NOT 'reset'
                 WHERE x.run_id=? ORDER BY x.position''', (run_id,))
             return snapshot_for_rows(rows, goal)
 

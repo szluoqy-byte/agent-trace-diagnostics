@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from .agent_identity import AgentOwnership
+from .diagnosis.review_policy import active_reviews
 from .models import Trajectory
 from .deletion import DeletionStore
 from .model_connections import ModelConnections
@@ -174,11 +175,16 @@ class Store(TaskStore, TaskImprovementStore, PatternStore, DeletionStore):
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             self.assert_job_writable(job_id, db)
-            db.execute("INSERT INTO reviews VALUES (?, ?, ?, ?)", (uuid.uuid4().hex, job_id, json.dumps(data, ensure_ascii=False), now()))
+            self._insert_review(db, job_id, data)
 
-    def reviews(self, job_id):
+    @staticmethod
+    def _insert_review(db, job_id, data):
+        db.execute("INSERT INTO reviews VALUES (?, ?, ?, ?)", (uuid.uuid4().hex, job_id, json.dumps(data, ensure_ascii=False), now()))
+
+    def reviews(self, job_id, *, include_history=False):
         with self.connect() as db:
-            return [self.row(r) for r in db.execute("SELECT * FROM reviews WHERE job_id=? ORDER BY created_at DESC,rowid DESC", (job_id,))]
+            history = [self.row(r) for r in db.execute("SELECT * FROM reviews WHERE job_id=? ORDER BY created_at DESC,rowid DESC", (job_id,))]
+        return history if include_history else active_reviews(history)
 
     def feedback_history(self, job_id):
         with self.connect() as db:
