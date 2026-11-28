@@ -2,7 +2,6 @@ import {useState} from 'react'
 import type {ReactNode} from 'react'
 import {ChevronRight, FileText} from 'lucide-react'
 import type {LucideIcon} from 'lucide-react'
-import {sourceLabel} from '../branding'
 import {Dialog} from './Dialogs'
 
 export default function TraceInfoPanel({title, icon:Icon, children}: {
@@ -21,17 +20,11 @@ export default function TraceInfoPanel({title, icon:Icon, children}: {
   </>
 }
 
-export function TraceContextPanel({description, source}: {description?:string|null; source?:string|null}) {
+export function TraceContextPanel({description}: {description?:string|null}) {
   const hasDescription = !!description?.trim()
-  const origin = sourceLabel(source?.trim() ?? '')
-  return <TraceInfoPanel title="轨迹任务说明及来源" icon={FileText}>
-    <dl className="trace-context-source">
-      <dt>轨迹来源</dt>
-      <dd>{origin || '未记录来源'}</dd>
-    </dl>
-    <section className="trace-context-description">
-      <h3>任务说明</h3>
-      <p className={hasDescription ? undefined : 'muted'}>{hasDescription ? description : '未提供任务说明。'}</p>
-    </section>
+  return <TraceInfoPanel title="轨迹任务说明" icon={FileText}>
+    <p className={hasDescription ? 'trace-context-description' : 'trace-context-description muted'}>
+      {hasDescription ? description : '未提供任务说明。'}
+    </p>
   </TraceInfoPanel>
 }

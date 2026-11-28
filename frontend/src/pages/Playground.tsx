@@ -1,10 +1,10 @@
-import {useDeferredValue, useEffect, useRef, useState} from 'react'
+import {useDeferredValue, useEffect, useMemo, useRef, useState} from 'react'
 import {ArrowUpRight, Download, FileCode, Play} from 'lucide-react'
 import {api} from '../api'
 import {Dialog} from '../components/Dialogs'
 import PlaygroundDiff from '../components/PlaygroundDiff'
 import Tabs from '../components/Tabs'
-import {describeOutput, describeRequest, display, responseLabels} from '../playground'
+import {display, responseLabels} from '../playground'
 import {useResource, useWorkspace} from '../workspace'
 
 interface PlaygroundModel {id:string; name:string; model:string; is_default:boolean}
@@ -32,6 +32,35 @@ const resultTabs = [
 const emptyRequest = JSON.stringify({messages:[{role:'user', content:''}]}, null, 2)
 const integers = new Intl.NumberFormat('zh-CN')
 const seconds = new Intl.NumberFormat('zh-CN', {maximumFractionDigits:2})
+
+function RequestEditor({value, readOnly, onChange}: {
+  value:string; readOnly:boolean; onChange:(value:string)=>void
+}) {
+  const gutter = useRef<HTMLPreElement>(null)
+  const numbers = useMemo(() => Array.from({length:value.split(/\r\n?|\n/).length}, (_, index) => index + 1).join('\n'), [value])
+
+  return <div className="playground-editor">
+    <div className="playground-editor-gutter" aria-hidden="true"><pre ref={gutter}>{numbers}</pre></div>
+    <textarea id="playground-request" value={value} spellCheck={false} readOnly={readOnly} wrap="off"
+      onChange={event => onChange(event.currentTarget.value)}
+      onScroll={event => {
+        if (gutter.current) gutter.current.style.transform = 'translateY(' + (-event.currentTarget.scrollTop) + 'px)'
+      }}/>
+  </div>
+}
+
+function ModelOutput({message}: {message:Record<string,unknown>}) {
+  const fields = Object.entries(responseLabels).filter(([field]) => message[field] != null && message[field] !== '')
+  if (!fields.length) return <p className="muted">模型返回内容为空。</p>
+
+  return fields.map(([field, label]) => {
+    const value = message[field]
+    return <div className="playground-output" key={field}>
+      {field !== 'content' || fields.length > 1 ? <span className="playground-output-label">{label}</span> : null}
+      {typeof value === 'string' ? <p>{value}</p> : <pre>{display(value)}</pre>}
+    </div>
+  })
+}
 
 function PacketPreview({packet, onClose}: {packet:Packet; onClose:()=>void}) {
   function download() {
@@ -78,9 +107,6 @@ export default function Playground({traceId, initialSpan}: {traceId:string|null;
   const selectedSpan = source?.selected_span ?? spanId
   const originalOutput = source?.original_output
   const active = !running && !loadingSource && !!selectedModel && !modelError
-  const responseParts = Object.entries(result?.message ?? {}).filter(([,value]) => value != null && value !== '')
-  const originalRequest = view === 'request' && source?.parameters.messages.length ? describeRequest(capturedInput) : null
-  const currentRequest = view === 'request' && originalRequest !== null ? describeRequest(result?.input ?? draft) : null
 
   function switchSpan(id:string) {
     setSpanId(id)
@@ -172,8 +198,7 @@ export default function Playground({traceId, initialSpan}: {traceId:string|null;
             : traceId && source && !source.selected_span ? <p className="playground-panel-note muted">
               {source.parameters.messages.length ? '轨迹未记录完整模型请求，已带入可用的输入文本。' : '这条轨迹没有可直接带入的模型输入，可手动填写。'}
             </p> : null}
-          <textarea id="playground-request" value={input} spellCheck={false} readOnly={running || loadingSource}
-            onChange={event => setEdit({spanId, text:event.currentTarget.value})}/>
+          <RequestEditor value={input} readOnly={running || loadingSource} onChange={text => setEdit({spanId, text})}/>
           <p className="playground-panel-note muted">运行时将当前请求发送至所选模型服务。</p>
         </section>
         <section className="ws-surface playground-panel" aria-busy={running}>
@@ -198,18 +223,27 @@ export default function Playground({traceId, initialSpan}: {traceId:string|null;
             id={traceId ? `playground-view-panel-${view}` : undefined}
             aria-labelledby={traceId ? `playground-view-tab-${view}` : undefined}>
             {view === 'request' ? <div className="playground-response" tabIndex={0}>
-              {originalRequest === null ? <p className="muted">{loadingSource ? '正在读取原始请求…' : '此轨迹没有可供对比的请求内容。'}</p>
-                : currentRequest === null ? <p className="muted">请求参数需要是包含 messages 数组的有效 JSON。</p>
+              {!source?.parameters.messages.length ? <p className="muted">{loadingSource ? '正在读取原始请求…' : '此轨迹没有可供对比的请求内容。'}</p>
                 : <>
                   {result && input !== result.input ? <p className="playground-comparison-note">编辑区有尚未运行的修改。下方显示上次运行的请求。</p> : null}
-                  <PlaygroundDiff before={originalRequest} after={currentRequest}
+                  <PlaygroundDiff before={capturedInput} after={result?.input ?? draft}
                     originalLabel={source?.selected_span ? '原始请求' : '带入的输入'} updatedLabel={result ? '本次运行' : '当前编辑'}/>
                 </>}
             </div> : view === 'output' ? <div className="playground-response" tabIndex={0}>
-              {!originalOutput ? <p className="muted">{loadingSource ? '正在读取原始输出…' : '此调用未采集可供对比的原始输出。'}</p>
-                : !result ? <p className="muted">完成一次调试后，查看原始输出与本次返回的差异。</p>
-                : <PlaygroundDiff before={describeOutput(originalOutput.message)} after={describeOutput(result.message)}
-                  originalLabel="原始输出" updatedLabel="本次返回"/>}
+              <section className="playground-output-card" aria-labelledby="playground-original-output">
+                <h3 id="playground-original-output">原始输出</h3>
+                <div className="playground-output-body">
+                  {originalOutput ? <ModelOutput message={originalOutput.message}/>
+                    : <p className="muted">{loadingSource ? '正在读取原始输出…' : '此调用未采集可供对比的原始输出。'}</p>}
+                </div>
+              </section>
+              <section className="playground-output-card" aria-labelledby="playground-current-output">
+                <h3 id="playground-current-output">本次返回</h3>
+                <div className="playground-output-body">
+                  {result ? <ModelOutput message={result.message}/>
+                    : <p className="muted">{running ? '正在等待本次调试结果。' : '运行调试后显示本次返回内容。'}</p>}
+                </div>
+              </section>
             </div> : <div className="playground-response" role="region" aria-label="模型响应内容" tabIndex={0}>
               {result ? <>
                 <dl className="playground-metrics">
@@ -219,10 +253,7 @@ export default function Playground({traceId, initialSpan}: {traceId:string|null;
                   <div><dt>输入 Tokens</dt><dd>{result.usage.prompt_tokens == null ? '—' : integers.format(result.usage.prompt_tokens)}</dd></div>
                   <div><dt>输出 Tokens</dt><dd>{result.usage.completion_tokens == null ? '—' : integers.format(result.usage.completion_tokens)}</dd></div>
                 </dl>
-                {!responseParts.length ? <p className="muted">模型返回内容为空。</p> : null}
-                {responseParts.map(([field,value]) => <section className="playground-output" key={field}>
-                  <h3>{responseLabels[field]}</h3><pre>{display(value)}</pre>
-                </section>)}
+                <ModelOutput message={result.message}/>
               </> : !running && !error ? <p className="muted">运行调试后显示模型返回内容。</p> : null}
             </div>}
           </div>

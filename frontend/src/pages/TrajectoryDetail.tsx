@@ -1,5 +1,5 @@
 import {useCallback,useEffect,useState} from 'react'
-import {ArrowLeft,ChevronLeft,ChevronRight,Download,Play,RotateCcw} from 'lucide-react'
+import {ArrowLeft,ChevronLeft,ChevronRight,Download,Play,RotateCcw,Terminal} from 'lucide-react'
 import {playgroundLink} from '../playground'
 import {uiText} from '../branding'
 import {dateLabel,post} from '../api'
@@ -84,14 +84,17 @@ export default function TrajectoryDetail({id,traceId,params}:{id:string;traceId:
   {job?.status==='queued'||job?.status==='running'?<progress className="diagnosis-progress" max={100} value={job.progress} aria-label="诊断进度"/>:null}
   <div className="trace-detail-tools">
     <div className="trace-detail-disclosures">
-      <TraceContextPanel description={trace.data.task_description} source={trace.data.source}/>
+      <TraceContextPanel description={trace.data.task_description}/>
       {report?<DiagnosisUsage report={report}/>:null}
-      <a className="secondary small" href={playgroundLink(traceId)}>在 Playground 调试</a>
       {data.attempts.length>1?<details className="ws-attempts"><summary>诊断请求记录 · {data.attempts.length} 次尝试</summary><div className="trace-disclosure-body">{data.attempts.map(a=><div key={a.id}><span>第 {a.attempt} 次 · {dateLabel(a.created_at)} · {diagnosisStatus[a.status]}</span>{a.error?<small>{uiText(a.error)}</small>:null}</div>)}</div></details>:null}
     </div>
     <div className="ws-detail-status">
       {job?.status!=='completed'?<span>{uiText(job?.stage)||'尚未开始分析'}{job?.status==='running'?` · ${job.progress}%`:''}</span>:null}
-      <div className="ws-actions">{canRun?<button className="primary small" disabled={busy||blocked} onClick={()=>void diagnose()}>{job?<RotateCcw size={14}/>:<Play size={14}/>} {job?'重试诊断':'诊断轨迹'}</button>:null}<button className="secondary small" disabled={job?.status!=='completed'} onClick={()=>setDialog('export')}><Download size={14}/>导出诊断报告</button></div>
+      <div className="ws-actions">
+        {canRun?<button className="primary small" disabled={busy||blocked} onClick={()=>void diagnose()}>{job?<RotateCcw size={14}/>:<Play size={14}/>} {job?'重试诊断':'诊断轨迹'}</button>:null}
+        <a className="secondary small" href={playgroundLink(traceId)}><Terminal size={14} aria-hidden="true"/>在 Playground 调试</a>
+        <button className="secondary small" disabled={job?.status!=='completed'} onClick={()=>setDialog('export')}><Download size={14} aria-hidden="true"/>导出诊断报告</button>
+      </div>
     </div>
   </div>
   </>} trace={<ExecutionTrace key={`${runId}-${traceId}`} trace={trace} criticalStep={critical} selection={selection}/>}

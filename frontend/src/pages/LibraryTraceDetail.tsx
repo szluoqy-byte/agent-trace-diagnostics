@@ -1,4 +1,4 @@
-import {ArrowLeft} from 'lucide-react'
+import {ArrowLeft,Terminal} from 'lucide-react'
 import {playgroundLink} from '../playground'
 import {dateLabel} from '../api'
 import {patternTaskPath} from '../patterns'
@@ -23,7 +23,7 @@ export default function LibraryTraceDetail({id, params, onDeleted}: {id: string;
       <a href={back}>返回轨迹库</a></> : '正在读取轨迹…'}
   </div>
 
-  const {title, outcome, messages, otel, input_format, source, task_description, deepagent, agent_identity} = trace.data
+  const {title, outcome, messages, otel, input_format, task_description, deepagent, agent_identity} = trace.data
   const tasks = new Map(history?.tasks.map(task => [task.id, task]))
   return <TraceDetailLayout detailsLabel="诊断与关联任务" header={<>
     <div className="ws-breadcrumb"><a href={back}>轨迹库</a><span>/</span><span>轨迹详情</span></div>
@@ -32,13 +32,13 @@ export default function LibraryTraceDetail({id, params, onDeleted}: {id: string;
         <p>{formatLabel(input_format ?? (otel ? 'otel_genai' : 'messages'))} · {deepagent ? `${deepagent.span_count} 个调用` : `${messages.length} 条消息`}{agent_identity?<span className="trace-detail-agent"> · Agent <strong>{agent_identity.name}</strong></span>:null}</p></div>
       <div className="ws-actions">
         <a className="secondary" href={back}><ArrowLeft size={15}/>返回轨迹库</a>
-        <a className="secondary" href={playgroundLink(id)}>在 Playground 调试</a>
+        <a className="secondary" href={playgroundLink(id)}><Terminal size={15} aria-hidden="true"/>在 Playground 调试</a>
         <DeleteRecord id={id} name={title} kind="trace"
           blocked={history ? traceDeletionBlock(history.tasks.length, history.diagnoses.some(row => ['queued', 'running'].includes(row.status))) : undefined}
           onDeleted={() => {onDeleted(id); go(libraryPath(params), true)}}/>
       </div>
     </div>
-    <div className="trace-detail-disclosures"><TraceContextPanel description={task_description} source={source}/></div>
+    <div className="trace-detail-disclosures"><TraceContextPanel description={task_description}/></div>
     </>} trace={<ExecutionTrace key={id} trace={trace} criticalStep={null} selection={null}/>}
     details={<section className="ws-surface library-history" aria-busy={!history && !historyError}>
         <h2>当前诊断</h2>
