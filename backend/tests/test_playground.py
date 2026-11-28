@@ -22,6 +22,9 @@ def test_playground_loads_model_inputs_from_deepagent_and_otel(tmp_path):
     raw = json.loads(llm["span_input"])
     raw.update(model="captured-model", stream=True, headers={"Authorization": "recorded-key"}, temperature=0.3)
     llm["span_input"] = json.dumps(raw)
+    packet = json.loads(llm["span_output"])
+    packet["provider_detail"] = {"trace": "参考响应"}
+    llm["span_output"] = json.dumps(packet, ensure_ascii=False, indent=4) + "\n"
     [deepagent] = parse_upload(json.dumps(deep_export).encode(), "deepagent.json")
     deepagent_id = store.add_trace(deepagent)["id"]
     response = client.get(f"/api/playground/traces/{deepagent_id}")
@@ -30,6 +33,23 @@ def test_playground_loads_model_inputs_from_deepagent_and_otel(tmp_path):
     assert preview["selected_span"] == llm["span_id"]
     assert preview["parameters"] == {"messages": raw["messages"], "temperature": 0.3}
     assert "recorded-key" not in response.text and "captured-model" not in response.text
+    assert preview["original_output"] == {
+        "body": llm["span_output"], "is_json": True, "format": "deepagent",
+        "message": {"content": packet["choices"][0]["message"]["content"]},
+    }
+
+    llm["span_output"] = None
+    [without_output] = parse_upload(json.dumps(deep_export).encode(), "without-output.json")
+    missing_id = store.add_trace(without_output)["id"]
+    assert client.get(f"/api/playground/traces/{missing_id}").json()["original_output"] is None
+
+    raw["messages"][0]["content"] = "查询商品 B 的可售库存"
+    llm["span_input"] = json.dumps(raw)
+    llm["span_output"] = '""'
+    [with_empty_output] = parse_upload(json.dumps(deep_export).encode(), "empty-output.json")
+    empty_id = store.add_trace(with_empty_output)["id"]
+    empty_output = client.get(f"/api/playground/traces/{empty_id}").json()["original_output"]
+    assert empty_output["body"] == '""' and empty_output["message"] == {"content": ""}
 
     [otel] = parse_upload((TEMPLATES / "otel-genai-template.json").read_bytes(), "otel.json")
     otel_id = store.add_trace(otel)["id"]
@@ -39,13 +59,20 @@ def test_playground_loads_model_inputs_from_deepagent_and_otel(tmp_path):
     messages = latest["parameters"]["messages"]
     assert [message["role"] for message in messages] == ["user", "assistant", "tool"]
     assert messages[1]["tool_calls"][0]["id"] == messages[2]["tool_call_id"]
-    assert client.get(path, params={"span_id": latest["calls"][0]["id"]}).json()["parameters"]["messages"] == messages[:1]
+    assert latest["original_output"]["message"] == {"content": "The refund is complete."}
+    first = client.get(path, params={"span_id": latest["calls"][0]["id"]}).json()
+    assert first["parameters"]["messages"] == messages[:1]
+    output = first["original_output"]
+    assert output["format"] == "otel_genai"
+    assert output["message"]["tool_calls"][0]["function"]["name"] == "issue_refund"
+    assert json.loads(output["body"])[0]["parts"][0]["id"] == "refund-42"
     assert client.get(path, params={"span_id": "missing"}).status_code == 404
 
     legacy = normalize({"messages": [{"role": "user", "content": "input"}, {"role": "assistant", "content": "old output"}]})
     legacy_id = store.add_trace(legacy)["id"]
     seed = client.get(f"/api/playground/traces/{legacy_id}").json()
     assert seed["selected_span"] is None and seed["parameters"] == {"messages": [{"role": "user", "content": "input"}]}
+    assert seed["original_output"] is None
 
 
 def test_playground_calls_only_the_selected_playground_connection(tmp_path, monkeypatch):
@@ -58,17 +85,20 @@ def test_playground_calls_only_the_selected_playground_connection(tmp_path, monk
                                 api_key="diagnosis-key", make_default=True)
     calls = []
     provider_status = 200
+    provider_body = json.dumps({
+        "id": "response-01", "provider_detail": {"model_version": "1.2"},
+        "choices": [{"finish_reason": "tool_calls", "message": {
+            "content": "已处理", "tool_calls": [{"id": "call-1", "type": "function"}],
+        }}],
+        "usage": {"prompt_tokens": 8, "completion_tokens": 3, "total_tokens": 11},
+    }, ensure_ascii=False, indent=4) + "\n"
 
     def provider(request):
         calls.append(request)
         if provider_status != 200:
             return httpx.Response(provider_status, text="private upstream log")
-        return httpx.Response(200, json={
-            "choices": [{"finish_reason": "tool_calls", "message": {
-                "content": "已处理", "tool_calls": [{"id": "call-1", "type": "function"}],
-            }}],
-            "usage": {"prompt_tokens": 8, "completion_tokens": 3, "total_tokens": 11},
-        })
+        return httpx.Response(200, content=provider_body.encode("utf-8"),
+                              headers={"Content-Type": "application/json"})
 
     original = httpx.AsyncClient
     monkeypatch.setattr("tracelens.playground.httpx.AsyncClient",
@@ -90,6 +120,7 @@ def test_playground_calls_only_the_selected_playground_connection(tmp_path, monk
     assert result.json()["message"]["content"] == "已处理"
     assert result.json()["message"]["tool_calls"][0]["id"] == "call-1"
     assert result.json()["usage"]["total_tokens"] == 11
+    assert result.json()["raw_response"] == provider_body
 
     provider_status = 403
     result = client.post(path, json={"model_connection_id": play, "parameters": parameters})

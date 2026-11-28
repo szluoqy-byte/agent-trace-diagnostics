@@ -8,7 +8,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import Field, ValidationError
 
-from .deepagent import content_text, decoded
+from .deepagent import content_text, decoded, model_choice
 from .execution_view import execution_view
 from .llm import MODEL_HTTP_HINTS
 from .model_concurrency import ModelSlots
@@ -135,13 +135,49 @@ def otel_request(call):
     return request
 
 
+def output_fields(message):
+    if not isinstance(message, dict):
+        return {}
+    return {key: message[key] for key in ("content", "tool_calls", "function_call", "refusal")
+            if key in message}
+
+
+def captured_output(call, is_otel):
+    raw = call["output"]
+    if raw is None:
+        return None
+    body = raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False, indent=2)
+    if not body.strip():
+        return None
+    try:
+        value = json.loads(body)
+        is_json = True
+    except ValueError:
+        value = body
+        is_json = False
+    message = {}
+    if is_otel and value == []:
+        message = {"content": None}
+    elif is_otel and isinstance(value, list) and isinstance(value[0], dict):
+        # Compare the first recorded response, like a new Chat Completions result.
+        try:
+            message = output_fields(otel_chat_message(value[0])[0])
+        except (ValueError, KeyError, TypeError, AttributeError):
+            pass
+    elif isinstance(value, dict):
+        message = output_fields(model_choice(value).get("message", value.get("message", value)))
+    return {"body": body, "is_json": is_json, "format": "otel_genai" if is_otel else "deepagent",
+            "message": message or {"content": value}}
+
+
 def trace_request(trace, span_id):
     data = trace["data"]
+    is_otel = bool(data.get("otel"))
     calls = []
     chosen = None
     for number, call in enumerate(execution_view(data)["calls"], 1):
         try:
-            request = otel_request(call) if data.get("otel") else decoded(call["input"]) if call["kind"] == "LLM" else None
+            request = otel_request(call) if is_otel else decoded(call["input"]) if call["kind"] == "LLM" else None
             request = captured_parameters(request)
         except (ValueError, KeyError, TypeError):
             continue
@@ -149,7 +185,7 @@ def trace_request(trace, span_id):
             continue
         calls.append({"id": call["span_id"], "label": f"#{number} {call['title']}"})
         if span_id is None or span_id == call["span_id"]:
-            chosen = (call["span_id"], request)
+            chosen = (call, request)
     if span_id is not None and chosen is None:
         raise HTTPException(404, "此调用没有可直接带入的模型请求。")
     fallback = []
@@ -161,8 +197,9 @@ def trace_request(trace, span_id):
                 fallback.append({"role": message["role"], "content": message["content"]})
         if not fallback and data.get("deepagent") and data.get("task_description", "").strip():
             fallback.append({"role": "user", "content": data["task_description"]})
-    return {"title": trace["title"], "calls": calls, "selected_span": chosen[0] if chosen else None,
-            "parameters": chosen[1] if chosen else {"messages": fallback}}
+    return {"title": trace["title"], "calls": calls, "selected_span": chosen[0]["span_id"] if chosen else None,
+            "parameters": chosen[1] if chosen else {"messages": fallback},
+            "original_output": captured_output(chosen[0], is_otel) if chosen else None}
 
 
 async def run_model(connection, parameters, settings):
@@ -187,14 +224,14 @@ async def run_model(connection, parameters, settings):
         result = response.json()
         choice = result["choices"][0]
         message = choice["message"]
-        output = {key: message[key] for key in ("content", "tool_calls", "function_call", "refusal") if key in message}
+        output = output_fields(message)
         if not output:
             raise ValueError
     except (ValueError, KeyError, IndexError, TypeError):
         raise HTTPException(502, "模型服务未返回可读取的 Chat Completions 响应。") from None
     usage = result.get("usage") or {}
     return {"model": connection["model"], "duration_seconds": round(monotonic() - started, 2),
-            "finish_reason": choice.get("finish_reason"), "message": output,
+            "finish_reason": choice.get("finish_reason"), "message": output, "raw_response": response.text,
             "usage": {key: usage[key] for key in ("prompt_tokens", "completion_tokens", "total_tokens")
                       if isinstance(usage, dict) and type(usage.get(key)) is int}}
 

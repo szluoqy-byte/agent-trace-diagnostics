@@ -1,6 +1,10 @@
-import {useEffect, useRef, useState} from 'react'
-import {ArrowUpRight, Play} from 'lucide-react'
+import {useDeferredValue, useEffect, useRef, useState} from 'react'
+import {ArrowUpRight, Download, FileCode, Play} from 'lucide-react'
 import {api} from '../api'
+import {Dialog} from '../components/Dialogs'
+import PlaygroundDiff from '../components/PlaygroundDiff'
+import Tabs from '../components/Tabs'
+import {describeOutput, describeRequest, display, responseLabels} from '../playground'
 import {useResource, useWorkspace} from '../workspace'
 
 interface PlaygroundModel {id:string; name:string; model:string; is_default:boolean}
@@ -9,20 +13,44 @@ interface TraceInput {
   calls:{id:string; label:string}[]
   selected_span:string | null
   parameters:{messages:unknown[]} & Record<string,unknown>
+  original_output:({format:'deepagent'|'otel_genai'; message:Record<string,unknown>} & PacketBody) | null
 }
 interface ModelResult {
   model:string
   duration_seconds:number
   finish_reason?:string
   usage:{prompt_tokens?:number; completion_tokens?:number; total_tokens?:number}
-  message:{content?:unknown; refusal?:unknown; tool_calls?:unknown; function_call?:unknown}
+  message:Record<string,unknown>
+  raw_response:string
 }
 
+interface PacketBody {body:string; is_json:boolean}
+type Packet = PacketBody & {title:string; description:string; filename:string}
+const resultTabs = [
+  {id:'result', label:'调试结果'}, {id:'request', label:'请求对比'}, {id:'output', label:'输出对比'},
+]
 const emptyRequest = JSON.stringify({messages:[{role:'user', content:''}]}, null, 2)
 const integers = new Intl.NumberFormat('zh-CN')
 const seconds = new Intl.NumberFormat('zh-CN', {maximumFractionDigits:2})
-const display = (value:unknown) => typeof value === 'string' ? value : JSON.stringify(value, null, 2)
-const responseLabels: Record<string,string> = {content:'返回内容', refusal:'拒绝原因', tool_calls:'工具调用', function_call:'函数调用'}
+
+function PacketPreview({packet, onClose}: {packet:Packet; onClose:()=>void}) {
+  function download() {
+    const url = URL.createObjectURL(new Blob([packet.body], {type:packet.is_json ? 'application/json' : 'text/plain;charset=utf-8'}))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = packet.filename + (packet.is_json ? '.json' : '.txt')
+    document.body.append(link)
+    link.click()
+    link.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }
+
+  return <Dialog title={packet.title} className="playground-packet" onClose={onClose}>
+    <p className="playground-panel-note muted">{packet.description}</p>
+    <pre tabIndex={0} aria-label="报文内容">{packet.body}</pre>
+    <footer><button type="button" className="primary" onClick={download}><Download size={15} aria-hidden="true"/>下载报文</button></footer>
+  </Dialog>
+}
 
 export default function Playground({traceId, initialSpan}: {traceId:string|null; initialSpan:string|null}) {
   const {version, openSettings, refresh} = useWorkspace()
@@ -37,16 +65,22 @@ export default function Playground({traceId, initialSpan}: {traceId:string|null;
   const [edit, setEdit] = useState<{spanId:string; text:string} | null>(null)
   const [error, setError] = useState('')
   const [running, setRunning] = useState(false)
-  const [result, setResult] = useState<ModelResult | null>(null)
+  const [result, setResult] = useState<(ModelResult & {input:string}) | null>(null)
+  const [view, setView] = useState('result')
+  const [packet, setPacket] = useState<Packet | null>(null)
   const request = useRef<AbortController | null>(null)
   useEffect(() => () => request.current?.abort(), [])
 
   const selectedModel = models?.items.find(item => modelId ? item.id === modelId : item.is_default)
   const capturedInput = source?.parameters.messages.length ? display(source.parameters) : emptyRequest
   const input = edit?.spanId === spanId ? edit.text : capturedInput
+  const draft = useDeferredValue(input)
   const selectedSpan = source?.selected_span ?? spanId
+  const originalOutput = source?.original_output
   const active = !running && !loadingSource && !!selectedModel && !modelError
   const responseParts = Object.entries(result?.message ?? {}).filter(([,value]) => value != null && value !== '')
+  const originalRequest = view === 'request' && source?.parameters.messages.length ? describeRequest(capturedInput) : null
+  const currentRequest = view === 'request' && originalRequest !== null ? describeRequest(result?.input ?? draft) : null
 
   function switchSpan(id:string) {
     setSpanId(id)
@@ -76,13 +110,23 @@ export default function Playground({traceId, initialSpan}: {traceId:string|null;
         method:'POST', headers:{'Content-Type':'application/json'}, signal:controller.signal,
         body:JSON.stringify({model_connection_id:selectedModel.id, parameters}),
       })
-      if (!controller.signal.aborted) setResult(answer)
+      if (!controller.signal.aborted) setResult({...answer, input})
     } catch (e) {
       if (!controller.signal.aborted) setError((e as Error).message)
     } finally {
       request.current = null
       if (!controller.signal.aborted) setRunning(false)
     }
+  }
+
+  function showOriginalPacket() {
+    if (!originalOutput) return
+    setPacket({
+      ...originalOutput, title:'原始输出报文', filename:'playground-original-output',
+      description:originalOutput.format === 'otel_genai'
+        ? '此调用采集的完整 gen_ai.output.messages 属性。'
+        : '此调用采集的完整 span_output。',
+    })
   }
 
   return <div className="playground">
@@ -133,12 +177,44 @@ export default function Playground({traceId, initialSpan}: {traceId:string|null;
           <p className="playground-panel-note muted">运行时将当前请求发送至所选模型服务。</p>
         </section>
         <section className="ws-surface playground-panel" aria-busy={running}>
-          <div className="playground-panel-heading"><h2>模型响应</h2>{result ? <span>{seconds.format(result.duration_seconds)} 秒</span> : null}</div>
-          <div className="playground-response" role="region" aria-label="模型响应内容" tabIndex={0}>
-            {error ? <p role="alert" className="error-inline">{error}</p> : running ? <p className="muted" role="status">等待模型响应…</p>
-              : result ? <>
+          <div className="playground-panel-heading">
+            <h2>模型响应</h2>
+            <div className="playground-packet-actions">
+              {originalOutput ? <button type="button" className="text-button" onClick={showOriginalPacket}>
+                <FileCode size={15} aria-hidden="true"/>原始输出报文
+              </button> : null}
+              {result?.raw_response ? <button type="button" className="text-button"
+                onClick={() => setPacket({title:'本次响应报文', filename:'playground-response', body:result.raw_response,
+                  is_json:true, description:'所选模型服务此次返回的完整响应正文。'})}>
+                <FileCode size={15} aria-hidden="true"/>本次响应报文
+              </button> : null}
+            </div>
+          </div>
+          {traceId ? <Tabs id="playground-view" label="调试结果视图" className="ws-tabs playground-tabs"
+            items={resultTabs} active={view} onChange={setView}/> : null}
+          {error ? <p role="alert" className="playground-panel-note error-inline">{error}</p> : null}
+          {running ? <p className="playground-panel-note muted" role="status">等待模型响应…</p> : null}
+          <div className="playground-result-panel" role={traceId ? 'tabpanel' : undefined}
+            id={traceId ? `playground-view-panel-${view}` : undefined}
+            aria-labelledby={traceId ? `playground-view-tab-${view}` : undefined}>
+            {view === 'request' ? <div className="playground-response" tabIndex={0}>
+              {originalRequest === null ? <p className="muted">{loadingSource ? '正在读取原始请求…' : '此轨迹没有可供对比的请求内容。'}</p>
+                : currentRequest === null ? <p className="muted">请求参数需要是包含 messages 数组的有效 JSON。</p>
+                : <>
+                  {result && input !== result.input ? <p className="playground-comparison-note">编辑区有尚未运行的修改。下方显示上次运行的请求。</p> : null}
+                  <PlaygroundDiff before={originalRequest} after={currentRequest}
+                    originalLabel={source?.selected_span ? '原始请求' : '带入的输入'} updatedLabel={result ? '本次运行' : '当前编辑'}/>
+                </>}
+            </div> : view === 'output' ? <div className="playground-response" tabIndex={0}>
+              {!originalOutput ? <p className="muted">{loadingSource ? '正在读取原始输出…' : '此调用未采集可供对比的原始输出。'}</p>
+                : !result ? <p className="muted">完成一次调试后，查看原始输出与本次返回的差异。</p>
+                : <PlaygroundDiff before={describeOutput(originalOutput.message)} after={describeOutput(result.message)}
+                  originalLabel="原始输出" updatedLabel="本次返回"/>}
+            </div> : <div className="playground-response" role="region" aria-label="模型响应内容" tabIndex={0}>
+              {result ? <>
                 <dl className="playground-metrics">
                   <div><dt>模型</dt><dd>{result.model}</dd></div>
+                  <div><dt>耗时</dt><dd>{seconds.format(result.duration_seconds)} 秒</dd></div>
                   <div><dt>结束原因</dt><dd>{result.finish_reason ?? '—'}</dd></div>
                   <div><dt>输入 Tokens</dt><dd>{result.usage.prompt_tokens == null ? '—' : integers.format(result.usage.prompt_tokens)}</dd></div>
                   <div><dt>输出 Tokens</dt><dd>{result.usage.completion_tokens == null ? '—' : integers.format(result.usage.completion_tokens)}</dd></div>
@@ -147,10 +223,12 @@ export default function Playground({traceId, initialSpan}: {traceId:string|null;
                 {responseParts.map(([field,value]) => <section className="playground-output" key={field}>
                   <h3>{responseLabels[field]}</h3><pre>{display(value)}</pre>
                 </section>)}
-              </> : <p className="muted">运行调试后显示模型返回内容。</p>}
+              </> : !running && !error ? <p className="muted">运行调试后显示模型返回内容。</p> : null}
+            </div>}
           </div>
         </section>
       </div>
     </div>
+    {packet ? <PacketPreview packet={packet} onClose={() => setPacket(null)}/> : null}
   </div>
 }
