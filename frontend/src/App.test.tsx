@@ -17,9 +17,14 @@ const fixtures = vi.hoisted(() => {
 vi.mock('./api', async importOriginal=>({...await importOriginal<typeof import('./api')>(),post:vi.fn(),api:vi.fn(async(path:string)=>{
   const url=new URL(path,'http://localhost'),parts=url.pathname.split('/').filter(Boolean)
   if(path==='/config')return {ready:true,model:'fixture',base_url:'http://localhost/v1',has_key:false,concurrency:2,max_retries:0,engine:'test'}
-  if(path==='/model-configurations')return {items:[]}
+  if(path==='/model-configurations')return {items:[{id:'configured',name:'Fixture',model:'fixture',is_default:true}]}
   if(path==='/tasks')return [fixtures.task]
   if(path==='/tasks/one')return fixtures.task
+  if (url.pathname === '/trace-library') {
+    const status = url.searchParams.get('diagnosis')
+    const rows = fixtures.traces.filter(row => !status || row.diagnosis === status)
+    return {items:rows.slice(0,10), total:rows.length, page:1, pages:Math.max(1, Math.ceil(rows.length / 10)), page_size:10}
+  }
   if(parts[4]==='traces'&&parts[5]){const id=parts[5],index=fixtures.traces.findIndex(t=>t.id===id);return {trace:fixtures.data[id],job:null,read_only:false,attempts:[],navigation:{index,total:12,previous_id:fixtures.traces[index-1]?.id??null,next_id:fixtures.traces[index+1]?.id??null}}}
   if(parts[4]==='traces'){
     const rows=fixtures.traces.filter(t=>!url.searchParams.get('search')||t.title.includes(url.searchParams.get('search')!)),page=Number(url.searchParams.get('page')||1),size=Number(url.searchParams.get('page_size')||10)
@@ -30,6 +35,25 @@ vi.mock('./api', async importOriginal=>({...await importOriginal<typeof import('
 })}))
 beforeEach(()=>{Element.prototype.scrollIntoView=vi.fn();window.scrollTo=vi.fn()})
 afterEach(()=>{cleanup();window.history.replaceState(null,'','#/tasks')})
+
+it('opens the library by default and launches analysis for selected pending traces', async () => {
+  window.history.replaceState(null, '', '/')
+  render(<App/>)
+  await screen.findByRole('heading', {name:'轨迹库'})
+  expect(screen.getByRole('link', {name:'轨迹库'}).getAttribute('aria-current')).toBe('page')
+  fireEvent.click(screen.getByRole('button', {name:'待分析'}))
+  await waitFor(() => expect(screen.queryByRole('link', {name:'轨迹 first'})).toBeNull())
+  fireEvent.click(await screen.findByRole('checkbox', {name:'选择 轨迹 third'}))
+  fireEvent.click(screen.getByRole('button', {name:'启动分析'}))
+  await screen.findByRole('heading', {name:'启动分析'})
+  await waitFor(() => expect((screen.getByRole('button', {name:'启动分析'}) as HTMLButtonElement).disabled).toBe(false))
+  vi.mocked(post).mockResolvedValueOnce({task_id:'one',run_id:'r1'})
+  fireEvent.click(screen.getByRole('button', {name:'启动分析'}))
+  await waitFor(() => expect(location.hash).toBe('#/tasks/one?run=r1'))
+  expect(post).toHaveBeenLastCalledWith('/tasks', expect.objectContaining({
+    trace_ids:['third'], start:true, model_connection_id:'configured', reject_active:true,
+  }))
+})
 
 it('returns from system settings with the unsaved task form intact', async () => {
   window.history.replaceState(null,'','#/tasks/new')

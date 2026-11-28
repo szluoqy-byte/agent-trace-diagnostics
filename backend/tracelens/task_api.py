@@ -29,6 +29,7 @@ class TaskCreate(Contract):
     excluded_files: list[str] = Field(default_factory=list, max_length=50)
     unknown_outcome: Literal['', 'failed', 'succeeded'] = ''
     start: bool = False
+    reject_active: bool = False
     auto_feedback: bool = False
 
 
@@ -266,7 +267,7 @@ def attach_task_routes(app, store, settings, job_view):
         config = snapshot(execution, connection_id, body.prompt_language, body.diagnosis_mode) if body.start else None
         task_id, run_id = checked(lambda: store.create_task(
             fields, traces=traces, trace_ids=trace_ids, config=config,
-            auto_feedback=body.auto_feedback,
+            auto_feedback=body.auto_feedback, reject_active=body.reject_active and bool(body.trace_ids),
         ))
         return {'task_id':task_id, 'run_id':run_id}
 

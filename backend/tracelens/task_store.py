@@ -29,12 +29,26 @@ CREATE TABLE IF NOT EXISTS run_attempts (
  FOREIGN KEY(run_id,trace_id) REFERENCES run_items(run_id,trace_id));
 CREATE TABLE IF NOT EXISTS import_previews (id TEXT PRIMARY KEY, data TEXT, created_at TEXT);
 CREATE INDEX IF NOT EXISTS task_run_order ON analysis_runs(task_id,number DESC);
+CREATE INDEX IF NOT EXISTS jobs_trace_created ON jobs(trace_id,created_at DESC);
 CREATE INDEX IF NOT EXISTS feedback_job_order ON feedback_runs(job_id,created_at DESC);
 CREATE INDEX IF NOT EXISTS review_job_order ON reviews(job_id,created_at DESC);
 CREATE INDEX IF NOT EXISTS task_membership_by_trace ON task_traces(trace_id,task_id);
 CREATE INDEX IF NOT EXISTS jobs_by_trace_status ON jobs(trace_id,status);
 DROP INDEX IF EXISTS one_active_job;
 """
+
+TRACE_JOB_ORDER = "j.created_at DESC,j.rowid DESC"
+LATEST_TRACE_JOB = f"""SELECT j.id FROM jobs j WHERE j.trace_id=t.id
+    ORDER BY (j.status IN ('queued','running')) DESC,{TRACE_JOB_ORDER} LIMIT 1"""
+LATEST_TRACE_RESULT = f"""SELECT j.id FROM jobs j
+    WHERE j.trace_id=t.id AND j.status='completed' AND j.result IS NOT NULL
+    ORDER BY {TRACE_JOB_ORDER} LIMIT 1"""
+TRACE_HISTORY_ROWS = """SELECT j.id AS job_id,r.task_id,a.run_id,r.number,j.status,j.created_at,
+    j.stage,j.progress,j.error,task.name AS task_name,
+    COALESCE(json_extract(r.config,'$.model'),json_extract(j.result,'$.model')) AS model,
+    json_extract(r.config,'$.diagnosis_mode') AS diagnosis_mode
+    FROM jobs j LEFT JOIN run_attempts a ON a.job_id=j.id
+    LEFT JOIN analysis_runs r ON r.id=a.run_id LEFT JOIN analysis_tasks task ON task.id=r.task_id"""
 
 
 class TaskStore:
@@ -118,8 +132,7 @@ class TaskStore:
             return [self.row(row) for row in db.execute('SELECT t.* FROM traces t JOIN task_traces x ON x.trace_id=t.id WHERE x.task_id=? ORDER BY x.position', (task_id,))]
 
     def trace_library(self, page, page_size, search, diagnosis, business, input_format, *, selection=False):
-        # Keep a completed diagnosis visible even when the same trace is being reanalyzed.
-        query = """
+        query = f"""
         WITH library AS (
             SELECT t.id,t.title,t.created_at,
                 json_extract(t.data,'$.dataset') AS dataset,
@@ -130,10 +143,9 @@ class TaskStore:
                 json_array_length(t.data,'$.messages') AS steps,
                 COALESCE(json_extract(t.data,'$.input_format'),
                          CASE WHEN json_type(t.data,'$.otel')='object' THEN 'otel_genai' ELSE 'messages' END) AS input_format,
-                COALESCE((SELECT status FROM jobs WHERE trace_id=t.id AND status IN ('completed','running','queued','failed')
-                    ORDER BY CASE status WHEN 'completed' THEN 0 WHEN 'running' THEN 1 WHEN 'queued' THEN 2 ELSE 3 END LIMIT 1),
-                    'pending') AS diagnosis
+                COALESCE(current.status,'pending') AS diagnosis
             FROM traces t
+            LEFT JOIN jobs current ON current.id=({LATEST_TRACE_JOB})
         )
         """
         conditions, args = [], []
@@ -141,25 +153,79 @@ class TaskStore:
             conditions.append('(' + ' OR '.join(f'instr(lower({field}), lower(?))>0'
                               for field in ('title', 'id', 'source', 'dataset', 'source_task_id', 'agent_name')) + ')')
             args.extend([search] * 6)
-        for field, value in (('diagnosis', diagnosis), ('outcome', business), ('input_format', input_format)):
+        if diagnosis == 'active':
+            conditions.append("diagnosis IN ('queued','running')")
+        for field, value in (('diagnosis', 'all' if diagnosis == 'active' else diagnosis), ('outcome', business), ('input_format', input_format)):
             if value != 'all':
                 conditions.append(f'{field}=?')
                 args.append(value)
         where = ' WHERE ' + ' AND '.join(conditions) if conditions else ''
         with self.connect() as db:
             if selection:
-                items = db.execute(query + 'SELECT id,title,outcome,input_format FROM library' + where
+                items = db.execute(query + 'SELECT id,title,outcome,input_format,diagnosis FROM library' + where
                                    + ' ORDER BY created_at DESC,id', args)
                 return {'items': [dict(row) for row in items]}
             db.execute('BEGIN')
             total = db.execute(query + 'SELECT COUNT(*) FROM library' + where, args).fetchone()[0]
             pages = max(1, (total + page_size - 1) // page_size)
             page = min(page, pages)
-            items = db.execute(query + '''SELECT library.*,
-                (SELECT COUNT(*) FROM task_traces WHERE trace_id=library.id) AS task_count
-                FROM library''' + where + ' ORDER BY created_at DESC,id LIMIT ? OFFSET ?',
-                [*args, page_size, (page - 1) * page_size]).fetchall()
-        return {'items': [dict(row) for row in items], 'total': total, 'page': page, 'page_size': page_size, 'pages': pages}
+            rows = db.execute(query + ', page AS (SELECT * FROM library' + where
+                              + ' ORDER BY created_at DESC,id LIMIT ? OFFSET ?)'
+                              + f'''SELECT t.*,saved.result,review.data AS review,
+                (SELECT COUNT(*) FROM task_traces WHERE trace_id=t.id) AS task_count
+                FROM page t LEFT JOIN jobs saved ON saved.id=({LATEST_TRACE_RESULT})
+                LEFT JOIN reviews review ON review.rowid=(SELECT rowid FROM reviews WHERE job_id=saved.id
+                    ORDER BY created_at DESC,rowid DESC LIMIT 1)
+                    AND json_extract(review.data,'$.decision') IS NOT 'reset'
+                ORDER BY t.created_at DESC,t.id''', [*args, page_size, (page - 1) * page_size]).fetchall()
+        items = []
+        for raw in rows:
+            row = dict(raw)
+            report = json.loads(row.pop('result') or 'null')
+            review = json.loads(row.pop('review') or 'null')
+            step = None
+            if report and report.get('schema_version') == 2 and row['outcome'] == 'failed':
+                if review:
+                    step = review.get('critical_step') if review.get('decision') != 'rejected' else None
+                elif report.get('attribution'):
+                    conclusion, _ = review_target(report, step_count=row['steps'], outcome=row['outcome'])
+                    step = conclusion.get('critical_step')
+            items.append({**row, 'has_result':report is not None, 'critical_step':step})
+        return {'items': items, 'total': total, 'page': page, 'page_size': page_size, 'pages': pages}
+
+    def trace_library_diagnosis(self, trace_id, job_id=None):
+        with self.connect() as db:
+            db.execute('BEGIN')
+            row = db.execute(f"""SELECT ({LATEST_TRACE_JOB}) AS latest_id,({LATEST_TRACE_RESULT}) AS result_id,
+                (SELECT COUNT(*) FROM task_traces WHERE trace_id=t.id) AS task_count
+                FROM traces t WHERE t.id=?""", (trace_id,)).fetchone()
+            if row is None:
+                return None
+            selected_id = job_id or row['result_id'] or row['latest_id']
+            diagnoses = {item['job_id']: dict(item) for item in db.execute(
+                TRACE_HISTORY_ROWS + ' WHERE j.trace_id=? AND j.id IN (?,?)',
+                (trace_id, row['latest_id'], selected_id))}
+            return {'latest':diagnoses.get(row['latest_id']), 'selected':diagnoses.get(selected_id),
+                    'current_job_id':row['result_id'] or row['latest_id'], 'task_count':row['task_count']}
+
+    def fill_trace_outcome(self, trace_id, outcome):
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row = db.execute('SELECT data FROM traces WHERE id=?', (trace_id,)).fetchone()
+            if row is None:
+                raise LookupError('轨迹不存在')
+            trace = Trajectory.model_validate_json(row['data'])
+            if trace.outcome == outcome:
+                return
+            if trace.outcome != 'unknown':
+                raise ValueError('此轨迹已填写业务结果，请刷新后查看。')
+            if db.execute('SELECT 1 FROM jobs WHERE trace_id=? LIMIT 1', (trace_id,)).fetchone():
+                raise ValueError('此轨迹已有分析记录，业务结果已固定。')
+            digest = fingerprint(trace.model_copy(update={'outcome':outcome}))
+            if db.execute('SELECT 1 FROM traces WHERE hash=? AND id!=?', (digest, trace_id)).fetchone():
+                raise ValueError('该轨迹已按所选业务结果入库，请使用已有的轨迹。')
+            db.execute("UPDATE traces SET hash=?,data=json_set(data,'$.outcome',?) WHERE id=?",
+                       (digest, outcome, trace_id))
 
     def trace_library_history(self, trace_id, *, latest_only=False):
         with self.connect() as db:
@@ -168,13 +234,10 @@ class TaskStore:
                 return None
             tasks = db.execute('''SELECT t.id,t.name,t.agent,t.version,t.kind FROM task_traces x
                 JOIN analysis_tasks t ON t.id=x.task_id WHERE x.trace_id=? ORDER BY t.created_at DESC,t.id''', (trace_id,))
-            diagnoses = db.execute('''SELECT j.id AS job_id,r.task_id,a.run_id,r.number,j.status,j.created_at,
-                COALESCE(json_extract(r.config,'$.model'),json_extract(j.result,'$.model')) AS model
-                FROM jobs j LEFT JOIN run_attempts a ON a.job_id=j.id
-                LEFT JOIN analysis_runs r ON r.id=a.run_id
+            diagnoses = db.execute(TRACE_HISTORY_ROWS + f'''
                 WHERE j.trace_id=? AND (?=0 OR r.id IS NULL OR r.number=(SELECT MAX(number) FROM analysis_runs WHERE task_id=r.task_id))
-                AND (a.job_id IS NULL OR a.attempt=(SELECT MAX(attempt) FROM run_attempts
-                    WHERE run_id=a.run_id AND trace_id=a.trace_id)) ORDER BY j.created_at DESC,j.id''', (trace_id, latest_only))
+                AND (?=0 OR a.job_id IS NULL OR a.attempt=(SELECT MAX(attempt) FROM run_attempts
+                    WHERE run_id=a.run_id AND trace_id=a.trace_id)) ORDER BY {TRACE_JOB_ORDER}''', (trace_id, latest_only, latest_only))
             return {'tasks': [dict(row) for row in tasks], 'diagnoses': [dict(row) for row in diagnoses]}
 
     @staticmethod
@@ -240,6 +303,12 @@ class TaskStore:
     def _insert_trace(db, trace):
         from .store import now
         digest = fingerprint(trace)
+        if trace.outcome == 'unknown':
+            labelled = [fingerprint(trace.model_copy(update={'outcome':outcome})) for outcome in ('failed','succeeded')]
+            existing = {row['hash'] for row in db.execute('SELECT hash FROM traces WHERE hash IN (?,?,?)', (digest, *labelled))}
+            if len(existing) == 1:
+                # Reuse a trace whose missing outcome was filled in the library.
+                digest = existing.pop()
         inserted = db.execute('INSERT OR IGNORE INTO traces VALUES (?,?,?,?,?)',
                               (uuid.uuid4().hex, digest, trace.title, trace.model_dump_json(), now()))
         if not inserted.rowcount and trace.deepagent is not None:
@@ -248,7 +317,7 @@ class TaskStore:
                        (trace.deepagent.model_dump_json(), trace.agent_identity.model_dump_json() if trace.agent_identity else 'null', digest))
         return db.execute('SELECT id FROM traces WHERE hash=?', (digest,)).fetchone()['id']
 
-    def create_task(self, fields, *, traces=None, trace_ids=None, config=None, auto_feedback=False):
+    def create_task(self, fields, *, traces=None, trace_ids=None, config=None, auto_feedback=False, reject_active=False):
         from .store import now
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
@@ -257,6 +326,12 @@ class TaskStore:
                 'SELECT COUNT(*) FROM traces WHERE id IN (SELECT value FROM json_each(?))', (json.dumps(ids),)
             ).fetchone()[0]:
                 raise ValueError('所选轨迹已删除，请刷新后重试')
+            if reject_active and config is not None:
+                active = db.execute("""SELECT COUNT(DISTINCT trace_id) FROM jobs
+                    WHERE trace_id IN (SELECT value FROM json_each(?)) AND status IN ('queued','running')""",
+                    (json.dumps(ids),)).fetchone()[0]
+                if active:
+                    raise ValueError(f'所选轨迹中有 {active} 条已在排队或分析，请返回轨迹库调整选择。')
             task_id = uuid.uuid4().hex
             db.execute('''INSERT INTO analysis_tasks
                 (id,name,agent,version,goal,prompt_language,created_at,draft_auto_feedback,diagnosis_mode,model_connection_id)

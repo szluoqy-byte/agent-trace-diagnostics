@@ -40,6 +40,10 @@ class FeedbackRegeneration(Contract):
     feedback_id: str = Field(min_length=1, max_length=64)
 
 
+class TraceOutcome(Contract):
+    outcome: Literal['failed','succeeded']
+
+
 def create_app(settings=None, *, frontend_dir=None):
     settings = settings or Settings()
     store = Store(settings.data_dir)
@@ -127,7 +131,7 @@ def create_app(settings=None, *, frontend_dir=None):
     def trace_library(
         page: int = Query(1, ge=1), page_size: Literal['10', '20', '50'] = '10',
         search: str = Query('', max_length=200),
-        diagnosis: Literal['all', 'pending', 'queued', 'running', 'completed', 'failed'] = 'all',
+        diagnosis: Literal['all', 'pending', 'active', 'queued', 'running', 'completed', 'failed'] = 'all',
         business: Literal['all', 'failed', 'succeeded', 'unknown'] = 'all',
         input_format: Literal['all', 'messages', 'otel_genai', 'deepagent'] = 'all',
         selection: bool = False,
@@ -141,6 +145,14 @@ def create_app(settings=None, *, frontend_dir=None):
         if history is None:
             raise HTTPException(404, '轨迹不存在')
         return history
+
+    @app.patch('/api/trace-library/{trace_id}/outcome')
+    def fill_trace_outcome(trace_id: str, body: TraceOutcome):
+        try:
+            write(lambda: store.fill_trace_outcome(trace_id, body.outcome))
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return {'outcome':body.outcome}
 
     @app.get("/api/traces/{trace_id}/otel")
     def otel_source(trace_id: str):
@@ -224,6 +236,17 @@ def create_app(settings=None, *, frontend_dir=None):
                 'feedback': store.latest_feedback(job_id),
                 'feedback_eligible': eligible and not read_only, 'feedback_unavailable_reason': '历史分析记录只读' if read_only else reason,
                 'read_only': read_only}
+
+    @app.get('/api/trace-library/{trace_id}/diagnosis')
+    def library_diagnosis(trace_id: str, job_id: str | None = Query(default=None, max_length=100)):
+        context = store.trace_library_diagnosis(trace_id, job_id)
+        if context is None:
+            raise HTTPException(404, '轨迹不存在')
+        selected = context['selected']
+        if job_id and not selected:
+            raise HTTPException(404, '此分析记录已清理或不属于当前轨迹。')
+        return {**context, 'trace': trace_with_source_summary(require_trace(trace_id)),
+                'job': job(selected['job_id']) if selected else None}
 
     @app.post('/api/jobs/{job_id}/feedback')
     def enqueue_feedback(job_id: str):

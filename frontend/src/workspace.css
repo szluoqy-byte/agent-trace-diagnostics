@@ -128,6 +128,12 @@
 .library-filters input{width:min(270px,100%)}
 .library-table.ws-trace-table{min-width:690px}
 .library-table .library-source{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.library-status-filters{flex:none;flex-wrap:wrap;margin-bottom:5px}
+.library-status-filters button[aria-pressed=true]{background:#eef1ff;color:var(--accent)}
+.library-start-form>.ws-form-section{max-width:960px;margin:0 0 16px}
+.library-start-form .library-inputs{margin:0 0 20px}
+.library-start-form .ws-start-actions{flex-direction:row;flex-wrap:wrap;margin-top:18px}
+.library-start-form .ws-start-actions button{width:auto;padding-inline:15px}
 .library-history{padding:18px}
 .library-history h2{font-size:15px;margin:0 0 12px}
 .library-history :is(p,ul,.error-inline)+h2{margin-top:24px}
@@ -460,6 +466,15 @@
 .trace-info-body{min-height:0;padding:20px;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin}
 .trace-info-body:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .trace-context-description{margin:0;font-size:14px;line-height:1.8;white-space:pre-wrap;overflow-wrap:anywhere}
+.trace-result-source{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px}
+.trace-analysis-history ul{list-style:none;margin:0;padding:0}
+.trace-analysis-history li{display:grid;gap:5px;padding:10px 0;border-bottom:1px solid var(--border);overflow-wrap:anywhere}
+.trace-analysis-history li:first-child{padding-top:0}
+.trace-analysis-history li:last-child{border:0}
+.trace-analysis-history small,.trace-analysis-history li>a,.trace-analysis-history li>.muted{font-size:12px;color:#52627c}
+.trace-analysis-history section{margin-top:16px;border-top:1px solid var(--border);padding-top:12px}
+.trace-analysis-history h3{margin:0 0 10px;font-size:13px}
+.trace-history-title{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px}
 .trace-disclosure-body{max-height:clamp(52px,14dvh,175px)}
 .trace-detail-disclosures .ws-attempts .trace-disclosure-body>div{padding:8px 0;border-bottom:1px solid var(--border)}
 .trace-detail-switcher{display:none}

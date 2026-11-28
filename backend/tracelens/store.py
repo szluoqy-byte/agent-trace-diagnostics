@@ -110,6 +110,7 @@ class Store(TaskStore, TaskImprovementStore, PatternStore, DeletionStore):
 
     def add_trace(self, trace: Trajectory):
         with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
             trace_id = self._insert_trace(db, trace)
             return self.row(db.execute("SELECT * FROM traces WHERE id=?", (trace_id,)).fetchone())
 

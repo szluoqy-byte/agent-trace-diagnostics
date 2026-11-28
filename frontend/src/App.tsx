@@ -16,16 +16,18 @@ import Playground from './pages/Playground'
 import {libraryFilterQuery,libraryPath} from './traceLibrary'
 import type {LibrarySelection} from './traceLibrary'
 
+const home = '/library'
+
 export default function App(){
-  const [hash,setHash]=useState(()=>location.hash.slice(1)||'/tasks')
+  const [hash,setHash]=useState(()=>location.hash.slice(1)||home)
   const [librarySelection,setLibrarySelection]=useState<{filters:string; items:LibrarySelection[]}>({filters:'',items:[]})
   const [version,setVersion]=useState(0),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('')
   const {data:config,error:configError}=useResource<Config>('/config',version)
-  useEffect(()=>{const changed=()=>{setHash(location.hash.slice(1)||'/tasks');setError('')};window.addEventListener('hashchange',changed);return()=>window.removeEventListener('hashchange',changed)},[])
+  useEffect(()=>{const changed=()=>{setHash(location.hash.slice(1)||home);setError('')};window.addEventListener('hashchange',changed);return()=>window.removeEventListener('hashchange',changed)},[])
   const go=useCallback((path:string,replace=false)=>{if(replace){history.replaceState(null,'','#'+path);window.dispatchEvent(new Event('hashchange'))}else location.hash=path},[])
   const openSettings=useCallback(()=>{
     if(location.hash==='#/settings')return
-    history.pushState({settingsBack:{hash:location.hash.slice(1)||'/tasks',state:history.state}}, '', '#/settings')
+    history.pushState({settingsBack:{hash:location.hash.slice(1)||home,state:history.state}}, '', '#/settings')
     window.dispatchEvent(new Event('hashchange'))
   },[])
   const submitting=useRef(false)
@@ -57,10 +59,10 @@ export default function App(){
     const timer=setTimeout(()=>setNotice(''),6000)
     return()=>clearTimeout(timer)
   },[notice])
-  return <WorkspaceContext value={{openSettings,config,version,busy,action,notify:setNotice,refresh,go}}><div className="task-workbench"><header className="app-header"><a className="brand" href="#/tasks"><TraceMark/><strong>{PRODUCT_NAME}</strong></a></header><div className="ws-layout">
+  return <WorkspaceContext value={{openSettings,config,version,busy,action,notify:setNotice,refresh,go}}><div className="task-workbench"><header className="app-header"><a className="brand" href="#/library"><TraceMark/><strong>{PRODUCT_NAME}</strong></a></header><div className="ws-layout">
     <aside className="ws-sidebar"><nav className="ws-sidebar-nav" aria-label="工作台导航">
-      <a href="#/tasks" aria-current={!settingsPage&&parts[0]==='tasks'&&!fromLibrary?'page':undefined}>分析任务</a>
       <a href="#/library" aria-current={!settingsPage&&libraryActive?'page':undefined}>轨迹库</a>
+      <a href="#/tasks" aria-current={!settingsPage&&parts[0]==='tasks'&&!fromLibrary?'page':undefined}>分析任务</a>
       <a href="#/playground" aria-current={!settingsPage&&url.pathname==='/playground'?'page':undefined}>Playground</a>
       <a href="#/knowledge" aria-current={!settingsPage&&url.pathname==='/knowledge'?'page':undefined}>诊断知识库</a>
       <div className="ws-sidebar-bottom">
@@ -81,5 +83,5 @@ export default function App(){
     :page==='library-detail'?<LibraryTraceDetail key={id} id={id} params={url.searchParams} onDeleted={traceId=>setLibrarySelection(current=>({...current,items:current.items.filter(item=>item.id!==traceId)}))}/>
     :page==='playground'?<Playground key={url.search} traceId={url.searchParams.get('trace')} initialSpan={url.searchParams.get('span')}/>
     :planned?<><div className="ws-heading"><h1>{planned}</h1></div><section className="ws-surface empty"><p>待规划</p></section></>
-    :<div className="empty"><h1>页面不存在</h1><p>请检查链接，或返回分析任务列表。</p><a href="#/tasks">返回分析任务</a></div>}</div>:null}</main></div></div></WorkspaceContext>
+    :<div className="empty"><h1>页面不存在</h1><p>请检查链接，或返回轨迹库。</p><a href="#/library">返回轨迹库</a></div>}</div>:null}</main></div></div></WorkspaceContext>
 }

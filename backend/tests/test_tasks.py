@@ -228,11 +228,12 @@ def test_trace_library_deduplicates_shared_traces_and_links_history(tmp_path):
     assert len(second['items']) == 1
     selection = client.get('/api/trace-library?selection=true&business=failed').json()
     assert {row['id'] for row in selection['items']} == set(ids)
-    assert all(set(row) == {'id', 'title', 'outcome', 'input_format'} for row in selection['items'])
-    diagnosed = client.get('/api/trace-library', params={'diagnosis': 'completed', 'search': 'CASE-001'}).json()
-    assert diagnosed['total'] == 1
-    assert diagnosed['items'][0]['id'] == ids[0] and diagnosed['items'][0]['task_count'] == 2
-    filtered_selection = client.get('/api/trace-library?selection=true&diagnosis=completed&search=CASE-001').json()
+    assert all(set(row) == {'id', 'title', 'outcome', 'input_format', 'diagnosis'} for row in selection['items'])
+    diagnosed = client.get('/api/trace-library', params={'diagnosis': 'active', 'search': 'CASE-001'}).json()
+    [entry] = diagnosed['items']
+    assert entry['id'] == ids[0] and entry['task_count'] == 2
+    assert entry['diagnosis'] == 'queued' and entry['has_result'] and entry['critical_step'] == 4
+    filtered_selection = client.get('/api/trace-library?selection=true&diagnosis=active&search=CASE-001').json()
     assert [row['id'] for row in filtered_selection['items']] == [ids[0]]
     assert client.get('/api/trace-library?diagnosis=completed&input_format=otel_genai').json()['total'] == 0
     assert client.get('/api/trace-library?page_size=17').status_code == 422
@@ -245,6 +246,47 @@ def test_trace_library_deduplicates_shared_traces_and_links_history(tmp_path):
     detail = client.get(endpoint(original) + '/traces/' + ids[0]).json()
     assert detail['job']['id'] == history['diagnoses'][1]['job_id'] and detail['read_only']
     assert client.get(f'/api/trace-library/{ids[-1]}/history').json()['diagnoses'] == []
+    path = f'/api/trace-library/{ids[0]}/diagnosis'
+    queued_job, original_job = [row['job_id'] for row in history['diagnoses']]
+    view = client.get(path).json()
+    assert view['latest']['job_id'] == queued_job and view['job']['id'] == original_job
+    assert view['selected']['task_name'] == '任务 A' and view['job']['read_only']
+    assert client.get(path, params={'job_id': queued_job}).json()['job']['status'] == 'queued'
+    assert client.get(f'/api/trace-library/{ids[-1]}/diagnosis', params={'job_id': original_job}).status_code == 404
+
+    app.state.store.update(queued_job, status='failed')
+    view = client.get(path).json()
+    assert view['latest']['status'] == 'failed' and view['job']['id'] == original_job
+    app.state.store.update(queued_job, status='completed', result=demo_report())
+    assert client.get(path).json()['job']['id'] == queued_job
+    assert client.get(path, params={'job_id': original_job}).json()['job']['id'] == original_job
+
+
+def test_library_launch_rejects_duplicate_active_traces_atomically(tmp_path):
+    app, client, ids = setup(tmp_path, 1)
+    body = {'name':'库内轨迹诊断', 'trace_ids':ids, 'start':True, 'reject_active':True}
+    with ThreadPoolExecutor(2) as pool:
+        responses = list(pool.map(lambda _:client.post('/api/tasks', json=body), range(2)))
+    assert sorted(response.status_code for response in responses) == [200, 409]
+    assert len(app.state.store.jobs()) == len(app.state.store.tasks()) == 1
+
+
+def test_library_fills_unknown_outcome_in_place_before_launch(tmp_path, deepagent_template):
+    app = create_app(Settings(data_dir=tmp_path))
+    client = TestClient(app)
+    files = {'files':('trace.json', json.dumps(deepagent_template), 'application/json')}
+    [trace_id] = client.post('/api/import', files=files).json()['trace_ids']
+    path = f'/api/trace-library/{trace_id}/outcome'
+    assert client.get(f'/api/traces/{trace_id}').json()['data']['outcome'] == 'unknown'
+    original = app.state.store.trace(trace_id)['data']['deepagent']
+    assert client.patch(path, json={'outcome':'failed'}).json() == {'outcome':'failed'}
+    assert client.patch(path, json={'outcome':'failed'}).status_code == 200
+    assert client.patch(path, json={'outcome':'succeeded'}).status_code == 409
+    assert client.post('/api/import', files=files, data={'outcome':'failed'}).json()['trace_ids'] == [trace_id]
+    assert client.post('/api/import', files=files).json()['trace_ids'] == [trace_id]
+    saved = app.state.store.trace(trace_id)['data']
+    assert saved['deepagent'] == original and saved['outcome'] == 'failed'
+    assert client.post('/api/tasks', json={'name':'复用轨迹', 'trace_ids':[trace_id]}).status_code == 200
     assert client.get('/api/trace-library/missing/history').status_code == 404
 
 

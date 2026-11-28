@@ -1,65 +1,91 @@
-import {ArrowLeft,Terminal} from 'lucide-react'
-import {playgroundLink} from '../playground'
-import {dateLabel} from '../api'
-import {patternTaskPath} from '../patterns'
+import {useState} from 'react'
+import {ArrowLeft,Play,SquarePen} from 'lucide-react'
+import {api,dateLabel} from '../api'
 import DeleteRecord, {traceDeletionBlock} from '../components/DeleteRecord'
-import ExecutionTrace from '../components/ExecutionTrace'
-import TraceDetailLayout from '../components/TraceDetailLayout'
-import {TraceContextPanel} from '../components/TraceInfoPanel'
-import {businessOutcomes, libraryDiagnosis, libraryPath} from '../traceLibrary'
-import type {LibraryHistory} from '../traceLibrary'
-import type {Trace} from '../types'
-import {Badge, formatLabel, tracePath, useResource, useWorkspace} from '../workspace'
+import {diagnosisDepthLabel} from '../components/DiagnosisDepthField'
+import {Dialog} from '../components/Dialogs'
+import TraceDiagnosisDetail, {TraceDiagnosisHeading} from '../components/TraceDiagnosisDetail'
+import {isAnalyzing, libraryPath, libraryResultPath, openLibraryTask} from '../traceLibrary'
+import type {LibraryTraceDetail as Detail} from '../traceLibrary'
+import {useResource,useWorkspace} from '../workspace'
 
-const poll = (history: LibraryHistory) => history.diagnoses.some(row => ['running', 'queued'].includes(row.status)) ? 2500 : 0
+const poll = (detail:Detail) => isAnalyzing(detail.latest?.status) || isAnalyzing(detail.job?.feedback?.status) ? 1800 : 0
 
-export default function LibraryTraceDetail({id, params, onDeleted}: {id: string; params: URLSearchParams; onDeleted: (id: string) => void}) {
-  const {go, refresh, version} = useWorkspace()
-  const {data: trace, error} = useResource<Trace>(`/traces/${id}`, version)
-  const {data: history, error: historyError} = useResource<LibraryHistory>(`/trace-library/${id}/history?latest_only=true`, version, poll)
-  const back = '#' + libraryPath(params)
-  if (error || !trace) return <div className="empty">
-    {error ? <><h1>无法读取轨迹</h1><p role="alert">{error}</p><button className="secondary" onClick={refresh}>重新加载</button>
-      <a href={back}>返回轨迹库</a></> : '正在读取轨迹…'}
+export default function LibraryTraceDetail({id,params,onDeleted}: {
+  id:string; params:URLSearchParams; onDeleted:(id:string)=>void
+}) {
+  const {action,busy,go,refresh,version} = useWorkspace()
+  const [editingOutcome,setEditingOutcome] = useState(false)
+  const [outcome,setOutcome] = useState('')
+  const [outcomeError,setOutcomeError] = useState('')
+  const jobId = params.get('analysis')
+  const path = '/trace-library/' + encodeURIComponent(id) + '/diagnosis'
+  const {data,error} = useResource<Detail>(jobId ? path + '?' + new URLSearchParams({job_id:jobId}) : path, version, poll)
+  const listParams = new URLSearchParams(params)
+  listParams.delete('analysis')
+  const back = '#' + libraryPath(listParams)
+  const current = '#' + libraryResultPath(id, params)
+  if (!data) return <div className="empty">
+    {error ? <><h1>无法读取轨迹分析</h1><p role="alert">{error}</p><button className="secondary" onClick={refresh}>重新加载</button>
+      <a href={jobId ? current : back}>{jobId ? '查看当前分析' : '返回轨迹库'}</a></> : '正在读取轨迹与分析结果…'}
   </div>
 
-  const {title, outcome, messages, otel, input_format, task_description, deepagent, agent_identity} = trace.data
-  const tasks = new Map(history?.tasks.map(task => [task.id, task]))
-  return <TraceDetailLayout detailsLabel="诊断与关联任务" header={<>
-    <div className="ws-breadcrumb"><a href={back}>轨迹库</a><span>/</span><span>轨迹详情</span></div>
-    <div className="ws-heading">
-      <div><div className="ws-heading-title"><h1>{title}</h1><Badge value={outcome}>{businessOutcomes[outcome as keyof typeof businessOutcomes]}</Badge></div>
-        <p>{formatLabel(input_format ?? (otel ? 'otel_genai' : 'messages'))} · {deepagent ? `${deepagent.span_count} 个调用` : `${messages.length} 条消息`}{agent_identity?<span className="trace-detail-agent"> · Agent <strong>{agent_identity.name}</strong></span>:null}</p></div>
-      <div className="ws-actions">
-        <a className="secondary" href={back}><ArrowLeft size={15}/>返回轨迹库</a>
-        <a className="secondary" href={playgroundLink(id)}><Terminal size={15} aria-hidden="true"/>在 Playground 调试</a>
-        <DeleteRecord id={id} name={title} kind="trace"
-          blocked={history ? traceDeletionBlock(history.tasks.length, history.diagnoses.some(row => ['queued', 'running'].includes(row.status))) : undefined}
-          onDeleted={() => {onDeleted(id); go(libraryPath(params), true)}}/>
-      </div>
+  const {trace,job,latest,selected,task_count} = data
+  const pinned = !!jobId && jobId !== data.current_job_id
+  const running = isAnalyzing(latest?.status)
+  const showingPrevious = !jobId && !!job && !!latest && latest.job_id !== job.id
+  const needsOutcome = trace.data.outcome === 'unknown'
+
+  async function saveOutcome() {
+    if (!outcome || busy) return
+    setOutcomeError('')
+    const saved = await action(() => api<{outcome:string}>('/trace-library/' + encodeURIComponent(id) + '/outcome', {
+      method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({outcome}),
+    }), '已补充业务结果', setOutcomeError)
+    if (saved) setEditingOutcome(false)
+  }
+  const context = selected ? <>
+    {selected.task_id ? <a href={'#/tasks/' + encodeURIComponent(selected.task_id)}>{selected.task_name ?? '来源任务'}</a> : '独立分析'}
+    {' · ' + [dateLabel(selected.created_at), selected.model,
+      selected.diagnosis_mode && diagnosisDepthLabel(selected.diagnosis_mode)].filter(Boolean).join(' · ')}
+  </> : undefined
+  const header = () => <>
+    <div className="ws-breadcrumb"><a href={back}>轨迹库</a><span>/</span><span>轨迹详情</span>
+      {jobId ? <a href={current}>查看当前分析</a> : null}
     </div>
-    <div className="trace-detail-disclosures"><TraceContextPanel description={task_description}/></div>
-    </>} trace={<ExecutionTrace key={id} trace={trace} criticalStep={null} selection={null}/>}
-    details={<section className="ws-surface library-history" aria-busy={!history && !historyError}>
-        <h2>当前诊断</h2>
-        <div className="ws-content-scroll">
-        {historyError ? <div role="alert" className="error-inline">{historyError} <button className="text-button" onClick={refresh}>重试</button></div> :
-          !history ? <p className="muted">正在读取诊断记录…</p> : history.diagnoses.length ?
-          <ul>{history.diagnoses.map(row => {
-            const href = row.task_id && row.run_id
-              ? '#' + tracePath(row.task_id, id, new URLSearchParams()) : null
-            return <li key={row.job_id}>
-              <div><strong>{row.task_id ? tasks.get(row.task_id)?.name ?? '历史诊断' : '独立诊断'}</strong>
-                <Badge value={row.status}>{libraryDiagnosis[row.status as keyof typeof libraryDiagnosis]}</Badge></div>
-              <small>{dateLabel(row.created_at)}{row.model ? ` · ${row.model}` : ''}</small>
-              {href ? <a href={href}>查看诊断结果</a> : row.status === 'completed' ? <a href={`/api/jobs/${row.job_id}/export?format=md`} download>导出诊断报告</a> : null}
-            </li>
-          })}</ul> : <p className="muted">这条轨迹暂无诊断记录。</p>}
-        <h2>关联任务{history ? `（${history.tasks.length}）` : ''}</h2>
-        {history ? history.tasks.length ? <ul>{history.tasks.map(task => <li key={task.id}>
-          <a href={task.kind==='failure_patterns'?patternTaskPath(task.id):`#/tasks/${task.id}`}>{task.name}</a>
-          {task.agent || task.version ? <small>{[task.agent, task.version].filter(Boolean).join(' · ')}</small> : null}
-        </li>)}</ul> : <p className="muted">这条轨迹暂无关联任务。</p> : null}
+    <TraceDiagnosisHeading trace={trace} status={(jobId ? selected?.status : latest?.status) ?? 'pending'}
+      context={context} actions={<div className="ws-detail-nav">
+        <a className="secondary" href={back}><ArrowLeft size={15}/>返回轨迹库</a>
+        <DeleteRecord id={id} name={trace.data.title} kind="trace" blocked={traceDeletionBlock(task_count, running)}
+          onDeleted={() => {onDeleted(id); go(libraryPath(listParams), true)}}/>
+      </div>}/>
+    {showingPrevious ? <div className="ws-warning trace-result-source">
+      <span>{running ? '新分析正在处理，当前显示上次完成的结果。' : '最近一次分析未产出结果，当前显示上次完成的结果。'}</span>
+      <a href={'#' + libraryResultPath(id, params, latest.job_id)}>查看本次分析</a>
+    </div> : null}
+  </>
+
+  return <><TraceDiagnosisDetail key={id + ':' + (jobId ?? 'current')} trace={trace} job={job} header={header} historyParams={listParams}
+    activity={jobId ? null : latest} readOnly={pinned || showingPrevious && running}
+    actions={jobId ? null : needsOutcome ? <button type="button" className="primary small" disabled={busy}
+      onClick={() => {setOutcome('');setOutcomeError('');setEditingOutcome(true)}}>
+      <SquarePen size={14} aria-hidden="true"/>补充业务结果
+    </button> : <button type="button" className="primary small" disabled={busy || running}
+      onClick={() => openLibraryTask(listParams, [{id, title:trace.data.title, outcome:trace.data.outcome,
+        input_format:trace.data.input_format ?? undefined, diagnosis:latest?.status}])}>
+      <Play size={14} aria-hidden="true"/>{job?.status === 'completed' ? '重新分析' : '启动分析'}
+    </button>}/>
+    {editingOutcome ? <Dialog title="补充业务结果" onClose={() => setEditingOutcome(false)} busy={busy}>
+      <form onSubmit={event => {event.preventDefault();void saveOutcome()}}>
+        <div className="modal-body review-form">
+          <label>业务结果<select value={outcome} disabled={busy} onChange={event => setOutcome(event.target.value)}>
+            <option value="" disabled>请选择业务结果</option><option value="failed">业务失败</option><option value="succeeded">业务成功</option>
+          </select></label>
+          {outcomeError ? <p className="error-inline" role="alert">{outcomeError}</p> : null}
         </div>
-      </section>}/>
+        <footer><button type="button" className="secondary" disabled={busy} onClick={() => setEditingOutcome(false)}>取消</button>
+          <button type="submit" className="primary" disabled={!outcome || busy}>保存</button></footer>
+      </form>
+    </Dialog> : null}
+  </>
 }

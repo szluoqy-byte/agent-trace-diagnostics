@@ -1,16 +1,17 @@
 import {useEffect, useLayoutEffect, useRef, useState} from 'react'
-import {Plus, RefreshCw, Search, Upload} from 'lucide-react'
+import {Play, RefreshCw, Search, Upload} from 'lucide-react'
 import {playgroundLink} from '../playground'
 import {api, dateLabel} from '../api'
 import {sourceLabel} from '../branding'
 import DeleteRecord, {DeleteRecords, traceDeletionBlock} from '../components/DeleteRecord'
 import Pagination from '../components/Pagination'
 import TableSelection, {useSelectionRequest} from '../components/TableSelection'
-import {businessOutcomes, libraryDiagnosis, libraryFilterQuery, libraryLimit, libraryPath, openLibraryTask} from '../traceLibrary'
+import {businessOutcomes, isAnalyzing, libraryDiagnosis, libraryFilterQuery, libraryLimit, libraryPath, openLibraryTask} from '../traceLibrary'
 import type {LibraryPage, LibrarySelection} from '../traceLibrary'
 import {Badge, formatLabel, useResource, useWorkspace} from '../workspace'
 
-const poll = (data: LibraryPage) => data.items.some(row => ['running', 'queued'].includes(row.diagnosis)) ? 2500 : 0
+const poll = (data: LibraryPage) => data.items.some(row => isAnalyzing(row.diagnosis)) ? 2500 : 0
+const statusFilters = [['','全部'], ['pending','待分析'], ['active','分析中'], ['completed','已分析'], ['failed','分析失败']]
 
 export default function TraceLibrary({params, selected, onSelect}: {
   params: URLSearchParams; selected: LibrarySelection[]; onSelect: (items: LibrarySelection[]) => void
@@ -46,8 +47,10 @@ export default function TraceLibrary({params, selected, onSelect}: {
   const ids = new Set(selected.map(row => row.id))
   const rows = data?.items ?? []
   const selectionBusy = busy || allSelection.loading
-  const reuseBlock = selected.length > libraryLimit ? '新建任务最多可使用 500 条轨迹' :
-    selected.some(row => row.outcome === 'unknown') ? '新建任务需要已标注业务结果的轨迹' : ''
+  const currentStates = new Map(rows.map(row => [row.id,row.diagnosis]))
+  const reuseBlock = selected.length > libraryLimit ? '每次最多分析 500 条轨迹' :
+    selected.some(row => row.outcome === 'unknown') ? '请先补齐所选轨迹的业务结果' :
+      selected.some(row => isAnalyzing(currentStates.get(row.id) ?? row.diagnosis)) ? '请取消选择仍在排队或分析中的轨迹' : ''
   const hasFilters = !!filterQuery
 
   function update(patch: Record<string, string>) {
@@ -89,13 +92,20 @@ export default function TraceLibrary({params, selected, onSelect}: {
 
   return <>
     <div className="ws-heading">
-      <div><h1>轨迹库</h1><p>导入或查找轨迹，查看诊断记录或复用到新任务。支持导入 DeepAgent 和 OTel GenAI 轨迹文件。</p></div>
+      <div><h1>轨迹库</h1><p>导入轨迹、启动分析，或直接查看已有的诊断结果。</p></div>
       <div className="ws-actions"><input ref={importInput} hidden type="file" multiple accept=".json,.jsonl,application/json,application/x-ndjson"
         aria-label="选择要导入的轨迹文件" onChange={event => {void importFiles(Array.from(event.target.files ?? [])); event.target.value = ''}}/>
         <button className="secondary" disabled={importing} onClick={() => importInput.current?.click()}><Upload size={15}/>{importing ? '正在导入…' : '导入轨迹'}</button>
         <button className="secondary" onClick={refresh}><RefreshCw size={15}/>刷新</button></div>
     </div>
     {importError ? <p className="error-inline" role="alert">{importError}</p> : null}
+    <div className="ws-segments library-status-filters" aria-label="按分析状态筛选" role="group">
+      {statusFilters.map(([value,label]) => {
+        const active = filters.diagnosis === value || value === 'active' && isAnalyzing(filters.diagnosis)
+        return <button type="button" key={value} aria-pressed={active} className={active ? 'active' : undefined}
+          onClick={() => update({diagnosis:value, page:''})}>{label}</button>
+      })}
+    </div>
     <form className="ws-filters library-filters" onSubmit={event => {
       event.preventDefault()
       update({search: searchInput.trim(), page: ''})
@@ -103,10 +113,6 @@ export default function TraceLibrary({params, selected, onSelect}: {
       <input type="search" aria-label="搜索轨迹" placeholder="标题、Agent、轨迹 ID 或来源" maxLength={200}
         value={searchInput} onChange={event => setSearchInput(event.target.value)}/>
       <button className="secondary" type="submit"><Search size={15}/>搜索</button>
-      <select aria-label="诊断状态" value={filters.diagnosis} onChange={event => update({diagnosis: event.target.value, page: ''})}>
-        <option value="">全部诊断状态</option>
-        {Object.entries(libraryDiagnosis).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-      </select>
       <select aria-label="业务结果" value={filters.business} onChange={event => update({business: event.target.value, page: ''})}>
         <option value="">全部业务结果</option>
         {Object.entries(businessOutcomes).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -127,8 +133,9 @@ export default function TraceLibrary({params, selected, onSelect}: {
       <strong aria-live="polite">已选 {selected.length} 条</strong>
       {reuseBlock ? <span>{reuseBlock}</span> : null}
       <div className="ws-actions">
-        <button className="primary small" disabled={selectionBusy || !selected.length || !!reuseBlock} onClick={() => openLibraryTask(params, selected)}>
-          <Plus size={14}/>新建诊断任务
+        <button className="primary small" disabled={selectionBusy || !selected.length || !!reuseBlock} onClick={() =>
+          openLibraryTask(params, selected.map(row => ({...row, diagnosis:currentStates.get(row.id) ?? row.diagnosis})))}>
+          <Play size={14}/>启动分析
         </button>
         <button type="button" className="secondary small" disabled={selectionBusy || selected.length !== 1}
           title={selected.length === 1 ? undefined : '请选择一条轨迹'}
@@ -142,8 +149,8 @@ export default function TraceLibrary({params, selected, onSelect}: {
     <section className="ws-surface ws-table-frame" aria-label="库内轨迹" aria-busy={loading}>
       <div ref={tableViewport} className="ws-table-scroll" role="region" aria-label="库内轨迹表格" tabIndex={0}><table className="ws-trace-table library-table">
         <thead><tr><th scope="col" aria-label="选择"/>
-          <th scope="col">轨迹 / 来源</th><th scope="col">Agent</th><th scope="col">业务结果</th><th scope="col">诊断状态</th>
-          <th scope="col">关联任务</th><th scope="col">入库时间</th><th scope="col">操作</th></tr></thead>
+          <th scope="col">轨迹 / 来源</th><th scope="col">Agent</th><th scope="col">业务结果</th><th scope="col">分析状态</th>
+          <th scope="col">最近关键步骤</th><th scope="col">关联任务</th><th scope="col">入库时间</th><th scope="col">操作</th></tr></thead>
         <tbody>{rows.map(row => {
           const known = row.outcome !== 'unknown'
           return <tr key={row.id}>
@@ -155,8 +162,9 @@ export default function TraceLibrary({params, selected, onSelect}: {
               {row.source ? <small className="library-source" title={sourceLabel(row.source)}>{sourceLabel(row.source)}</small> : null}</td>
             <td className="ws-agent-cell">{row.agent_name || <span className="muted">未识别</span>}</td>
             <td><Badge value={row.outcome}>{businessOutcomes[row.outcome as keyof typeof businessOutcomes]}</Badge>
-              {known ? null : <small>重新上传并填写业务结果后可用于新任务</small>}</td>
+              {known ? null : <small><a href={'#' + libraryPath(params, row.id)}>补充业务结果</a></small>}</td>
             <td><Badge value={row.diagnosis}>{libraryDiagnosis[row.diagnosis as keyof typeof libraryDiagnosis]}</Badge></td>
+            <td>{row.critical_step != null ? '#' + row.critical_step : row.has_result && row.outcome === 'failed' ? '未定位' : '—'}</td>
             <td>{row.task_count} 个</td><td>{dateLabel(row.created_at)}</td>
             <td><DeleteRecord id={row.id} name={row.title} kind="trace" compact
               blocked={traceDeletionBlock(row.task_count, ['queued', 'running'].includes(row.diagnosis))}
@@ -165,7 +173,7 @@ export default function TraceLibrary({params, selected, onSelect}: {
         })}</tbody>
       </table></div>
       {!data?.items.length ? <div className="empty">{loading ? '正在读取轨迹…' : error ?
-        <button className="secondary" onClick={refresh}>重新加载</button> : hasFilters ? '没有符合当前筛选条件的轨迹。' : <><p>轨迹库暂无数据</p><a href="#/tasks/new">新建任务并上传轨迹</a></>}</div> : null}
+        <button className="secondary" onClick={refresh}>重新加载</button> : hasFilters ? '没有符合当前筛选条件的轨迹。' : <p>轨迹库暂无数据，导入轨迹后即可启动分析。</p>}</div> : null}
       <Pagination page={data?.page ?? 1} pages={data?.pages ?? 1} pageSize={size} total={data?.total ?? 0}
         loading={!data} onPage={next => {if (next !== data?.page) update({page: String(next)})}}
         onSize={next => update({page_size: String(next), page: ''})}/>
