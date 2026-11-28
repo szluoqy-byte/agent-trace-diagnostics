@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS run_attempts (
 CREATE TABLE IF NOT EXISTS import_previews (id TEXT PRIMARY KEY, data TEXT, created_at TEXT);
 CREATE INDEX IF NOT EXISTS task_run_order ON analysis_runs(task_id,number DESC);
 CREATE INDEX IF NOT EXISTS jobs_trace_created ON jobs(trace_id,created_at DESC);
+CREATE INDEX IF NOT EXISTS traces_by_created_at ON traces(created_at DESC,id);
 CREATE INDEX IF NOT EXISTS feedback_job_order ON feedback_runs(job_id,created_at DESC);
 CREATE INDEX IF NOT EXISTS review_job_order ON reviews(job_id,created_at DESC);
 CREATE INDEX IF NOT EXISTS task_membership_by_trace ON task_traces(trace_id,task_id);
@@ -131,7 +132,8 @@ class TaskStore:
         with self.connect() as db:
             return [self.row(row) for row in db.execute('SELECT t.* FROM traces t JOIN task_traces x ON x.trace_id=t.id WHERE x.task_id=? ORDER BY x.position', (task_id,))]
 
-    def trace_library(self, page, page_size, search, diagnosis, business, input_format, *, selection=False):
+    def trace_library(self, page, page_size, search, diagnosis, business, input_format, *,
+                      created_from=None, created_before=None, selection=False):
         query = f"""
         WITH library AS (
             SELECT t.id,t.title,t.created_at,
@@ -159,6 +161,12 @@ class TaskStore:
             if value != 'all':
                 conditions.append(f'{field}=?')
                 args.append(value)
+        if created_from is not None:
+            conditions.append('created_at>=?')
+            args.append(created_from)
+        if created_before is not None:
+            conditions.append('created_at<?')
+            args.append(created_before)
         where = ' WHERE ' + ' AND '.join(conditions) if conditions else ''
         with self.connect() as db:
             if selection:
@@ -211,21 +219,42 @@ class TaskStore:
     def fill_trace_outcome(self, trace_id, outcome):
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
-            row = db.execute('SELECT data FROM traces WHERE id=?', (trace_id,)).fetchone()
-            if row is None:
-                raise LookupError('轨迹不存在')
-            trace = Trajectory.model_validate_json(row['data'])
-            if trace.outcome == outcome:
-                return
-            if trace.outcome != 'unknown':
-                raise ValueError('此轨迹已填写业务结果，请刷新后查看。')
-            if db.execute('SELECT 1 FROM jobs WHERE trace_id=? LIMIT 1', (trace_id,)).fetchone():
-                raise ValueError('此轨迹已有分析记录，业务结果已固定。')
-            digest = fingerprint(trace.model_copy(update={'outcome':outcome}))
-            if db.execute('SELECT 1 FROM traces WHERE hash=? AND id!=?', (digest, trace_id)).fetchone():
-                raise ValueError('该轨迹已按所选业务结果入库，请使用已有的轨迹。')
-            db.execute("UPDATE traces SET hash=?,data=json_set(data,'$.outcome',?) WHERE id=?",
-                       (digest, outcome, trace_id))
+            self._fill_trace_outcome(db, trace_id, outcome)
+
+    def fill_trace_outcomes(self, trace_ids, outcome):
+        updated, skipped = [], []
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            for trace_id in dict.fromkeys(trace_ids):
+                try:
+                    changed = self._fill_trace_outcome(db, trace_id, outcome)
+                except (LookupError, ValueError) as exc:
+                    skipped.append({'id':trace_id, 'reason':str(exc)})
+                else:
+                    if changed:
+                        updated.append(trace_id)
+                    else:
+                        skipped.append({'id':trace_id, 'reason':'此轨迹已设置为所选业务结果。'})
+        return {'updated_ids':updated, 'skipped':skipped}
+
+    @staticmethod
+    def _fill_trace_outcome(db, trace_id, outcome):
+        row = db.execute('SELECT data FROM traces WHERE id=?', (trace_id,)).fetchone()
+        if row is None:
+            raise LookupError('轨迹不存在')
+        trace = Trajectory.model_validate_json(row['data'])
+        if trace.outcome == outcome:
+            return False
+        if trace.outcome != 'unknown':
+            raise ValueError('此轨迹已填写业务结果，请刷新后查看。')
+        if db.execute('SELECT 1 FROM jobs WHERE trace_id=? LIMIT 1', (trace_id,)).fetchone():
+            raise ValueError('此轨迹已有分析记录，业务结果已固定。')
+        digest = fingerprint(trace.model_copy(update={'outcome':outcome}))
+        if db.execute('SELECT 1 FROM traces WHERE hash=? AND id!=?', (digest, trace_id)).fetchone():
+            raise ValueError('该轨迹已按所选业务结果入库，请使用已有的轨迹。')
+        db.execute("UPDATE traces SET hash=?,data=json_set(data,'$.outcome',?) WHERE id=?",
+                   (digest, outcome, trace_id))
+        return True
 
     def trace_library_history(self, trace_id, *, latest_only=False):
         with self.connect() as db:

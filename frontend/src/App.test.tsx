@@ -41,6 +41,8 @@ it('opens the library by default and launches analysis for selected pending trac
   render(<App/>)
   await screen.findByRole('heading', {name:'轨迹库'})
   expect(screen.getByRole('link', {name:'轨迹库'}).getAttribute('aria-current')).toBe('page')
+  expect((screen.getByRole('combobox',{name:'入库时间'}) as HTMLSelectElement).value).toBe('week')
+  expect(vi.mocked(api).mock.calls.some(([path])=>path.startsWith('/trace-library?created_from=') && path.includes('created_before='))).toBe(true)
   fireEvent.click(screen.getByRole('button', {name:'待分析'}))
   await waitFor(() => expect(screen.queryByRole('link', {name:'轨迹 first'})).toBeNull())
   fireEvent.click(await screen.findByRole('checkbox', {name:'选择 轨迹 third'}))
@@ -53,6 +55,26 @@ it('opens the library by default and launches analysis for selected pending trac
   expect(post).toHaveBeenLastCalledWith('/tasks', expect.objectContaining({
     trace_ids:['third'], start:true, model_connection_id:'configured', reject_active:true,
   }))
+})
+
+it('uses the same custom import dates for the list and cross-page selection', async () => {
+  window.history.replaceState(null,'','#/library')
+  render(<App/>)
+  await screen.findByRole('link',{name:'轨迹 first'})
+  fireEvent.change(screen.getByRole('combobox',{name:'入库时间'}),{target:{value:'custom'}})
+  const dialog = within(screen.getByRole('dialog',{name:'自定义入库时间'}))
+  fireEvent.change(dialog.getByLabelText('开始日期'),{target:{value:'2026-11-01'}})
+  fireEvent.change(dialog.getByLabelText('结束日期'),{target:{value:'2026-11-02'}})
+  fireEvent.click(dialog.getByRole('button',{name:'应用'}))
+  await screen.findByRole('link',{name:'轨迹 first'})
+  fireEvent.click(screen.getByRole('checkbox',{name:'跨页全选'}))
+  await waitFor(()=>{
+    const requests = vi.mocked(api).mock.calls.map(([path])=>new URL(path,location.origin))
+      .filter(url=>url.pathname==='/trace-library' && url.searchParams.get('created_from')===new Date(2026,10,1).toISOString())
+    expect(requests.some(url=>url.searchParams.get('selection')==='true')).toBe(true)
+    expect(requests.some(url=>url.searchParams.has('page'))).toBe(true)
+    expect(requests.every(url=>url.searchParams.get('created_before')===new Date(2026,10,3).toISOString())).toBe(true)
+  })
 })
 
 it('returns from system settings with the unsaved task form intact', async () => {

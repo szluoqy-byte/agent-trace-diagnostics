@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from datetime import timezone
 from typing import Literal
 from .engine import ENGINE_VERSION
 import json
@@ -8,7 +9,7 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response, FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import Field, ValidationError
+from pydantic import AwareDatetime, Field, ValidationError
 from .config import Settings, ROOT
 from .models import Contract, Review, trajectory_format
 from .deepagent import source_bundle, trace_with_source_summary
@@ -42,6 +43,10 @@ class FeedbackRegeneration(Contract):
 
 class TraceOutcome(Contract):
     outcome: Literal['failed','succeeded']
+
+
+class TraceOutcomeBatch(TraceOutcome):
+    ids: list[str] = Field(min_length=1)
 
 
 def create_app(settings=None, *, frontend_dir=None):
@@ -134,9 +139,15 @@ def create_app(settings=None, *, frontend_dir=None):
         diagnosis: Literal['all', 'pending', 'active', 'queued', 'running', 'completed', 'failed'] = 'all',
         business: Literal['all', 'failed', 'succeeded', 'unknown'] = 'all',
         input_format: Literal['all', 'messages', 'otel_genai', 'deepagent'] = 'all',
+        created_from: AwareDatetime | None = None,
+        created_before: AwareDatetime | None = None,
         selection: bool = False,
     ):
+        if created_from is not None and created_before is not None and created_from >= created_before:
+            raise HTTPException(422, '入库时间范围无效。')
         return store.trace_library(page, int(page_size), search.strip(), diagnosis, business, input_format,
+                                   created_from=created_from.astimezone(timezone.utc).isoformat() if created_from is not None else None,
+                                   created_before=created_before.astimezone(timezone.utc).isoformat() if created_before is not None else None,
                                    selection=selection)
 
     @app.get('/api/trace-library/{trace_id}/history')
@@ -153,6 +164,10 @@ def create_app(settings=None, *, frontend_dir=None):
         except LookupError as exc:
             raise HTTPException(404, str(exc)) from exc
         return {'outcome':body.outcome}
+
+    @app.patch('/api/trace-library/outcomes')
+    def fill_trace_outcomes(body: TraceOutcomeBatch):
+        return store.fill_trace_outcomes(body.ids, body.outcome)
 
     @app.get("/api/traces/{trace_id}/otel")
     def otel_source(trace_id: str):

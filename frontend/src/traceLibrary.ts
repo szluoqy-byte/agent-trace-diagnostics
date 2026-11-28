@@ -34,13 +34,61 @@ export const libraryDiagnosis:Record<string,string> = {
   pending:'待分析', queued:'排队中', running:'分析中', completed:'已分析', failed:'分析失败',
 }
 export const isAnalyzing = (status?:string) => status === 'queued' || status === 'running'
-export const businessOutcomes = {failed: '业务失败', succeeded: '业务成功', unknown: '结果未知'}
+export const businessOutcomes = {failed: '业务失败', succeeded: '业务成功', unknown: '结果未知'} as const
+export type KnownOutcome = 'failed'|'succeeded'
+export const libraryPeriods = [
+  ['today','今天'],['week','本周'],['month','本月'],['last7','最近 7 天'],['all','全部时间'],['custom','自定义'],
+] as const
+
+export function libraryDateValue(date:Date) {
+  return [String(date.getFullYear()).padStart(4,'0'), String(date.getMonth()+1).padStart(2,'0'),
+    String(date.getDate()).padStart(2,'0')].join('-')
+}
+
+function addDays(day:Date, offset:number) {
+  const next = new Date(day)
+  next.setDate(next.getDate()+offset)
+  next.setHours(0,0,0,0)
+  return next
+}
+
+function customTimeRange(from:string, to:string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) return null
+  const start = new Date(from + 'T00:00:00')
+  const lastDay = new Date(to + 'T00:00:00')
+  const end = addDays(lastDay,1)
+  return libraryDateValue(start) === from && libraryDateValue(lastDay) === to && start.getFullYear() >= 1 && end.getFullYear() <= 9999
+    ? {start,end,lastDay} : null
+}
+
+export const validLibraryDates = (from:string,to:string) => !!customTimeRange(from,to)
+
+export function libraryTimeRange(params:URLSearchParams, now = new Date()) {
+  const requested = params.get('period')
+  const custom = requested === 'custom' ? customTimeRange(params.get('date_from') ?? '', params.get('date_to') ?? '') : null
+  const period = libraryPeriods.find(([value]) => value === requested && (value !== 'custom' || custom))?.[0] ?? 'week'
+  if (period === 'all') return {period, range:null}
+  if (custom) return {period, range:custom}
+  const today = new Date(now.getFullYear(),now.getMonth(),now.getDate())
+  const monday = addDays(today, -((today.getDay()+6)%7))
+  const start = period === 'today' ? today : period === 'last7' ? addDays(today,-6)
+    : period === 'month' ? new Date(today.getFullYear(),today.getMonth(),1) : monday
+  const end = period === 'week' ? addDays(monday,7)
+    : period === 'month' ? new Date(today.getFullYear(),today.getMonth()+1,1) : addDays(today,1)
+  return {period, range:{start,end,lastDay:addDays(end,-1)}}
+}
 
 export function libraryFilterQuery(params: URLSearchParams) {
   const query = new URLSearchParams()
   for (const key of ['search', 'diagnosis', 'business', 'input_format']) {
     const value = params.get(key)
     if (value && (key === 'search' || value !== 'all')) query.set(key, value)
+  }
+  const {period,range} = libraryTimeRange(params)
+  if (period !== 'week') query.set('period',period)
+  if (period === 'custom' && range) {
+    query.set('date_from',libraryDateValue(range.start))
+    query.set('date_to',libraryDateValue(range.lastDay))
   }
   return query.toString()
 }

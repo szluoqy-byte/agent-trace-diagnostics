@@ -1,13 +1,15 @@
 import {useEffect, useLayoutEffect, useRef, useState} from 'react'
-import {Play, RefreshCw, Search, Upload} from 'lucide-react'
+import {Play, RefreshCw, Search, SquarePen, Upload} from 'lucide-react'
 import {playgroundLink} from '../playground'
 import {api, dateLabel} from '../api'
 import {sourceLabel} from '../branding'
 import DeleteRecord, {DeleteRecords, traceDeletionBlock} from '../components/DeleteRecord'
+import LibraryTimeFilter from '../components/LibraryTimeFilter'
 import Pagination from '../components/Pagination'
 import TableSelection, {useSelectionRequest} from '../components/TableSelection'
-import {businessOutcomes, isAnalyzing, libraryDiagnosis, libraryFilterQuery, libraryLimit, libraryPath, openLibraryTask} from '../traceLibrary'
-import type {LibraryPage, LibrarySelection} from '../traceLibrary'
+import TraceOutcomeDialog from '../components/TraceOutcomeDialog'
+import {businessOutcomes, isAnalyzing, libraryDiagnosis, libraryFilterQuery, libraryLimit, libraryPath, libraryTimeRange, openLibraryTask} from '../traceLibrary'
+import type {KnownOutcome, LibraryPage, LibrarySelection} from '../traceLibrary'
 import {Badge, formatLabel, useResource, useWorkspace} from '../workspace'
 
 const poll = (data: LibraryPage) => data.items.some(row => isAnalyzing(row.diagnosis)) ? 2500 : 0
@@ -21,6 +23,7 @@ export default function TraceLibrary({params, selected, onSelect}: {
   const [searchInput, setSearchInput] = useState(search)
   const [importing, setImporting] = useState(false)
   const [importError, setImportError] = useState('')
+  const [outcomeEdit,setOutcomeEdit] = useState<{targets:LibrarySelection[]; batch?:boolean}|null>(null)
   const importInput = useRef<HTMLInputElement>(null)
   useEffect(() => setSearchInput(search), [search])
 
@@ -34,7 +37,14 @@ export default function TraceLibrary({params, selected, onSelect}: {
     input_format: params.get('input_format') ?? '',
   }
   const filterQuery = libraryFilterQuery(params)
-  const query = new URLSearchParams(filterQuery)
+  const time = libraryTimeRange(params)
+  const requestFilters = new URLSearchParams(filterQuery)
+  for (const key of ['period','date_from','date_to']) requestFilters.delete(key)
+  if (time.range) {
+    requestFilters.set('created_from',time.range.start.toISOString())
+    requestFilters.set('created_before',time.range.end.toISOString())
+  }
+  const query = new URLSearchParams(requestFilters)
   query.set('page', String(page))
   query.set('page_size', String(size))
   const {data, loading, error} = useResource<LibraryPage>(`/trace-library?${query}`, version, poll)
@@ -42,15 +52,17 @@ export default function TraceLibrary({params, selected, onSelect}: {
   useLayoutEffect(() => {
     if (tableViewport.current) tableViewport.current.scrollTop = 0
   }, [filterQuery, page, size])
-  const allSelection = useSelectionRequest(`/trace-library?selection=true&${filterQuery}`)
+  const allSelection = useSelectionRequest(`/trace-library?selection=true&${requestFilters}`)
 
   const ids = new Set(selected.map(row => row.id))
   const rows = data?.items ?? []
   const selectionBusy = busy || allSelection.loading
-  const currentStates = new Map(rows.map(row => [row.id,row.diagnosis]))
+  const currentRows = new Map(rows.map(row => [row.id,row]))
+  const currentSelection = selected.map(row => currentRows.get(row.id) ?? row)
+  const hasUnknownSelection = currentSelection.some(row => row.outcome === 'unknown')
   const reuseBlock = selected.length > libraryLimit ? '每次最多分析 500 条轨迹' :
-    selected.some(row => row.outcome === 'unknown') ? '请先补齐所选轨迹的业务结果' :
-      selected.some(row => isAnalyzing(currentStates.get(row.id) ?? row.diagnosis)) ? '请取消选择仍在排队或分析中的轨迹' : ''
+    hasUnknownSelection ? '请先补齐所选轨迹的业务结果' :
+      currentSelection.some(row => isAnalyzing(row.diagnosis)) ? '请取消选择仍在排队或分析中的轨迹' : ''
   const hasFilters = !!filterQuery
 
   function update(patch: Record<string, string>) {
@@ -71,6 +83,14 @@ export default function TraceLibrary({params, selected, onSelect}: {
   function removeSelection(deletedIds: string[]) {
     const deleted = new Set(deletedIds)
     onSelect(selected.filter(row => !deleted.has(row.id)))
+  }
+
+  function updateSelectionOutcome(changedIds:string[],outcome:KnownOutcome) {
+    const changed = new Set(changedIds)
+    onSelect(selected.flatMap(row => {
+      if (!changed.has(row.id)) return [row]
+      return !filters.business || filters.business === outcome ? [{...row,outcome}] : []
+    }))
   }
 
   async function importFiles(files: File[]) {
@@ -106,13 +126,16 @@ export default function TraceLibrary({params, selected, onSelect}: {
           onClick={() => update({diagnosis:value, page:''})}>{label}</button>
       })}
     </div>
-    <form className="ws-filters library-filters" onSubmit={event => {
-      event.preventDefault()
-      update({search: searchInput.trim(), page: ''})
-    }}>
-      <input type="search" aria-label="搜索轨迹" placeholder="标题、Agent、轨迹 ID 或来源" maxLength={200}
-        value={searchInput} onChange={event => setSearchInput(event.target.value)}/>
-      <button className="secondary" type="submit"><Search size={15}/>搜索</button>
+    <div className="ws-filters library-filters">
+      <LibraryTimeFilter time={time} onChange={update}/>
+      <form className="library-search" onSubmit={event => {
+        event.preventDefault()
+        update({search: searchInput.trim(), page: ''})
+      }}>
+        <input type="search" aria-label="搜索轨迹" placeholder="标题、Agent、轨迹 ID 或来源" maxLength={200}
+          value={searchInput} onChange={event => setSearchInput(event.target.value)}/>
+        <button className="secondary" type="submit"><Search size={15}/>搜索</button>
+      </form>
       <select aria-label="业务结果" value={filters.business} onChange={event => update({business: event.target.value, page: ''})}>
         <option value="">全部业务结果</option>
         {Object.entries(businessOutcomes).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -123,9 +146,9 @@ export default function TraceLibrary({params, selected, onSelect}: {
       </select>
       {hasFilters ? <button type="button" className="text-button" onClick={() => {
         setSearchInput('')
-        update({search: '', diagnosis: '', business: '', input_format: '', page: ''})
+        update({search:'',diagnosis:'',business:'',input_format:'',period:'',date_from:'',date_to:'',page:''})
       }}>清除筛选</button> : null}
-    </form>
+    </div>
     <div className="ws-selection">
       <TableSelection pageIds={rows.map(row => row.id)} selectedIds={ids} total={data?.total ?? 0}
         disabled={selectionBusy || !data} loading={allSelection.loading} onPage={togglePage}
@@ -134,9 +157,11 @@ export default function TraceLibrary({params, selected, onSelect}: {
       {reuseBlock ? <span>{reuseBlock}</span> : null}
       <div className="ws-actions">
         <button className="primary small" disabled={selectionBusy || !selected.length || !!reuseBlock} onClick={() =>
-          openLibraryTask(params, selected.map(row => ({...row, diagnosis:currentStates.get(row.id) ?? row.diagnosis})))}>
+          openLibraryTask(params, currentSelection)}>
           <Play size={14}/>启动分析
         </button>
+        <button type="button" className="secondary small" disabled={selectionBusy || !hasUnknownSelection}
+          onClick={() => setOutcomeEdit({targets:currentSelection,batch:true})}><SquarePen size={14}/>设置业务结果</button>
         <button type="button" className="secondary small" disabled={selectionBusy || selected.length !== 1}
           title={selected.length === 1 ? undefined : '请选择一条轨迹'}
           onClick={() => go(playgroundLink(selected[0].id).slice(1))}>在 Playground 调试</button>
@@ -162,10 +187,11 @@ export default function TraceLibrary({params, selected, onSelect}: {
               {row.source ? <small className="library-source" title={sourceLabel(row.source)}>{sourceLabel(row.source)}</small> : null}</td>
             <td className="ws-agent-cell">{row.agent_name || <span className="muted">未识别</span>}</td>
             <td><Badge value={row.outcome}>{businessOutcomes[row.outcome as keyof typeof businessOutcomes]}</Badge>
-              {known ? null : <small><a href={'#' + libraryPath(params, row.id)}>补充业务结果</a></small>}</td>
+              {known ? null : <small><button type="button" className="text-button" disabled={busy}
+                onClick={() => setOutcomeEdit({targets:[row]})}>补充业务结果</button></small>}</td>
             <td><Badge value={row.diagnosis}>{libraryDiagnosis[row.diagnosis as keyof typeof libraryDiagnosis]}</Badge></td>
             <td>{row.critical_step != null ? '#' + row.critical_step : row.has_result && row.outcome === 'failed' ? '未定位' : '—'}</td>
-            <td>{row.task_count} 个</td><td>{dateLabel(row.created_at)}</td>
+            <td>{row.task_count} 个</td><td title={new Date(row.created_at).toLocaleString('zh-CN')}>{dateLabel(row.created_at)}</td>
             <td><DeleteRecord id={row.id} name={row.title} kind="trace" compact
               blocked={traceDeletionBlock(row.task_count, ['queued', 'running'].includes(row.diagnosis))}
               onDeleted={() => removeSelection([row.id])}/></td>
@@ -173,10 +199,11 @@ export default function TraceLibrary({params, selected, onSelect}: {
         })}</tbody>
       </table></div>
       {!data?.items.length ? <div className="empty">{loading ? '正在读取轨迹…' : error ?
-        <button className="secondary" onClick={refresh}>重新加载</button> : hasFilters ? '没有符合当前筛选条件的轨迹。' : <p>轨迹库暂无数据，导入轨迹后即可启动分析。</p>}</div> : null}
+        <button className="secondary" onClick={refresh}>重新加载</button> : hasFilters ? '没有符合当前筛选条件的轨迹。' : <p>本周暂无入库轨迹，可调整入库时间查看以往记录。</p>}</div> : null}
       <Pagination page={data?.page ?? 1} pages={data?.pages ?? 1} pageSize={size} total={data?.total ?? 0}
         loading={!data} onPage={next => {if (next !== data?.page) update({page: String(next)})}}
         onSize={next => update({page_size: String(next), page: ''})}/>
     </section>
+    {outcomeEdit ? <TraceOutcomeDialog {...outcomeEdit} onClose={() => setOutcomeEdit(null)} onSaved={updateSelectionOutcome}/> : null}
   </>
 }

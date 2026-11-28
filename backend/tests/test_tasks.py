@@ -278,16 +278,55 @@ def test_library_fills_unknown_outcome_in_place_before_launch(tmp_path, deepagen
     [trace_id] = client.post('/api/import', files=files).json()['trace_ids']
     path = f'/api/trace-library/{trace_id}/outcome'
     assert client.get(f'/api/traces/{trace_id}').json()['data']['outcome'] == 'unknown'
-    original = app.state.store.trace(trace_id)['data']['deepagent']
+    original = app.state.store.trace(trace_id)
     assert client.patch(path, json={'outcome':'failed'}).json() == {'outcome':'failed'}
     assert client.patch(path, json={'outcome':'failed'}).status_code == 200
     assert client.patch(path, json={'outcome':'succeeded'}).status_code == 409
     assert client.post('/api/import', files=files, data={'outcome':'failed'}).json()['trace_ids'] == [trace_id]
     assert client.post('/api/import', files=files).json()['trace_ids'] == [trace_id]
-    saved = app.state.store.trace(trace_id)['data']
-    assert saved['deepagent'] == original and saved['outcome'] == 'failed'
+    saved = app.state.store.trace(trace_id)
+    assert saved['data']['deepagent'] == original['data']['deepagent'] and saved['data']['outcome'] == 'failed'
+    assert saved['created_at'] == original['created_at']
     assert client.post('/api/tasks', json={'name':'复用轨迹', 'trace_ids':[trace_id]}).status_code == 200
     assert client.get('/api/trace-library/missing/history').status_code == 404
+
+
+def test_library_batch_outcome_only_changes_pending_records(tmp_path):
+    app,client,known = setup(tmp_path, 1)
+    store = app.state.store
+    pending = [store.add_trace(demo_trace().model_copy(update={
+        'task_id':f'unknown-{index}', 'outcome':'unknown',
+    }))['id'] for index in range(2)]
+    path = '/api/trace-library/outcomes'
+    response = client.patch(path, json={'ids':[pending[0],known[0],pending[1],pending[0],'missing'], 'outcome':'succeeded'})
+    assert response.status_code == 200
+    result = response.json()
+    assert result['updated_ids'] == pending
+    assert [item['id'] for item in result['skipped']] == [known[0],'missing']
+    assert store.trace(known[0])['data']['outcome'] == 'failed'
+    assert all(store.trace(trace_id)['data']['outcome'] == 'succeeded' for trace_id in pending)
+    repeated = client.patch(path, json={'ids':pending,'outcome':'succeeded'}).json()
+    assert not repeated['updated_ids'] and len(repeated['skipped']) == 2
+    assert client.patch(path, json={'ids':pending,'outcome':'unknown'}).status_code == 422
+
+
+def test_library_import_time_filters_pages_and_cross_page_selection(tmp_path):
+    app,client,ids = setup(tmp_path, 14)
+    dates = ['2026-11-22T15:59:59.999999+00:00','2026-11-22T16:00:00+00:00']
+    dates.extend(f'2026-11-{day:02d}T12:00:00+00:00' for day in range(23,29) for _ in range(2))
+    dates[-2:] = ['2026-11-29T15:59:59.999999+00:00','2026-11-29T16:00:00+00:00']
+    with app.state.store.connect() as db:
+        db.executemany('UPDATE traces SET created_at=? WHERE id=?', zip(dates,ids))
+
+    path = '/api/trace-library'
+    bounds = {'created_from':'2026-11-23T00:00:00+08:00','created_before':'2026-11-30T00:00:00+08:00'}
+    first = client.get(path, params=bounds).json()
+    second = client.get(path, params={**bounds,'page':2}).json()
+    selection = client.get(path, params={**bounds,'selection':True}).json()['items']
+    assert first['total'] == 12 and len(first['items']) == 10 and len(second['items']) == 2
+    assert {row['id'] for row in first['items']+second['items']} == {row['id'] for row in selection} == set(ids[1:-1])
+    assert client.get(path).json()['total'] == 14
+    assert client.get(path, params={**bounds,'created_from':bounds['created_before']}).status_code == 422
 
 
 def test_preview_mixed_formats_exclusion_unknown_dedup_and_atomic_create(tmp_path, deepagent_template):
