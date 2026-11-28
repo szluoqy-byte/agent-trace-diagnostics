@@ -25,6 +25,12 @@ bash scripts/start.sh
 
 开发模式使用 `bash scripts/dev.sh`，Vite 地址为 http://127.0.0.1:5173 。
 
+从其他设备访问时，使用以下命令监听所有网卡，再通过服务器的实际 IP 或域名打开工作台。
+
+```bash
+.venv/bin/python -m uvicorn tracelens.main:app --host 0.0.0.0 --port 8017
+```
+
 ### Windows PowerShell
 
 在仓库根目录运行以下命令。`.env` 使用 UTF-8 编码，已有配置会保留。
@@ -39,6 +45,8 @@ pnpm.cmd build
 Pop-Location
 .\scripts\start.ps1
 ```
+
+Windows 上监听所有网卡时，运行 `.\.venv\Scripts\python.exe -m uvicorn tracelens.main:app --host 0.0.0.0 --port 8017 --loop none`。
 
 ## 使用
 

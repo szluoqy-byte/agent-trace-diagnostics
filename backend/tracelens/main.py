@@ -3,7 +3,6 @@ from typing import Literal
 from .engine import ENGINE_VERSION
 import json
 from pathlib import Path
-from urllib.parse import urlparse
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
@@ -70,15 +69,6 @@ def create_app(settings=None, *, frontend_dir=None):
         if request.url.path == "/api/playground/run":
             return JSONResponse({"detail": "请检查请求参数。需要有效的 messages 和 Playground 模型，模型 ID 由模型选择器提供。"}, status_code=422)
         return await request_validation_exception_handler(request, exc)
-
-    @app.middleware("http")
-    async def local_requests(request: Request, call_next):
-        origin = request.headers.get("origin")
-        if request.method not in {"GET", "HEAD", "OPTIONS"} and origin:
-            parsed = urlparse(origin)
-            if parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
-                return JSONResponse({"detail": "本地工作台仅接受本地页面的操作请求"}, status_code=403)
-        return await call_next(request)
 
     @app.get("/api/config")
     def config():

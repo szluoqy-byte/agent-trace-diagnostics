@@ -56,7 +56,16 @@ def test_import_atomic_validation_and_demo_restriction(tmp_path, deepagent_templ
         imported = client.post('/api/import',files={'files':('good.json',json.dumps(good),'application/json')}).json()['trace_ids'][0]
         assert client.post('/api/jobs',json={'trace_ids':[imported],'mode':'demo'}).status_code == 422
         assert client.post('/api/jobs',json={'trace_ids':[imported],'mode':'live'}).status_code == 409
-        assert client.post('/api/import',files={'files':('x.json', json.dumps(good),'application/json')}, headers={'Origin':'https://malicious.example'}).status_code == 403
+
+
+def test_trace_uploads_accept_network_browser_origins(tmp_path, deepagent_template):
+    files = {'files': ('trace.json', json.dumps(deepagent_template), 'application/json')}
+    routes = {'/api/import/preview': 'rows', '/api/import': 'trace_ids'}
+    with TestClient(create_app(Settings(data_dir=tmp_path))) as client:
+        for route, key in routes.items():
+            for origin in ('http://127.0.0.1:8017', 'http://192.0.2.20:8017', 'https://traces.example'):
+                upload = client.post(route, files=files, headers={'Origin': origin})
+                assert upload.status_code == 200 and upload.json()[key]
 
 
 def test_atomic_queue_claim_and_duplicate_enqueue(tmp_path):

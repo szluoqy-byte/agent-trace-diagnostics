@@ -157,7 +157,7 @@ def test_playground_model_parameters_can_be_cleared_and_reserved_keys_are_reject
 
 def test_connection_probe_and_validation_do_not_return_secrets(tmp_path, monkeypatch):
     app = create_app(Settings(data_dir=tmp_path, base_url='', model='', api_key=''))
-    client = TestClient(app)
+    client = TestClient(app, base_url='https://traces.example')
     original_client = httpx.AsyncClient
     calls = []
 
@@ -182,7 +182,10 @@ def test_connection_probe_and_validation_do_not_return_secrets(tmp_path, monkeyp
     }}).json() == {'ok': True}
     assert calls[-1].headers.get_list('authorization') == ['Bearer probe-private-key']
     assert client.get(PATH).json()['items'] == []
-    config_id = client.post(PATH, json={**body, 'headers': {'X-Tenant': 'tenant-a'}, 'make_default': True}).json()['id']
+    created = client.post(PATH, json={**body, 'headers': {'X-Tenant': 'tenant-a'}, 'make_default': True},
+                          headers={'Origin': 'https://traces.example'})
+    assert created.status_code == 201
+    config_id = created.json()['id']
     assert client.post(f'{PATH}/{config_id}/test').json() == {'ok': True}
     assert app.state.store.model_connections.get(config_id)['headers'] == {'X-Tenant': 'tenant-a'}
     assert 'tenant-a' not in client.get(PATH).text
@@ -213,7 +216,6 @@ def test_connection_probe_and_validation_do_not_return_secrets(tmp_path, monkeyp
     missing_name = client.post(PATH, json={k: v for k, v in body.items() if k != 'name'})
     assert missing_name.status_code == 422
     assert body['api_key'] not in missing_name.text
-    assert client.post(PATH, json=body, headers={'Origin': 'https://elsewhere.test'}).status_code == 403
 
 
 def test_runtime_settings_are_editable_and_persisted(tmp_path):
