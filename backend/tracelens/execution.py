@@ -6,14 +6,16 @@ from .diagnosis.chief import prompt_profile as chief_prompt_profile
 from .model_connections import ENVIRONMENT_ID
 from .trajdebug import ENGINE_VERSION, UPSTREAM_COMMIT
 
-FIELDS = ('base_url', 'model', 'prompt_language', 'max_retries', 'timeout', 'llm_concurrency', 'max_tokens', 'cluster_json_mode')
+FIELDS = ('base_url', 'model', 'prompt_language', 'max_retries', 'timeout', 'llm_concurrency', 'max_tokens',
+          'cluster_json_mode', 'request_parameters')
 RUNTIME_FIELDS = ('concurrency', 'max_retries', 'timeout', 'llm_concurrency', 'max_tokens', 'cluster_json_mode')
 
 
 def connection_settings(settings, connection):
     runtime = {key: connection['runtime'][key] for key in RUNTIME_FIELDS if key in connection['runtime']}
     return replace(settings, base_url=connection['base_url'], model=connection['model'],
-                   api_key=connection['api_key'], headers=connection.get('headers', {}), **runtime)
+                   api_key=connection['api_key'], headers=connection.get('headers', {}),
+                   request_parameters=connection.get('request_parameters', {}), **runtime)
 
 
 def active_execution(store, settings):

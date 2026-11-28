@@ -52,7 +52,8 @@ def test_playground_calls_only_the_selected_playground_connection(tmp_path, monk
     app = create_app(Settings(data_dir=tmp_path))
     connections = app.state.store.model_connections
     play = connections.add(name="Debug", model="debug-model", base_url="https://playground.example/v1",
-                           api_key="private-key", headers={"X-Tenant": "playground"}, purpose="playground")
+                           api_key="private-key", headers={"X-Tenant": "playground"}, purpose="playground",
+                           request_parameters={"temperature": 0.9, "reasoning_effort": "low"})
     diagnosis = connections.add(name="Diagnosis", model="diagnosis-model", base_url="https://diagnosis.example/v1",
                                 api_key="diagnosis-key", make_default=True)
     calls = []
@@ -73,7 +74,7 @@ def test_playground_calls_only_the_selected_playground_connection(tmp_path, monk
     monkeypatch.setattr("tracelens.playground.httpx.AsyncClient",
                         lambda **kwargs: original(transport=httpx.MockTransport(provider), **kwargs))
     client = TestClient(app)
-    parameters = {"messages": [{"role":"user", "content":"编辑后的输入"}], "max_tokens": 256}
+    parameters = {"messages": [{"role":"user", "content":"编辑后的输入"}], "max_tokens": 256, "temperature": 0.3}
     path = "/api/playground/run"
     assert client.post(path, json={"model_connection_id": diagnosis, "parameters": parameters}).status_code == 404
     assert client.post(path, json={"model_connection_id": play, "parameters": {**parameters, "model": "override"}}).status_code == 422
@@ -84,7 +85,7 @@ def test_playground_calls_only_the_selected_playground_connection(tmp_path, monk
     request, = calls
     assert str(request.url) == "https://playground.example/v1/chat/completions"
     assert request.headers["Authorization"] == "Bearer private-key" and request.headers["X-Tenant"] == "playground"
-    assert json.loads(request.content) == {**parameters, "model": "debug-model", "stream": False}
+    assert json.loads(request.content) == {**parameters, "model": "debug-model", "stream": False, "reasoning_effort": "low"}
     assert "private-key" not in result.text
     assert result.json()["message"]["content"] == "已处理"
     assert result.json()["message"]["tool_calls"][0]["id"] == "call-1"

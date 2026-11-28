@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sqlite3
 import stat
 
@@ -98,7 +99,8 @@ def test_task_can_select_a_diagnosis_model_and_keep_it_in_a_draft(tmp_path):
                                           runtime={'concurrency': 3, 'llm_concurrency': 4})
     alternate = store.model_connections.add(name='Alternate', model='alternate-model',
                                             base_url='https://alternate.example/v1', api_key='alternate-secret',
-                                            headers={'X-Tenant': 'alternate'}, runtime={'timeout': 42, 'max_tokens': 6000})
+                                            headers={'X-Tenant': 'alternate'}, runtime={'timeout': 42, 'max_tokens': 6000},
+                                            request_parameters={'temperature': 0.2})
     playground = store.model_connections.add(name='Playground', model='playground-model',
                                              base_url='https://playground.example/v1', api_key='', purpose='playground')
     trace_id = store.add_trace(normalize({'outcome': 'failed', 'messages': [{'role': 'assistant', 'content': 'done'}]}))['id']
@@ -120,9 +122,13 @@ def test_task_can_select_a_diagnosis_model_and_keep_it_in_a_draft(tmp_path):
         assert actual.model == 'alternate-model' and actual.api_key == 'alternate-secret'
         assert actual.headers == {'X-Tenant': 'alternate'}
         assert actual.timeout == 42 and actual.max_tokens == 6000
+        assert actual.request_parameters == {'temperature': 0.2}
         assert (actual.concurrency, actual.llm_concurrency) == (3, 4)
         assert store.job_config(job_id)['model_connection_id'] == alternate
 
+    store.model_connections.update(alternate, name='Alternate', model='alternate-model',
+                                   base_url='https://alternate.example/v1', request_parameters={'temperature': 0.8})
+    assert job_settings(store, settings, job_id).request_parameters == {'temperature': 0.2}
     store.update(job_id, status='completed')
     rerun = client.post(task_path + '/runs', json={'model_connection_id': 'environment'})
     assert rerun.status_code == 200, rerun.text
@@ -131,6 +137,22 @@ def test_task_can_select_a_diagnosis_model_and_keep_it_in_a_draft(tmp_path):
     assert client.get(task_path).json()['model_connection_id'] == 'environment'
     assert store.model_connections.default()['id'] == default
     assert client.get('/api/config').json()['model'] == 'default-model'
+
+
+def test_playground_model_parameters_can_be_cleared_and_reserved_keys_are_rejected(tmp_path):
+    client = TestClient(create_app(Settings(data_dir=tmp_path)))
+    body = {'name': 'Playground model', 'model': 'fixture', 'base_url': 'https://fixture.example/v1'}
+    scope = {'purpose': 'playground'}
+    for parameters in (['temperature'], {'messages': []}, {'max_tokens': 2}, {'base_url': 'https://other.example'}):
+        assert client.post(PATH, params=scope, json={**body, 'request_parameters': parameters}).status_code == 422
+    parameters = {'temperature': 0.7, 'top_p': 0.95}
+    saved = client.post(PATH, params=scope, json={**body, 'request_parameters': parameters})
+    assert saved.status_code == 201
+    item, = client.get(PATH, params=scope).json()['items']
+    assert item['request_parameters'] == parameters
+    path = f"{PATH}/{saved.json()['id']}"
+    assert client.put(path, params=scope, json={**body, 'request_parameters': {}}).status_code == 200
+    assert client.get(path, params=scope).json()['request_parameters'] == {}
 
 
 def test_connection_probe_and_validation_do_not_return_secrets(tmp_path, monkeypatch):
@@ -150,9 +172,11 @@ def test_connection_probe_and_validation_do_not_return_secrets(tmp_path, monkeyp
 
     monkeypatch.setattr('tracelens.model_settings_api.httpx.AsyncClient', use_mock_transport)
     body = {'name': 'Provider', 'model': 'provider-model', 'base_url': 'http://127.0.0.1:9000/v1',
-            'api_key': 'probe-private-key'}
+            'api_key': 'probe-private-key', 'request_parameters': {'temperature': 0.3, 'thinking': {'type': 'disabled'}}}
     assert client.post(PATH + '/test', json={**body, 'headers': {'X-Tenant': 'tenant-a'}}).json() == {'ok': True}
     assert str(calls[0].url) == body['base_url'] + '/chat/completions'
+    assert json.loads(calls[0].content)['temperature'] == 0.3
+    assert json.loads(calls[0].content)['thinking'] == {'type': 'disabled'}
     assert client.post(PATH + '/test', json={**body, 'api_key': 'wrong-secret', 'headers': {
         'X-Tenant': 'tenant-a', 'authorization': 'Bearer probe-private-key',
     }}).json() == {'ok': True}
@@ -165,11 +189,13 @@ def test_connection_probe_and_validation_do_not_return_secrets(tmp_path, monkeyp
 
     detail = client.get(f'{PATH}/{config_id}')
     assert detail.status_code == 200 and detail.json()['model'] == 'provider-model'
+    assert detail.json()['request_parameters'] == body['request_parameters']
     updated = client.put(f'{PATH}/{config_id}', json={
         'name': 'Provider updated', 'model': 'provider-model-v2',
         'base_url': 'http://127.0.0.1:9001/v1', 'headers': {'X-Tenant': 'tenant-b'},
         'make_default': True,
     })
+    assert client.get(f'{PATH}/{config_id}').json()['request_parameters'] == body['request_parameters']
     assert updated.status_code == 200
     saved = app.state.store.model_connections.get(config_id)
     assert saved['model'] == 'provider-model-v2' and saved['api_key'] == 'probe-private-key'

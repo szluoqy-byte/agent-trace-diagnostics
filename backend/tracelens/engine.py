@@ -28,6 +28,8 @@ async def diagnose(trace, settings, progress, *, fresh_cache=False):
     config = {key: value for key, value in asdict(settings).items()
               if key not in {"api_key", "data_dir", "chunk_chars", "json_mode", "enable_validation_data"}}
     headers = config.pop("headers", {})
+    if not config["request_parameters"]:
+        config.pop("request_parameters")
     cache_config = {key: value for key, value in config.items() if key != "cluster_json_mode"}
     cache_config["headers"] = headers
     cache_key = [unified, cache_config, UPSTREAM_COMMIT]

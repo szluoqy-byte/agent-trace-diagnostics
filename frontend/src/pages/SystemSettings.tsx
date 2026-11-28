@@ -30,6 +30,7 @@ interface ModelConfiguration {
   model: string
   has_key: boolean
   has_headers: boolean
+  request_parameters?: Record<string, unknown>
   is_default: boolean
   runtime?: RuntimeSettings
 }
@@ -121,6 +122,7 @@ function ModelConfigurations({purpose}: {purpose:ModelPurpose}) {
                 <dt>接口地址</dt><dd>{item.base_url}</dd>
                 <dt>API 密钥</dt><dd>{item.has_key ? '已配置' : '未配置'}</dd>
                 <dt>自定义 Header</dt><dd>{item.has_headers ? '已配置' : '未配置'}</dd>
+                <dt>自定义请求参数</dt><dd>{Object.keys(item.request_parameters ?? {}).length || '未配置'}</dd>
               </dl>
               {runtime ? <details className="model-runtime-summary">
                 <summary>运行参数</summary>
@@ -202,13 +204,25 @@ function parseHeaders(text: string): Record<string, string> {
   return value
 }
 
+function parseRequestParameters(text:string): Record<string, unknown> {
+  try {
+    const value: unknown = JSON.parse(text.trim() || '{}')
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>
+  } catch {
+    // Report the field that needs correction instead of the parser's raw text.
+  }
+  throw new Error('自定义请求参数须为有效的 JSON 对象。')
+}
+
 function ModelConfigurationForm({purpose, first, configuration, defaults, onClose}: {
   purpose:ModelPurpose; first:boolean; configuration?:ModelConfiguration; defaults?:RuntimeSettings; onClose:()=>void
 }) {
   const {busy, action} = useWorkspace()
   const diagnosis = purpose === 'diagnosis'
   const [value, setValue] = useState({name:configuration?.name ?? '', base_url:configuration?.base_url ?? '',
-    model:configuration?.model ?? '', api_key:'', headers:''})
+    model:configuration?.model ?? '', api_key:'', headers:'',
+    request_parameters:Object.keys(configuration?.request_parameters ?? {}).length
+      ? JSON.stringify(configuration?.request_parameters, null, 2) : ''})
   const [runtime, setRuntime] = useState(()=>runtimeDraft(configuration?.runtime, defaults))
   const [makeDefault, setMakeDefault] = useState(configuration?.is_default ?? first)
   const [testing, setTesting] = useState(false)
@@ -230,7 +244,8 @@ function ModelConfigurationForm({purpose, first, configuration, defaults, onClos
       if (configuration) {
         await post(modelPath(purpose, `/${configuration.id}/test`))
       } else {
-        await post(modelPath(purpose, '/test'), {...value, headers:parseHeaders(value.headers.trim())})
+        await post(modelPath(purpose, '/test'), {...value, headers:parseHeaders(value.headers.trim()),
+          request_parameters:parseRequestParameters(value.request_parameters)})
       }
       setResult({ok:true, message:'连接正常，模型已返回有效 JSON。'})
     } catch (error) {
@@ -244,12 +259,18 @@ function ModelConfigurationForm({purpose, first, configuration, defaults, onClos
     event.preventDefault()
     if (locked) return
     setSaveError('')
-    const {headers, ...connection} = value
+    const {headers, request_parameters, ...connection} = value
     const payload: Record<string, unknown> = {...connection, make_default:makeDefault}
     try {
       if (headers.trim()) payload.headers = parseHeaders(headers.trim())
     } catch {
       setSaveError('自定义 Header 必须是值为字符串的 JSON 对象。')
+      return
+    }
+    try {
+      payload.request_parameters = parseRequestParameters(request_parameters)
+    } catch (error) {
+      setSaveError((error as Error).message)
       return
     }
     if (diagnosis) payload.runtime = runtimePayload(runtime)
@@ -278,6 +299,10 @@ function ModelConfigurationForm({purpose, first, configuration, defaults, onClos
         <label>自定义 Header<textarea rows={3} value={value.headers} aria-describedby="model-headers-help" disabled={locked}
           placeholder={'{"X-API-Key":"your-key"}'} onChange={event=>change('headers', event.target.value)}/></label>
         <p className="ws-help" id="model-headers-help">{configuration ? '留空保留原 Header，填写 {} 可清空。' : '填写以字符串为值的 JSON 对象。'}</p>
+        <label>自定义 JSON 请求参数<textarea rows={3} value={value.request_parameters} aria-describedby="model-request-parameters-help"
+          disabled={locked} spellCheck={false} placeholder={'{"temperature": 0.2, "top_p": 0.9}'}
+          onChange={event=>change('request_parameters', event.target.value)}/></label>
+        <p className="ws-help" id="model-request-parameters-help">填写 JSON 对象，可设置采样参数和供应商扩展字段。留空可清空已保存的请求参数。</p>
         <label className="ws-check"><input type="checkbox" checked={makeDefault} disabled={locked}
           onChange={event=>setMakeDefault(event.target.checked)}/>{diagnosis ? '设为默认诊断模型' : '设为默认 Playground 模型'}</label>
         <div className="ws-actions model-form-test">

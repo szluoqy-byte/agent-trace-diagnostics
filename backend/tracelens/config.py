@@ -15,6 +15,7 @@ class Settings:
     model: str = os.getenv("DIAG_MODEL", "")
     prompt_language: str = os.getenv("DIAG_PROMPT_LANGUAGE", "en")
     headers: dict[str, str] = field(default_factory=dict)
+    request_parameters: dict = field(default_factory=dict)
     concurrency: int = max(1, min(8, int(os.getenv("DIAG_CONCURRENCY", "2"))))
     max_retries: int = max(0, min(5, int(os.getenv("DIAG_MAX_RETRIES", "2"))))
     timeout: float = float(os.getenv("DIAG_TIMEOUT", "120"))

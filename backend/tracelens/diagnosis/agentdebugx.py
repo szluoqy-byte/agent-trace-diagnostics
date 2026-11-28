@@ -146,7 +146,7 @@ async def diagnose_agentdebugx(trace, settings, progress):
     payload = {
         "trajectory": request, "outcome": trace.outcome,
         "settings": {key: getattr(settings, key) for key in
-                     ("model", "base_url", "prompt_language", "timeout", "max_retries", "max_tokens")},
+                     ("model", "base_url", "prompt_language", "timeout", "max_retries", "max_tokens", "request_parameters")},
     }
     env = {**os.environ, **model_slot_environment(settings), "OPENAI_API_KEY": settings.api_key or "EMPTY",
            "TRACELENS_MODEL_HEADERS": json.dumps(settings.headers),

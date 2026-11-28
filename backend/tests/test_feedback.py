@@ -157,7 +157,8 @@ async def test_official_feedback_uses_original_artifacts_and_one_model_call(tmp_
     url, calls, state = provider
     hint = HINT + ' 退款前请确认审批😊'
     state['hint'] = hint
-    settings = Settings(data_dir=tmp_path, base_url=url, model='fixture', api_key='SECRET_KEY', max_retries=0, timeout=5)
+    settings = Settings(data_dir=tmp_path, base_url=url, model='fixture', api_key='SECRET_KEY', max_retries=0, timeout=5,
+                        request_parameters={'temperature': 0.4, 'reasoning_effort': 'low'})
     store = Store(tmp_path)
     job, source = seed_job(store, settings, otel=otel)
     original = copy.deepcopy(job)
@@ -169,7 +170,7 @@ async def test_official_feedback_uses_original_artifacts_and_one_model_call(tmp_
     assert result['usage']['requests'] == 1 and len(calls) == 1
     assert 'single actionable instruction' in calls[0]['messages'][-1]['content']
     assert calls[0]['response_format'] == {'type': 'json_object'}
-    assert calls[0]['temperature'] == 0.0
+    assert calls[0]['temperature'] == 0.4 and calls[0]['reasoning_effort'] == 'low'
     assert 'SECRET_GOLD' not in json.dumps(calls) and 'SECRET_TELEMETRY' not in json.dumps(calls)
     assert store.job(job['id']) == original
     snapshot = tmp_path / 'trajdebug' / 'feedback' / feedback_id

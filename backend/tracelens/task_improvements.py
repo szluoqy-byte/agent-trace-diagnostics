@@ -214,6 +214,7 @@ async def request_suggestions(prompts, payload, samples, settings):
             format_option = {'response_format': {'type': 'json_object'}}
             for _ in range(2):
                 request = {'model': settings.model, 'max_tokens': budget,
+                           'extra_body': settings.request_parameters or None,
                            'messages': [{'role': 'system', 'content': system_message},
                                         {'role': 'user', 'content': user_message}]}
                 try:

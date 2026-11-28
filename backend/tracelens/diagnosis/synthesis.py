@@ -398,6 +398,7 @@ async def synthesize(trace, reports, evidence_by_engine, settings, comparison):
                 calls += 1
                 response = await client.chat.completions.create(
                     model=settings.model, max_tokens=budget,
+                    extra_body=settings.request_parameters or None,
                     response_format={"type": "json_object"},
                     messages=[{"role": "system", "content": prompt}, {"role": "user", "content": user_message}],
                 )

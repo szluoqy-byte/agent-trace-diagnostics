@@ -177,6 +177,7 @@ async def diagnose_chief(trace, settings, progress):
                     await progress(f"CHIEF · {stage}", percent, {"algorithm": "CHIEF", "usage": dict(usage)})
                     response = await client.chat.completions.create(
                         model=settings.model, max_tokens=settings.max_tokens, temperature=0.0,
+                        extra_body=settings.request_parameters or None,
                         messages=[{"role": "system", "content": SYSTEM_PROMPTS[language]},
                                   {"role": "user", "content": prompt}],
                     )

@@ -31,7 +31,8 @@ class ModelConnections:
                     headers TEXT NOT NULL DEFAULT '{}',
                     is_default INTEGER NOT NULL DEFAULT 0,
                     purpose TEXT NOT NULL DEFAULT 'diagnosis',
-                    runtime TEXT
+                    runtime TEXT,
+                    request_parameters TEXT NOT NULL DEFAULT '{}'
                 )
             """)
             columns = {row['name'] for row in db.execute('PRAGMA table_info(model_connections)')}
@@ -41,6 +42,8 @@ class ModelConnections:
                 db.execute("ALTER TABLE model_connections ADD COLUMN purpose TEXT NOT NULL DEFAULT 'diagnosis'")
             if 'runtime' not in columns:
                 db.execute('ALTER TABLE model_connections ADD COLUMN runtime TEXT')
+            if 'request_parameters' not in columns:
+                db.execute("ALTER TABLE model_connections ADD COLUMN request_parameters TEXT NOT NULL DEFAULT '{}'")
             db.execute('DROP INDEX IF EXISTS one_default_model_connection')
             db.execute('''CREATE UNIQUE INDEX IF NOT EXISTS one_default_model_per_purpose
                           ON model_connections(purpose) WHERE is_default=1''')
@@ -59,8 +62,9 @@ class ModelConnections:
 
     def list(self, purpose: ModelPurpose = 'diagnosis'):
         with self.connect() as db:
-            return [{**dict(row), 'runtime': json.loads(row['runtime'] or '{}')} for row in db.execute("""
-                SELECT id,name,base_url,model,api_key != '' AS has_key,headers != '{}' AS has_headers,is_default,runtime
+            return [{**dict(row), 'runtime': json.loads(row['runtime'] or '{}'),
+                     'request_parameters': json.loads(row['request_parameters'])} for row in db.execute("""
+                SELECT id,name,base_url,model,api_key != '' AS has_key,headers != '{}' AS has_headers,is_default,runtime,request_parameters
                 FROM model_connections WHERE purpose=? ORDER BY rowid""", (purpose,))]
 
     @staticmethod
@@ -71,6 +75,7 @@ class ModelConnections:
         except (TypeError, ValueError):
             value['headers'] = {}
         value['runtime'] = json.loads(value['runtime'] or '{}')
+        value['request_parameters'] = json.loads(value['request_parameters'])
         return value
 
     def get(self, connection_id, purpose: ModelPurpose = 'diagnosis'):
@@ -84,23 +89,25 @@ class ModelConnections:
             return self._decode(row) if row else None
 
     def add(self, *, name, base_url, model, api_key, headers=None, make_default=False,
-            purpose: ModelPurpose = 'diagnosis', runtime=None):
+            purpose: ModelPurpose = 'diagnosis', runtime=None, request_parameters=None):
         connection_id = uuid4().hex
         with self.connect() as db:
             if make_default:
                 db.execute('UPDATE model_connections SET is_default=0 WHERE is_default=1 AND purpose=?', (purpose,))
-            db.execute('''INSERT INTO model_connections (id,name,base_url,model,api_key,headers,is_default,purpose,runtime)
-                          VALUES (?,?,?,?,?,?,?,?,?)''',
+            db.execute('''INSERT INTO model_connections
+                          (id,name,base_url,model,api_key,headers,is_default,purpose,runtime,request_parameters)
+                          VALUES (?,?,?,?,?,?,?,?,?,?)''',
                        (connection_id, name, base_url, model, api_key,
                         json.dumps(headers or {}, ensure_ascii=False, sort_keys=True), int(make_default), purpose,
-                        json.dumps(runtime) if runtime is not None else None))
+                        json.dumps(runtime) if runtime is not None else None,
+                        json.dumps(request_parameters or {}, ensure_ascii=False, sort_keys=True)))
         return connection_id
 
     def update(self, connection_id, *, name, base_url, model, api_key=None, headers=None, make_default=False,
-               purpose: ModelPurpose = 'diagnosis', runtime=None):
+               purpose: ModelPurpose = 'diagnosis', runtime=None, request_parameters=None):
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
-            row = db.execute('SELECT api_key,headers,runtime FROM model_connections WHERE id=? AND purpose=?',
+            row = db.execute('SELECT api_key,headers,runtime,request_parameters FROM model_connections WHERE id=? AND purpose=?',
                              (connection_id, purpose)).fetchone()
             if row is None:
                 return False
@@ -111,12 +118,14 @@ class ModelConnections:
                 db.execute('UPDATE model_connections SET is_default=0 WHERE is_default=1 AND purpose=?', (purpose,))
             next_runtime = (json.dumps({**json.loads(row['runtime'] or '{}'), **runtime})
                             if runtime is not None else row['runtime'])
+            next_parameters = (json.dumps(request_parameters, ensure_ascii=False, sort_keys=True)
+                               if request_parameters is not None else row['request_parameters'])
             db.execute('''UPDATE model_connections
-                          SET name=?,base_url=?,model=?,api_key=?,headers=?,is_default=?,runtime=?
+                          SET name=?,base_url=?,model=?,api_key=?,headers=?,is_default=?,runtime=?,request_parameters=?
                           WHERE id=?''',
                        (name, base_url, model, next_key,
                         json.dumps(next_headers, ensure_ascii=False, sort_keys=True), int(make_default), next_runtime,
-                        connection_id))
+                        next_parameters, connection_id))
             return True
 
     def update_default_runtime(self, changes):

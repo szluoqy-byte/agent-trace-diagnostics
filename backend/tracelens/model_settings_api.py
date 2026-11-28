@@ -6,11 +6,12 @@ from urllib.parse import urlsplit
 
 import httpx
 from fastapi import APIRouter, HTTPException
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, JsonValue, SecretStr, field_validator
 
 from .execution import runtime_snapshot
 from .model_connections import ENVIRONMENT_ID, ModelPurpose
 from .model_headers import merge_headers
+from .model_request_parameters import validate_request_parameters
 from .model_concurrency import ModelSlots
 from .models import Contract
 from .runtime_settings_api import RuntimeSettingsInput
@@ -24,6 +25,7 @@ class ModelConnectionInput(Contract):
     model: str = Field(min_length=1, max_length=200)
     api_key: SecretStr = Field(default=SecretStr(''), max_length=4096)
     headers: dict[str, str] | None = Field(default=None, max_length=40)
+    request_parameters: dict[str, JsonValue] | None = None
 
     @field_validator('name', 'model', mode='before')
     @classmethod
@@ -74,13 +76,21 @@ class ModelConnectionInput(Contract):
             normalized[name] = header_value
         return normalized
 
+    @field_validator('request_parameters')
+    @classmethod
+    def validate_parameters(cls, value):
+        try:
+            return validate_request_parameters(value)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+
 
 class ModelConnectionWrite(ModelConnectionInput):
     make_default: bool = False
     runtime: RuntimeSettingsInput | None = None
 
 
-async def test_connection(base_url, model, api_key, headers, settings):
+async def test_connection(base_url, model, api_key, headers, settings, *, request_parameters=None):
     url = base_url.rstrip('/')
     if not url.endswith('/chat/completions'):
         url += '/chat/completions'
@@ -90,6 +100,7 @@ async def test_connection(base_url, model, api_key, headers, settings):
             request_headers = merge_headers({'Authorization': 'Bearer ' + (api_key or 'EMPTY'),
                                              'Content-Type': 'application/json'}, headers)
             response = await client.post(url, headers=request_headers, json={
+                **(request_parameters or {}),
                 'model': model,
                 'messages': [{'role': 'user', 'content': 'Return only the JSON object {"ok": true}.'}],
                 'response_format': {'type': 'json_object'},
@@ -146,6 +157,7 @@ def attach_model_settings_routes(app, connections, settings, queue):
             items.insert(0, {'id': ENVIRONMENT_ID, 'name': '环境配置', 'base_url': settings.base_url,
                              'model': settings.model, 'has_key': bool(settings.api_key),
                              'has_headers': bool(settings.headers),
+                             'request_parameters': settings.request_parameters,
                              'is_default': default_id is None, 'runtime': runtime_snapshot(settings)})
         return ({'items': items, 'runtime_defaults': runtime_snapshot(settings)}
                 if purpose == 'diagnosis' else {'items': items})
@@ -156,7 +168,8 @@ def attach_model_settings_routes(app, connections, settings, queue):
         runtime = {**runtime_snapshot(settings), **(patch or {})} if purpose == 'diagnosis' else None
         connection_id = connections.add(name=body.name, base_url=body.base_url, model=body.model,
                                         api_key=body.api_key.get_secret_value(), headers=body.headers,
-                                        make_default=body.make_default, purpose=purpose, runtime=runtime)
+                                        make_default=body.make_default, purpose=purpose, runtime=runtime,
+                                        request_parameters=body.request_parameters)
         if purpose == 'diagnosis':
             await queue.apply_settings()
         return {'id': connection_id}
@@ -166,7 +179,7 @@ def attach_model_settings_routes(app, connections, settings, queue):
         connection = connections.get(connection_id, purpose)
         if connection is None:
             raise HTTPException(404, '模型配置不存在')
-        fields = {key: connection[key] for key in ('id', 'name', 'base_url', 'model', 'runtime')}
+        fields = {key: connection[key] for key in ('id', 'name', 'base_url', 'model', 'runtime', 'request_parameters')}
         return with_runtime({**fields, 'has_key': bool(connection['api_key']), 'has_headers': bool(connection['headers']),
                              'is_default': bool(connection['is_default'])}, purpose)
 
@@ -174,7 +187,8 @@ def attach_model_settings_routes(app, connections, settings, queue):
     async def update_configuration(connection_id: str, body: ModelConnectionWrite, purpose: ModelPurpose = 'diagnosis'):
         if not connections.update(connection_id, name=body.name, base_url=body.base_url, model=body.model,
                                   api_key=body.api_key.get_secret_value(), headers=body.headers,
-                                  make_default=body.make_default, purpose=purpose, runtime=runtime_patch(body, purpose)):
+                                  make_default=body.make_default, purpose=purpose, runtime=runtime_patch(body, purpose),
+                                  request_parameters=body.request_parameters):
             raise HTTPException(404, '模型配置不存在')
         if purpose == 'diagnosis':
             await queue.apply_settings()
@@ -190,16 +204,19 @@ def attach_model_settings_routes(app, connections, settings, queue):
 
     @router.post('/test')
     async def test_new_configuration(body: ModelConnectionInput):
-        return await test_connection(body.base_url, body.model, body.api_key.get_secret_value(), body.headers, settings)
+        return await test_connection(body.base_url, body.model, body.api_key.get_secret_value(), body.headers, settings,
+                                     request_parameters=body.request_parameters)
 
     @router.post('/{connection_id}/test')
     async def test_saved_configuration(connection_id: str, purpose: ModelPurpose = 'diagnosis'):
         if connection_id == ENVIRONMENT_ID and purpose == 'diagnosis' and settings.ready:
-            return await test_connection(settings.base_url, settings.model, settings.api_key, settings.headers, settings)
+            return await test_connection(settings.base_url, settings.model, settings.api_key, settings.headers, settings,
+                                         request_parameters=settings.request_parameters)
         connection = connections.get(connection_id, purpose)
         if connection is None:
             raise HTTPException(404, '模型配置不存在')
-        return await test_connection(connection['base_url'], connection['model'], connection['api_key'], connection['headers'], settings)
+        return await test_connection(connection['base_url'], connection['model'], connection['api_key'], connection['headers'], settings,
+                                     request_parameters=connection['request_parameters'])
 
     @router.post('/{connection_id}/default')
     async def set_default_configuration(connection_id: str, purpose: ModelPurpose = 'diagnosis'):

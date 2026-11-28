@@ -96,6 +96,8 @@ async def generate_feedback(job, settings, feedback_id):
             shutil.copyfile(source / name, directory / name)
             hashes[name] = hashlib.sha256((directory / name).read_bytes()).hexdigest()
     config = {key: getattr(settings, key) for key in ('base_url', 'model', 'prompt_language', 'max_tokens', 'timeout', 'max_retries')}
+    if settings.request_parameters:
+        config['request_parameters'] = settings.request_parameters
     headers = dict(settings.headers)
     # The official client caches even HTTP-200 responses that fail JSON parsing.
     # A manual retry gets a fresh cache; completed tasks are reused by the API.

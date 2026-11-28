@@ -549,7 +549,8 @@ def test_dual_task_reuses_saved_model_and_keeps_native_export(tmp_path, provider
     if override_auth:
         headers["authorization"] = "Bearer gateway-key"
     model = {"name": "Saved connection", "base_url": endpoint, "model": "saved-model", "api_key": "saved-key",
-             "headers": headers, "make_default": True}
+             "headers": headers, "make_default": True,
+             "request_parameters": {"temperature": 0.26, "chat_template_kwargs": {"enable_thinking": False}}}
     runtime = {"max_retries": 0, "timeout": 5, "max_tokens": 2048, "llm_concurrency": 2}
     with TestClient(app) as client:
         saved = client.post("/api/model-configurations", json=model)
@@ -580,6 +581,8 @@ def test_dual_task_reuses_saved_model_and_keeps_native_export(tmp_path, provider
         assert all(call["authorization"] == [expected_auth] for call in requests)
         assert all(call["headers"].get("x-test-tenant") == "saved-tenant" for call in requests)
         assert all(call["request"]["model"] == model["model"] for call in requests)
+        assert all(call["request"]["temperature"] == 0.26 for call in requests)
+        assert all(call["request"]["chat_template_kwargs"] == {"enable_thinking": False} for call in requests)
         agentdebugx_requests = [call["request"] for call in requests if call["stage"] == "agentdebugx"]
         assert all(call["max_tokens"] <= runtime["max_tokens"] for call in agentdebugx_requests)
         assert {key: job["result"]["execution"][key] for key in runtime} == runtime

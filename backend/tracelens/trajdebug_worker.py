@@ -30,6 +30,8 @@ class Usage:
 
     def attach(self, model, config):
         model.client = model.client.with_options(timeout=config["timeout"], max_retries=config["max_retries"])
+        if parameters := config.get("request_parameters"):
+            model.extra_params["extra_body"] = {**(model.extra_params.get("extra_body") or {}), **parameters}
         if slots := ModelSlots.from_environment():
             slots.attach(model.http_client)
         def request(_request):

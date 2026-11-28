@@ -70,7 +70,8 @@ def test_span_ownership_and_agent_backfill_keep_diagnosis_identity(tmp_path):
 def test_task_suggestions_use_verified_multi_engine_evidence_and_retry_per_agent(tmp_path, provider):
     endpoint, requests, state = provider
     app = create_app(Settings(data_dir=tmp_path, base_url=endpoint, api_key='fixture-key',
-                              model='fixture-model', headers={'X-Tenant': 'fixture'}, max_retries=0))
+                              model='fixture-model', headers={'X-Tenant': 'fixture'}, max_retries=0,
+                              request_parameters={'temperature': 0.5, 'reasoning_effort': 'low'}))
     client = TestClient(app)
     store = app.state.store
     first, second = delegated_trace(), otel_trace()
@@ -124,6 +125,7 @@ def test_task_suggestions_use_verified_multi_engine_evidence_and_retry_per_agent
         regenerated = wait_for_report(client, route, 'completed')
         assert len(requests) == 4
         assert all(call['request']['model'] == 'fixture-model' and call['headers']['x-tenant'] == 'fixture' for call in requests)
+        assert all(call['request']['temperature'] == 0.5 and call['request']['reasoning_effort'] == 'low' for call in requests)
         assert all(result['suggestions'][0]['trace_count'] == 1 for result in regenerated['results'].values())
         assert regenerated['id'] != report['id'] and regenerated['snapshot'] == report['snapshot']
         assert client.get(route, params={'report_id': report['id']}).json()['report']['status'] == 'partial'

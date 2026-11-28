@@ -166,7 +166,7 @@ def trace_request(trace, span_id):
 
 
 async def run_model(connection, parameters, settings):
-    payload = parameters.model_dump(exclude_none=True)
+    payload = {**connection["request_parameters"], **parameters.model_dump(exclude_none=True)}
     if "max_tokens" not in payload and "max_completion_tokens" not in payload:
         payload["max_tokens"] = 2048
     headers = merge_headers({"Authorization": "Bearer " + (connection["api_key"] or "EMPTY")}, connection["headers"])

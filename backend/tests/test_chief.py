@@ -107,6 +107,7 @@ async def test_chief_uses_six_localized_stages_and_verified_quotes(tmp_path, pro
     state["extra_request_reply"] = chief_answer
     settings = Settings(data_dir=tmp_path, base_url=endpoint, model="fixture", prompt_language=language,
                         api_key="default-key", headers={"authorization": "Bearer custom-key", "X-Tenant": "chief"},
+                        request_parameters={"temperature": 0.2, "reasoning_effort": "low"},
                         max_tokens=2048, max_retries=0)
     events = []
 
@@ -117,6 +118,7 @@ async def test_chief_uses_six_localized_stages_and_verified_quotes(tmp_path, pro
     assert len(requests) == 6 and report["usage"] == {"requests": 6, "prompt_tokens": 60, "completion_tokens": 30}
     assert all(call["authorization"] == ["Bearer custom-key"] for call in requests)
     assert all(call["headers"]["x-tenant"] == "chief" and call["request"]["max_tokens"] == 2048 for call in requests)
+    assert all(call["request"]["temperature"] == 0.2 and call["request"]["reasoning_effort"] == "low" for call in requests)
     assert "SECRET_GOLD" not in str(requests) and report["provenance"]["rag"] is False
     assert all(("任务目标：" in call["request"]["messages"][-1]["content"]) == (language == "zh") for call in requests)
     assert report["attribution"]["critical_step"] == 1 and report["root_cause_agent"] == "agent"

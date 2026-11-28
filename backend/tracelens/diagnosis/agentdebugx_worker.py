@@ -34,6 +34,7 @@ class WorkbenchModel(OpenAICompatClient):
             default_max_tokens=min(8192, settings["max_tokens"]),
         )
         self.configured_headers = parse_headers(os.environ.get("TRACELENS_MODEL_HEADERS"))
+        self.request_parameters = settings.get("request_parameters", {})
         self.slots = ModelSlots.from_environment()
         self.language = normalize_prompt_language(settings["prompt_language"])
         self.max_tokens = settings["max_tokens"]
@@ -74,7 +75,7 @@ class WorkbenchModel(OpenAICompatClient):
     def _post(self, url, headers, body, timeout):
         headers = merge_headers(headers, self.configured_headers)
         with self.slots.request() if self.slots else contextlib.nullcontext():
-            return super()._post(url, headers, body, timeout)
+            return super()._post(url, headers, {**body, **self.request_parameters}, timeout)
 
 
 def run(payload):
